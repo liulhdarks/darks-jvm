@@ -1,0 +1,7 @@
+.pdb
+.iik
+.exp
+.obj
+.log
+Debug/
+ipch/

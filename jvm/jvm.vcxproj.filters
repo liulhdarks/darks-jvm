@@ -1,0 +1,261 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="源文件">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="头文件">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hpp;hxx;hm;inl;inc;xsd</Extensions>
+    </Filter>
+    <Filter Include="资源文件">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="头文件\env">
+      <UniqueIdentifier>{af6bc32f-af58-4bd6-a021-939671b0b260}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\vm">
+      <UniqueIdentifier>{c41767a1-c866-4f92-814c-1093344824f6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\env">
+      <UniqueIdentifier>{ce1b0f98-3436-4577-8793-4d06875d6d15}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\vm">
+      <UniqueIdentifier>{22e2aade-54e6-4b97-9bfc-b5361c0e5e25}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\vm\classfiles">
+      <UniqueIdentifier>{883835c9-7846-425f-8c3e-2ce6a05afe13}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\vm\classfiles">
+      <UniqueIdentifier>{e365c356-a269-4b9b-862d-0e427eb798aa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\vm\io">
+      <UniqueIdentifier>{cd2e63ec-ae00-4a54-a2cc-a48500054e34}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\vm\executor">
+      <UniqueIdentifier>{c04032e6-b800-4838-bdf6-072a8c078ad7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\vm\io">
+      <UniqueIdentifier>{ee96e376-8833-4696-83b6-a53b29a95cbb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\vm\executor">
+      <UniqueIdentifier>{c5ce5891-6f43-4e3e-8a26-ba4a42f1d3fa}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\utils">
+      <UniqueIdentifier>{a656b773-91cf-49d8-af03-acf9293c97de}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\jni">
+      <UniqueIdentifier>{46f8a291-f67f-44bb-9a58-8bd32aa5496b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\utils">
+      <UniqueIdentifier>{2f4c4873-3cff-4fa6-99d4-9a991c3859a6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\jni">
+      <UniqueIdentifier>{922450b2-6034-4c16-8959-49249d1ee7b2}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="ReadMe.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="stdafx.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="targetver.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="jvm.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="common.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="env\env.h">
+      <Filter>头文件\env</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\classfiles\constant.h">
+      <Filter>头文件\vm\classfiles</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\types.h">
+      <Filter>头文件\vm</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\io\bytes_io.h">
+      <Filter>头文件\vm\io</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\exceptions.h">
+      <Filter>头文件\vm</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\classfiles\classloader.h">
+      <Filter>头文件\vm\classfiles</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\jclass.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\jmethod.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\jfield.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="utils\CommonUtils.h">
+      <Filter>头文件\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="utils\FileUtils.h">
+      <Filter>头文件\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\classfiles\parseclass.h">
+      <Filter>头文件\vm\classfiles</Filter>
+    </ClInclude>
+    <ClInclude Include="utils\DebugUtils.h">
+      <Filter>头文件\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\attributes.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\executor.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\threadlocal.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="utils\StackUtils.h">
+      <Filter>头文件\utils</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\threadstack.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\stackframe.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\objectheap.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\localtable.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\operstack.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\exec_common.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\methodarea.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\code.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\jobject.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\context.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\descriptor.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="jni\jni.h">
+      <Filter>头文件\jni</Filter>
+    </ClInclude>
+    <ClInclude Include="jni\jni_md.h">
+      <Filter>头文件\jni</Filter>
+    </ClInclude>
+    <ClInclude Include="jni\jni_object.h">
+      <Filter>头文件\jni</Filter>
+    </ClInclude>
+    <ClInclude Include="jni\jni_external.h">
+      <Filter>头文件\jni</Filter>
+    </ClInclude>
+    <ClInclude Include="vm\executor\nativelibs.h">
+      <Filter>头文件\vm\executor</Filter>
+    </ClInclude>
+    <ClInclude Include="jni\jni_array.h">
+      <Filter>头文件\jni</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="stdafx.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="jvm.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="dllmain.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="env\env.cpp">
+      <Filter>源文件\env</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\classfiles\constant.cpp">
+      <Filter>源文件\vm\classfiles</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\io\bytes_io.cpp">
+      <Filter>源文件\vm\io</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\classfiles\classloader.cpp">
+      <Filter>源文件\vm\classfiles</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\classfiles\parseclass.cpp">
+      <Filter>源文件\vm\classfiles</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\jclass.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\attributes.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="utils\StackUtils.cpp">
+      <Filter>源文件\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\jmethod.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\stackframe.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\methodarea.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\threadstack.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\executor.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\jobject.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\objectheap.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\context.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\descriptor.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="jni\jni.cpp">
+      <Filter>源文件\jni</Filter>
+    </ClCompile>
+    <ClCompile Include="jni\jni_object.cpp">
+      <Filter>源文件\jni</Filter>
+    </ClCompile>
+    <ClCompile Include="jni\jni_external.cpp">
+      <Filter>源文件\jni</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\nativelibs.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+    <ClCompile Include="jni\jni_array.cpp">
+      <Filter>源文件\jni</Filter>
+    </ClCompile>
+    <ClCompile Include="utils\CommonUtils.cpp">
+      <Filter>源文件\utils</Filter>
+    </ClCompile>
+    <ClCompile Include="vm\executor\jfield.cpp">
+      <Filter>源文件\vm\executor</Filter>
+    </ClCompile>
+  </ItemGroup>
+</Project>

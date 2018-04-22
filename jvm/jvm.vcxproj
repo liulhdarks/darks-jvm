@@ -1,0 +1,161 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|Win32">
+      <Configuration>Debug</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{E88F9EDF-C109-4837-82C7-AF6DECAC2E8A}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>jvm</RootNamespace>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <CharacterSet>MultiByte</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+    <ClCompile>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_USRDLL;JVM_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>F:\code\C\Java\os;F:\code\C\Java\jvm;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>F:\code\C\Java\Debug;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_USRDLL;JVM_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <None Include="ReadMe.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="common.h" />
+    <ClInclude Include="env\env.h" />
+    <ClInclude Include="jni\jni.h" />
+    <ClInclude Include="jni\jni_array.h" />
+    <ClInclude Include="jni\jni_external.h" />
+    <ClInclude Include="jni\jni_md.h" />
+    <ClInclude Include="jni\jni_object.h" />
+    <ClInclude Include="jvm.h" />
+    <ClInclude Include="stdafx.h" />
+    <ClInclude Include="targetver.h" />
+    <ClInclude Include="utils\CommonUtils.h" />
+    <ClInclude Include="utils\DebugUtils.h" />
+    <ClInclude Include="utils\FileUtils.h" />
+    <ClInclude Include="utils\StackUtils.h" />
+    <ClInclude Include="vm\classfiles\classloader.h" />
+    <ClInclude Include="vm\classfiles\constant.h" />
+    <ClInclude Include="vm\classfiles\parseclass.h" />
+    <ClInclude Include="vm\exceptions.h" />
+    <ClInclude Include="vm\executor\attributes.h" />
+    <ClInclude Include="vm\executor\code.h" />
+    <ClInclude Include="vm\executor\context.h" />
+    <ClInclude Include="vm\executor\descriptor.h" />
+    <ClInclude Include="vm\executor\executor.h" />
+    <ClInclude Include="vm\executor\exec_common.h" />
+    <ClInclude Include="vm\executor\jclass.h" />
+    <ClInclude Include="vm\executor\jfield.h" />
+    <ClInclude Include="vm\executor\jmethod.h" />
+    <ClInclude Include="vm\executor\jobject.h" />
+    <ClInclude Include="vm\executor\localtable.h" />
+    <ClInclude Include="vm\executor\methodarea.h" />
+    <ClInclude Include="vm\executor\nativelibs.h" />
+    <ClInclude Include="vm\executor\objectheap.h" />
+    <ClInclude Include="vm\executor\operstack.h" />
+    <ClInclude Include="vm\executor\stackframe.h" />
+    <ClInclude Include="vm\executor\threadlocal.h" />
+    <ClInclude Include="vm\executor\threadstack.h" />
+    <ClInclude Include="vm\io\bytes_io.h" />
+    <ClInclude Include="vm\types.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="dllmain.cpp">
+      <CompileAsManaged Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">false</CompileAsManaged>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
+      </PrecompiledHeader>
+      <CompileAsManaged Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">false</CompileAsManaged>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+      </PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="env\env.cpp" />
+    <ClCompile Include="jni\jni.cpp" />
+    <ClCompile Include="jni\jni_array.cpp" />
+    <ClCompile Include="jni\jni_external.cpp" />
+    <ClCompile Include="jni\jni_object.cpp" />
+    <ClCompile Include="jvm.cpp" />
+    <ClCompile Include="stdafx.cpp">
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
+      <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="utils\CommonUtils.cpp" />
+    <ClCompile Include="utils\StackUtils.cpp" />
+    <ClCompile Include="vm\classfiles\classloader.cpp" />
+    <ClCompile Include="vm\classfiles\constant.cpp" />
+    <ClCompile Include="vm\classfiles\parseclass.cpp" />
+    <ClCompile Include="vm\executor\attributes.cpp" />
+    <ClCompile Include="vm\executor\descriptor.cpp" />
+    <ClCompile Include="vm\executor\executor.cpp" />
+    <ClCompile Include="vm\executor\context.cpp" />
+    <ClCompile Include="vm\executor\jclass.cpp" />
+    <ClCompile Include="vm\executor\jfield.cpp" />
+    <ClCompile Include="vm\executor\jmethod.cpp" />
+    <ClCompile Include="vm\executor\jobject.cpp" />
+    <ClCompile Include="vm\executor\methodarea.cpp" />
+    <ClCompile Include="vm\executor\nativelibs.cpp" />
+    <ClCompile Include="vm\executor\objectheap.cpp" />
+    <ClCompile Include="vm\executor\stackframe.cpp" />
+    <ClCompile Include="vm\executor\threadstack.cpp" />
+    <ClCompile Include="vm\io\bytes_io.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

@@ -1,0 +1,78 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="源文件">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="头文件">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hpp;hxx;hm;inl;inc;xsd</Extensions>
+    </Filter>
+    <Filter Include="资源文件">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="头文件\java">
+      <UniqueIdentifier>{56f973a5-ec47-465f-acba-bcef252a200e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\java\lang">
+      <UniqueIdentifier>{da86708b-df00-4c09-928e-8b7fc569d764}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\java">
+      <UniqueIdentifier>{3e7f5567-846a-4db3-9e80-2822f68f71ef}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\java\lang">
+      <UniqueIdentifier>{fc7360d7-5b1a-481b-848f-f0a3839b75be}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="头文件\java\io">
+      <UniqueIdentifier>{0f4370b4-5bc8-4c31-9db8-e37e5663811f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="源文件\java\io">
+      <UniqueIdentifier>{5d2141e8-7b7c-4668-864d-052ed464a0f4}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="ReadMe.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="stdafx.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="targetver.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="native.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="java\lang\system_md.h">
+      <Filter>头文件\java\lang</Filter>
+    </ClInclude>
+    <ClInclude Include="java\io\filesystem.h">
+      <Filter>头文件\java\io</Filter>
+    </ClInclude>
+    <ClInclude Include="java\lang\string_md.h">
+      <Filter>头文件\java\lang</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="stdafx.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="native.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="dllmain.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="java\lang\system_md.cpp">
+      <Filter>源文件\java\lang</Filter>
+    </ClCompile>
+    <ClCompile Include="java\io\filesystem.cpp">
+      <Filter>源文件\java\io</Filter>
+    </ClCompile>
+    <ClCompile Include="java\lang\string_md.cpp">
+      <Filter>源文件\java\lang</Filter>
+    </ClCompile>
+  </ItemGroup>
+</Project>
