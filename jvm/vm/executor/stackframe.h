@@ -10,6 +10,9 @@
 #include "descriptor.h"
 #include "jni/jni.h"
 
+#include <utility>
+#include <vector>
+
 class ObjectHeap;
 
 #define STATIC_METHOD 1
@@ -35,6 +38,15 @@ public:
 	lpOperStack op_stack;
 	lpLocalVarTable local_var_table;
 	JNIEnv *jni_env;
+	// Monitors held by this frame (object monitors and class monitors).  They
+	// are released when the frame is popped, which also covers exception
+	// unwinding that skips monitorexit.
+	std::vector<std::pair<LPOBJECT_REF, lpClass> > monitors_held;
+	// Monitor acquired for a synchronized call but not yet attached to a
+	// callee frame (native methods have no frame).
+	LPOBJECT_REF pending_sync_obj;
+	lpClass pending_sync_class;
+	bool pending_sync_held;
 
 public:
 	StackFrame();

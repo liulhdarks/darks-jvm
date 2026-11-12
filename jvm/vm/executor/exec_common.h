@@ -40,7 +40,10 @@ typedef union Variant
 
 typedef enum EventNotify
 {
-	EN_RETURN = 0, EN_KEEP, EN_POP, EN_EXCEPTION, EN_NOOP
+	EN_RETURN = 0, EN_KEEP, EN_POP, EN_EXCEPTION, EN_NOOP,
+	// Coroutine scheduler events: the interpreter returns to the scheduler
+	// without unwinding the Java frame stack.
+	EN_YIELD, EN_SAFEPOINT
 } EventNotify;
 
 typedef struct 

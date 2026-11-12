@@ -26,6 +26,15 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/Clock.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/GcStress.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/dev/darks/jni/NativeLib.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/ThreadBasics.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/CoroutineScale.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/ProducerConsumer.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/VolatileVisibility.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/SyncContention.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/SleepConcurrency.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/InterruptSleep.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/JoinTimeoutTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/GcThreads.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
     add_custom_command(
@@ -299,6 +308,42 @@ if(JAVAC)
     add_test(NAME usage_exit2
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
                 -DEXPECT_RC=2 -DEXPECT_TEXT=Usage: -P "${CHECK}")
+
+    # ------------------------------------------------------------------
+    # Coroutine / JMM acceptance tests.  Each runs once with the default
+    # deterministic single OS thread (DARKS_JVM_MP=1) and once with four
+    # OS threads (M:N scheduling, work stealing, MP-safe GC safepoints).
+    # ------------------------------------------------------------------
+    function(add_thread_test name expect)
+        foreach(mp 1 4)
+            add_test(NAME thread_${name}_mp${mp}
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DPROG=${CMAKE_COMMAND}"
+                    "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};${name}"
+                    -DEXPECT_RC=0 -DTIMEOUT=180
+                    "-DEXPECT_TEXT=${expect}" -P "${CHECK}")
+        endforeach()
+    endfunction()
+
+    add_thread_test(ThreadBasics "thread-basics ok")
+    add_thread_test(CoroutineScale "coroutines ok")
+    add_thread_test(ProducerConsumer "producer-consumer ok")
+    add_thread_test(VolatileVisibility "volatile ok")
+    add_thread_test(SyncContention "sync ok")
+    add_thread_test(SleepConcurrency "sleep-concurrency ok")
+    add_thread_test(InterruptSleep "interrupt ok")
+    add_thread_test(JoinTimeoutTest "join-timeout ok")
+
+    # Continuous allocation with a low GC threshold: the collector must stop
+    # every interpreter worker at a safepoint without deadlocking.
+    foreach(mp 1 4)
+        add_test(NAME thread_GcThreads_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_JVM_GC_THRESHOLD=512;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcThreads"
+                -DEXPECT_RC=0 -DTIMEOUT=180
+                "-DEXPECT_TEXT=gc-threads ok" "-DEXPECT_TEXT2=gc-collect" -P "${CHECK}")
+    endforeach()
 else()
     message(WARNING "javac not found: end-to-end tests are disabled.")
     add_test(NAME unit_tests_without_classes

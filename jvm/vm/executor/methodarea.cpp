@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "methodarea.h"
+#include "vmmutex.h"
 
 #define METHOD_NAME_SIZE 1024
 
@@ -8,6 +9,7 @@ map<string, lpFieldValue> MethodArea::static_field_map;
 
 void MethodArea::AddMethod(lpClass clazz, lpMethod &method)
 {
+	VMLock lk;
 	char method_name[METHOD_NAME_SIZE];
 	sprintf(method_name, "%s.%s:%s", clazz->thisClass->GetName(), 
 		method->methodName->bytes, 
@@ -18,11 +20,13 @@ void MethodArea::AddMethod(lpClass clazz, lpMethod &method)
 
 lpMethod MethodArea::GetMethod(LPSTR method_name)
 {
+	VMLock lk;
 	return methods_map[string(method_name)];
 }
 
 void MethodArea::AddStaticField(LPSTR field_full_name, lpFieldValue fv)
 {
+	VMLock lk;
 	// putstatic may run many times; release the value it replaces so the
 	// static area does not leak one FieldValue per assignment.
 	string key(field_full_name);
@@ -36,11 +40,13 @@ void MethodArea::AddStaticField(LPSTR field_full_name, lpFieldValue fv)
 
 lpFieldValue MethodArea::GetStaticField(LPSTR field_full_name)
 {
+	VMLock lk;
 	return static_field_map[string(field_full_name)];
 }
 
 void MethodArea::ClearStaticFields()
 {
+	VMLock lk;
 	map<string, lpFieldValue>::iterator it = static_field_map.begin();
 	for (; it != static_field_map.end(); ++it)
 	{
@@ -55,6 +61,7 @@ void MethodArea::ClearStaticFields()
 
 lpMethod MethodArea::GetMethod(lpClass clazz, LPSTR method_name)
 {
+	VMLock lk;
 	char method_full_name[METHOD_NAME_SIZE];
 	sprintf(method_full_name, "%s.%s", clazz->thisClass->GetName(), method_name);
 	LPSTR namePtr = method_full_name;

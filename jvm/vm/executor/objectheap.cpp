@@ -10,6 +10,8 @@
 #include "vm/classfiles/constant.h"
 #include "vm/exceptions.h"
 #include "jni/jni.h"
+#include "scheduler.h"
+#include "vmmutex.h"
 
 #include <string>
 
@@ -128,11 +130,19 @@ void ObjectHeap::AccountAllocation(lpObject obj)
 
 void ObjectHeap::MaybeGC()
 {
-	if (!gc_enabled || in_gc || no_gc_depth > 0)
+	// Read the accounting under the heap mutex (allocations update it there),
+	// then collect without it: the collector stops the world, and the
+	// safepoint handshake must not run with the heap mutex already held.
+	bool needed = false;
 	{
-		return;
+		VMLock lk;
+		if (!gc_enabled || in_gc || no_gc_depth > 0)
+		{
+			return;
+		}
+		needed = (live_bytes >= threshold);
 	}
-	if (live_bytes >= threshold)
+	if (needed)
 	{
 		gc();
 	}
@@ -140,6 +150,7 @@ void ObjectHeap::MaybeGC()
 
 void ObjectHeap::AddRootSlot(LPOBJECT_REF *slot)
 {
+	VMLock lk;
 	if (slot)
 	{
 		root_slots.push_back(slot);
@@ -148,6 +159,7 @@ void ObjectHeap::AddRootSlot(LPOBJECT_REF *slot)
 
 void ObjectHeap::RemoveRootSlot(LPOBJECT_REF *slot)
 {
+	VMLock lk;
 	for (std::vector<LPOBJECT_REF *>::iterator it = root_slots.begin();
 	     it != root_slots.end(); ++it)
 	{
@@ -161,6 +173,7 @@ void ObjectHeap::RemoveRootSlot(LPOBJECT_REF *slot)
 
 void ObjectHeap::RegisterThreadStack(ThreadStack *stack)
 {
+	VMLock lk;
 	if (!stack)
 	{
 		return;
@@ -177,6 +190,7 @@ void ObjectHeap::RegisterThreadStack(ThreadStack *stack)
 
 void ObjectHeap::UnregisterThreadStack(ThreadStack *stack)
 {
+	VMLock lk;
 	for (std::vector<ThreadStack *>::iterator it = thread_stacks.begin();
 	     it != thread_stacks.end(); ++it)
 	{
@@ -190,11 +204,13 @@ void ObjectHeap::UnregisterThreadStack(ThreadStack *stack)
 
 void ObjectHeap::PushNoGc()
 {
+	VMLock lk;
 	no_gc_depth++;
 }
 
 void ObjectHeap::PopNoGc()
 {
+	VMLock lk;
 	if (no_gc_depth > 0)
 	{
 		no_gc_depth--;
@@ -230,6 +246,7 @@ void ObjectHeap::MarkObjectRef(LPOBJECT_REF ref)
 
 void ObjectHeap::MarkThreadStackRoots()
 {
+	VMLock lk;
 	for (size_t i = 0; i < thread_stacks.size(); i++)
 	{
 		thread_stacks[i]->MarkRoots(this);
@@ -291,6 +308,7 @@ void ObjectHeap::MarkTemporaryRoots()
 
 void ObjectHeap::AddGlobalRef(LPOBJECT_REF ref)
 {
+	VMLock lk;
 	if (ref)
 	{
 		global_refs.push_back(ref);
@@ -299,6 +317,7 @@ void ObjectHeap::AddGlobalRef(LPOBJECT_REF ref)
 
 void ObjectHeap::RemoveGlobalRef(LPOBJECT_REF ref)
 {
+	VMLock lk;
 	for (std::vector<LPOBJECT_REF>::iterator it = global_refs.begin();
 	     it != global_refs.end(); ++it)
 	{
@@ -312,6 +331,7 @@ void ObjectHeap::RemoveGlobalRef(LPOBJECT_REF ref)
 
 void ObjectHeap::AddWeakGlobalRef(LPOBJECT_REF ref)
 {
+	VMLock lk;
 	if (ref)
 	{
 		weak_global_refs.push_back(ref);
@@ -320,6 +340,7 @@ void ObjectHeap::AddWeakGlobalRef(LPOBJECT_REF ref)
 
 void ObjectHeap::RemoveWeakGlobalRef(LPOBJECT_REF ref)
 {
+	VMLock lk;
 	for (std::vector<LPOBJECT_REF>::iterator it = weak_global_refs.begin();
 	     it != weak_global_refs.end(); ++it)
 	{
@@ -333,6 +354,7 @@ void ObjectHeap::RemoveWeakGlobalRef(LPOBJECT_REF ref)
 
 bool ObjectHeap::IsGlobalRef(LPOBJECT_REF ref) const
 {
+	VMLock lk;
 	for (size_t i = 0; i < global_refs.size(); i++)
 	{
 		if (global_refs[i] == ref)
@@ -345,6 +367,7 @@ bool ObjectHeap::IsGlobalRef(LPOBJECT_REF ref) const
 
 bool ObjectHeap::IsWeakGlobalRef(LPOBJECT_REF ref) const
 {
+	VMLock lk;
 	for (size_t i = 0; i < weak_global_refs.size(); i++)
 	{
 		if (weak_global_refs[i] == ref)
@@ -365,6 +388,9 @@ void ObjectHeap::MarkGlobalRefs()
 
 void ObjectHeap::MarkJniLocalRoots()
 {
+	// The JNI environment list is mutated when a coroutine finishes, possibly
+	// while this collection runs on another worker.
+	VMLock lk;
 	for (size_t i = 0; i < VMContext::jni_envs.size(); i++)
 	{
 		DarksVM_MarkJniEnvRoots(VMContext::jni_envs[i], this);
@@ -383,10 +409,28 @@ void ObjectHeap::MarkRoots()
 
 void ObjectHeap::gc()
 {
+	// Only one collection at a time.  A native call may reach allocation from
+	// another thread; in that case the collection is skipped rather than
+	// waiting while holding the heap lock.
+	std::unique_lock<std::mutex> gc_lock(gc_mutex, std::try_to_lock);
+	if (!gc_lock.owns_lock())
+	{
+		return;
+	}
 	if (in_gc)
 	{
 		return;
 	}
+	// Hold the heap mutex before stopping the world.  A worker that is blocked
+	// on this mutex is then genuinely stopped for the whole collection, which
+	// makes the scheduler's "waiting for the heap lock" safepoint state stable.
+	// Taking the mutex afterwards would leave a window where such a worker
+	// resumes and runs Java while the heap is being traced.
+	VMLock heap_lock;
+	// Stop every interpreter worker at a safepoint before tracing.  Native
+	// code is treated as stopped: its Java frames are at the call boundary and
+	// its JNI local references are registered roots.
+	Scheduler::Instance().SafepointBegin();
 	in_gc = true;
 
 	ref_index.clear();
@@ -489,10 +533,12 @@ void ObjectHeap::gc()
 	}
 
 	in_gc = false;
+	Scheduler::Instance().SafepointEnd();
 }
 
 bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
 {
+	VMLock lk;
 	if (!obj)
 	{
 		return false;
@@ -519,7 +565,10 @@ bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
 
 bool ObjectHeap::NewObject(lpClass clazz, LPOBJECT_REF &object_ref)
 {
+	// Collect before acquiring the heap mutex: the collector stops the world
+	// and must not run with the heap mutex already held (lock order).
 	MaybeGC();
+	VMLock lk;
 	lpObject obj = new JObject(clazz);
 	if (!obj)
 	{
@@ -541,11 +590,12 @@ bool ObjectHeap::NewObject(lpClass clazz, LPOBJECT_REF &object_ref)
 
 bool ObjectHeap::NewArrayObject(int size, lpClass clazz, LPOBJECT_REF &object_ref)
 {
+	MaybeGC();
+	VMLock lk;
 	if (size < 0)
 	{
 		return false;
 	}
-	MaybeGC();
 	lpObject obj = new JObject(clazz);
 	LPOBJECT_REF ref = NULL;
 	if (!Register(obj, ref) || !obj->newArrayInstance(size))
@@ -565,11 +615,12 @@ bool ObjectHeap::NewArrayObject(int size, lpClass clazz, LPOBJECT_REF &object_re
 
 bool ObjectHeap::NewObjectArrayObject(int size, lpClass clazz, LPOBJECT_REF &object_ref)
 {
+	MaybeGC();
+	VMLock lk;
 	if (size < 0)
 	{
 		return false;
 	}
-	MaybeGC();
 	lpObject obj = new JObject(clazz);
 	LPOBJECT_REF ref = NULL;
 	if (!Register(obj, ref) || !obj->newArrayInstance(DT_REF, size))
@@ -659,6 +710,7 @@ bool ObjectHeap::CreateArrayDimension(lpClass array_class, LPINT32 nums, int lev
 
 bool ObjectHeap::NewMultiArrayObject(LPINT32 nums, int count, lpClass clazz, LPOBJECT_REF &object_ref)
 {
+	VMLock lk;
 	if (!nums || count <= 0 || !clazz)
 	{
 		return false;
@@ -676,6 +728,7 @@ bool ObjectHeap::NewMultiArrayObject(LPINT32 nums, int count, lpClass clazz, LPO
 // data is a UTF-8 byte string.
 bool ObjectHeap::NewStringObject(LPSTR data, int length, LPOBJECT_REF &object_ref)
 {
+	VMLock lk;
 	int unicode_len = 0;
 	unsigned short* unicodes = CommonUtils::Utf8ToUnicode(data, unicode_len);
 	if (!unicodes)
@@ -692,6 +745,7 @@ bool ObjectHeap::NewStringObject(LPSTR data, int length, LPOBJECT_REF &object_re
 // object. length is the number of code units.
 bool ObjectHeap::NewStringObject(unsigned short *data, int length, LPOBJECT_REF &object_ref)
 {
+	VMLock lk;
 	bool transferred = false;
 	{
 		// The char[] and the freshly allocated String are only held by C++
@@ -756,6 +810,7 @@ bool ObjectHeap::NewStringObject(unsigned short *data, int length, LPOBJECT_REF 
 
 bool ObjectHeap::GetObject(OBJECT_REF obj_ref, lpObject &obj)
 {
+	VMLock lk;
 	obj = NULL;
 	if (obj_ref <= 0 || static_cast<size_t>(obj_ref) >= objs.size())
 	{

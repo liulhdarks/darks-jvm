@@ -10,6 +10,8 @@
 
 #include "stdafx.h"
 #include "jni_impl.h"
+#include "vm/executor/vmmutex.h"
+#include "vm/executor/scheduler.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -49,6 +51,10 @@ void DarksVM_InitJniEnv(JNIEnv *env)
 	}
 	env->thread_stack = NULL;
 	env->local_frames = new std::vector<JniLocalFrame *>();
+	// The list is read by the collector from any worker thread.  VMLock also
+	// tells the scheduler that this thread is stopped while it waits for the
+	// heap mutex, so a stop-the-world collection does not wait for it.
+	VMLock lk;
 	VMContext::jni_envs.push_back(env);
 }
 
@@ -58,6 +64,7 @@ void DarksVM_DestroyJniEnv(JNIEnv *env)
 	{
 		return;
 	}
+	VMLock lk;
 	for (size_t i = 0; i < VMContext::jni_envs.size(); i++)
 	{
 		if (VMContext::jni_envs[i] == env)
@@ -386,7 +393,9 @@ extern "C" JNIEXPORT jint JNICALL JNI_MonitorEnter(JNIEnv *env, jobject obj)
 	{
 		return JNI_ERR;
 	}
+	Scheduler::EnterVMLockWait();
 	JniMonitorMutex().lock();
+	Scheduler::ExitVMLockWait();
 	return JNI_OK;
 }
 

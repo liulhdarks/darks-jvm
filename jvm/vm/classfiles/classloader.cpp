@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "classloader.h"
+#include "vm/executor/vmmutex.h"
 #include "vm/exceptions.h"
 #include "env/env.h"
 #include "utils/CommonUtils.h"
@@ -148,6 +149,7 @@ ClassLoader::~ClassLoader()
 
 bool ClassLoader::GetClass(LPCSTR classname, lpClass &jclass)
 {
+	VMLock lk;
 	string s(classname);
 	map<string, lpClass>::iterator it = classMap.find(s);
 	if (it != classMap.end())
@@ -160,47 +162,54 @@ bool ClassLoader::GetClass(LPCSTR classname, lpClass &jclass)
 
 bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool load_super)
 {
-	if (!classname)
+	// The heap mutex must not be held while <clinit> runs: class initialisation
+	// executes Java code, which may suspend at a coroutine blocking point or
+	// safepoint.  Holding the lock across such a suspension would deadlock the
+	// scheduler, because a collection needs the same mutex to stop the world.
 	{
-		throw new VMException((LPSTR)"Class name is null.");
-	}
-	if (GetClass(classname, jclass))
-	{
-		return true;
-	}
-
-	if (parent)
-	{
-		if (parent->FindClass(classname, jclass))
+		VMLock lk;
+		if (!classname)
+		{
+			throw new VMException((LPSTR)"Class name is null.");
+		}
+		if (GetClass(classname, jclass))
 		{
 			return true;
 		}
-	}
 
-	if (FindBootClass(classname, jclass))
-	{
-		return true;
-	}
+		if (parent)
+		{
+			if (parent->FindClass(classname, jclass))
+			{
+				return true;
+			}
+		}
 
-	if (classname[0] == '[')
-	{
-		return DefineArrayClass(classname, jclass);
-	}
+		if (FindBootClass(classname, jclass))
+		{
+			return true;
+		}
 
-	LPBYTE bytes = NULL;
-	int len = 0;
-	LoadClass(classname, bytes, len);
-	if (!bytes)
-	{
-		DebugUtils::trace("class bytes not found for %s\n", classname);
-		throw new VMException((LPSTR)"Fail to load class bytes");
-	}
-	if (DefineClass(bytes, len, jclass))
-	{
+		if (classname[0] == '[')
+		{
+			return DefineArrayClass(classname, jclass);
+		}
+
+		LPBYTE bytes = NULL;
+		int len = 0;
+		LoadClass(classname, bytes, len);
+		if (!bytes)
+		{
+			DebugUtils::trace("class bytes not found for %s\n", classname);
+			throw new VMException((LPSTR)"Fail to load class bytes");
+		}
+		if (!DefineClass(bytes, len, jclass))
+		{
+			return false;
+		}
 		jclass->classloader = this;
-		return jclass->initialize(load_super);
 	}
-	return false;
+	return jclass->initialize(load_super);
 }
 
 bool ClassLoader::FindBootClass(LPCSTR classname, lpClass &jclass)
@@ -260,5 +269,6 @@ bool ClassLoader::DefineArrayClass(LPCSTR classname, lpClass &jclass)
 
 void ClassLoader::StoreClass(lpClass &jclass)
 {
+	VMLock lk;
 	classMap[string(jclass->thisClass->GetName())] = jclass;
 }

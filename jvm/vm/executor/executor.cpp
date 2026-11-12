@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "executor.h"
 #include "context.h"
+#include "scheduler.h"
 
 VMExecutor::VMExecutor()
 {
@@ -21,6 +22,11 @@ void VMExecutor::Initialize()
 {
 	//VMContext::initialize();
 	stack = new ThreadStack();
+	// Attaching the coroutine scheduler main coroutine is deliberately left to
+	// the embedding entry point (java.cpp).  Nested executors created for
+	// class initialisation and string construction also call Initialize(); if
+	// they attached here they could become the process main coroutine and be
+	// destroyed right afterwards, leaving the scheduler with a dangling stack.
 }
 
 void VMExecutor::Execute(LPCSTR class_full_name)
@@ -39,7 +45,7 @@ void VMExecutor::Execute(lpClass clazz)
 	{
 		throw new VMException("Class main method does not exists.");
 	}
-	stack->execute(clazz, clazz->mainMethod);
+	Scheduler::Instance().RunMain(stack, clazz, clazz->mainMethod, NULL, 0);
 }
 
 void VMExecutor::Execute(lpClass clazz, lpMethod method)
@@ -48,7 +54,7 @@ void VMExecutor::Execute(lpClass clazz, lpMethod method)
 	{
 		throw new VMException("Class method is invalid.");
 	}
-	stack->execute(clazz, method);
+	Scheduler::Instance().RunMain(stack, clazz, method, NULL, 0);
 }
 
 void VMExecutor::Execute(lpClass clazz, lpMethod method, lpVariant vars, int count)
@@ -57,5 +63,5 @@ void VMExecutor::Execute(lpClass clazz, lpMethod method, lpVariant vars, int cou
 	{
 		throw new VMException("Class method is invalid.");
 	}
-	stack->execute(clazz, method, vars, count);
+	Scheduler::Instance().RunMain(stack, clazz, method, vars, count);
 }

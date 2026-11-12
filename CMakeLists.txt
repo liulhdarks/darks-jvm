@@ -24,6 +24,8 @@ option(DARKS_JVM_WARNINGS "Enable compiler warnings" ON)
 # ---------------------------------------------------------------------------
 # libffi
 # ---------------------------------------------------------------------------
+find_package(Threads REQUIRED)
+
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(FFI QUIET libffi)
@@ -77,8 +79,10 @@ set(DARKS_JVM_CORE_SOURCES
     jvm/vm/executor/methodarea.cpp
     jvm/vm/executor/nativelibs.cpp
     jvm/vm/executor/objectheap.cpp
+    jvm/vm/executor/scheduler.cpp
     jvm/vm/executor/stackframe.cpp
     jvm/vm/executor/threadstack.cpp
+    jvm/vm/executor/vmmutex.cpp
     jvm/vm/io/bytes_io.cpp
     jvm/vm/io/zipreader.cpp
 )
@@ -102,7 +106,7 @@ target_include_directories(darksvm PUBLIC
     ${FFI_INCLUDE_DIRS}
 )
 target_include_directories(darksvm PRIVATE ${FFI_INCLUDE_DIRS})
-target_link_libraries(darksvm PUBLIC ${FFI_LIBRARIES})
+target_link_libraries(darksvm PUBLIC ${FFI_LIBRARIES} Threads::Threads)
 if(ZLIB_FOUND)
     target_link_libraries(darksvm PUBLIC ${ZLIB_LIBRARIES})
     target_include_directories(darksvm PUBLIC ${ZLIB_INCLUDE_DIRS})
@@ -160,6 +164,7 @@ set(DARKS_JVM_NATIVE_SOURCES
     native/java/lang/core_md.cpp
     native/java/lang/reflect_md.cpp
     native/java/lang/system_md.cpp
+    native/java/lang/thread_md.cpp
     native/java/lang/string_md.cpp
     native/java/io/filesystem.cpp
     native/java/io/printstream.cpp

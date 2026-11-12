@@ -2,6 +2,7 @@
 #include "threadstack.h"
 #include "exec_common.h"
 #include "objectheap.h"
+#include "scheduler.h"
 
 #define LOOP_TRUE 1
 
@@ -62,6 +63,7 @@ EventNotify ThreadStack::execute(lpClass clazz, lpMethod method)
 	size_t saved_depth = unwind_stop_depth;
 	unwind_stop_depth = frames.size() - 1;
 	has_return = false;
+	yield_pending = false;
 	EventNotify result = start();
 	unwind_stop_depth = saved_depth;
 	return result;
@@ -75,6 +77,7 @@ EventNotify ThreadStack::execute(lpClass clazz, lpMethod method, lpVariant vars,
 	size_t saved_depth = unwind_stop_depth;
 	unwind_stop_depth = frames.size() - 1;
 	has_return = false;
+	yield_pending = false;
 	EventNotify result = start();
 	unwind_stop_depth = saved_depth;
 	return result;
@@ -105,6 +108,7 @@ EventNotify ThreadStack::start()
 		EventNotify ev = top_frame->Execute();
 		if (ev == EN_POP)
 		{
+			Scheduler::Instance().ReleaseFrameMonitors(top_frame);
 			delete top_frame;
 			frames.pop();
 		}
@@ -112,14 +116,22 @@ EventNotify ThreadStack::start()
 		{
 			continue;
 		}
+		else if (ev == EN_YIELD || ev == EN_SAFEPOINT)
+		{
+			// Suspend without touching the Java frame stack: the coroutine is
+			// resumed by calling start() again.
+			return ev;
+		}
 		else if (ev == EN_RETURN)
 		{
+			Scheduler::Instance().ReleaseFrameMonitors(top_frame);
 			delete top_frame;
 			frames.pop();
 			return EN_RETURN;
 		}
 		else if (ev == EN_EXCEPTION)
 		{
+			Scheduler::Instance().ReleaseFrameMonitors(top_frame);
 			delete top_frame;
 			frames.pop();
 			// Unwind the Java stack looking for an exception-table handler.
@@ -135,6 +147,7 @@ EventNotify ThreadStack::start()
 					handled = true;
 					break;
 				}
+				Scheduler::Instance().ReleaseFrameMonitors(caller);
 				delete caller;
 				frames.pop();
 			}

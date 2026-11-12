@@ -3,6 +3,7 @@
 #include "vm/types.h"
 #include "jobject.h"
 #include "jclass.h"
+#include "vmmutex.h"
 #include <map>
 #include <utility>
 #include <vector>
@@ -152,6 +153,7 @@ private:
 	std::vector<LPOBJECT_REF> weak_global_refs;
 	std::vector<ThreadStack *> thread_stacks;
 
+	std::mutex gc_mutex;
 	bool gc_enabled;
 	bool gc_log;
 	bool in_gc;

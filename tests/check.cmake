@@ -13,12 +13,22 @@ if(DEFINED REMOVE_FILE AND EXISTS "${REMOVE_FILE}")
     file(REMOVE "${REMOVE_FILE}")
 endif()
 
-execute_process(
-    COMMAND "${PROG}" ${ARGS}
-    RESULT_VARIABLE rc
-    OUTPUT_VARIABLE out
-    ERROR_VARIABLE err
-)
+if(DEFINED TIMEOUT)
+    execute_process(
+        COMMAND "${PROG}" ${ARGS}
+        RESULT_VARIABLE rc
+        OUTPUT_VARIABLE out
+        ERROR_VARIABLE err
+        TIMEOUT ${TIMEOUT}
+    )
+else()
+    execute_process(
+        COMMAND "${PROG}" ${ARGS}
+        RESULT_VARIABLE rc
+        OUTPUT_VARIABLE out
+        ERROR_VARIABLE err
+    )
+endif()
 
 set(all_output "${out}${err}")
 

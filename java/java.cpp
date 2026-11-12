@@ -20,6 +20,7 @@
 #include "vm/executor/context.h"
 #include "vm/exceptions.h"
 #include "vm/executor/javaexception.h"
+#include "vm/executor/scheduler.h"
 
 #include <cstdio>
 #include <iostream>
@@ -215,6 +216,9 @@ static int run_class(const string &class_name, int argc, char **argv)
 		args_var.heapPtr = args_ref;
 		exec = new VMExecutor();
 		exec->Initialize();
+		// Only the top-level executor becomes the scheduler's main coroutine.
+		// Executors created internally for class initialisation stay nested.
+		Scheduler::Instance().AttachMain(exec->GetThreadStack());
 		exec->Execute(clazz, clazz->mainMethod, &args_var, 1);
 		if (VMContext::pending_exception)
 		{
@@ -247,6 +251,7 @@ static int run_class(const string &class_name, int argc, char **argv)
 		delete exec;
 		exec = NULL;
 	}
+	Scheduler::Instance().DetachMain();
 	VMContext::destroy();
 	return result;
 }

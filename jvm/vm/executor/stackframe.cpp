@@ -10,6 +10,8 @@
 #include "methodarea.h"
 #include "javaexception.h"
 #include "jni/jni_impl.h"
+#include "scheduler.h"
+#include "vmmutex.h"
 
 #include <ffi.h>
 
@@ -118,6 +120,9 @@ StackFrame::StackFrame()
 	codes = NULL;
 	prev_frame = NULL;
 	jni_env = NULL;
+	pending_sync_obj = NULL;
+	pending_sync_class = NULL;
+	pending_sync_held = false;
 }
 
 StackFrame::StackFrame(lpThreadStack thread_stack, lpClass clazz, lpMethod method, lpClassLoader class_loader)
@@ -132,6 +137,9 @@ StackFrame::StackFrame(lpThreadStack thread_stack, lpClass clazz, lpMethod metho
 	codes = NULL;
 	prev_frame = NULL;
 	jni_env = NULL;
+	pending_sync_obj = NULL;
+	pending_sync_class = NULL;
+	pending_sync_held = false;
 	static_method = method->isStatic();
 }
 
@@ -235,6 +243,41 @@ EventNotify StackFrame::ExecuteCode()
 	U2 u2 = 0;
 	LONG64 lValue,lValue2;
 	double dValue,dValue2;
+	if (thread_stack && thread_stack->injected_exception)
+	{
+		// A blocking call was interrupted (or a monitor grant carried an
+		// exception).  Raise it at the suspended call site so that ordinary
+		// exception-table unwinding (including finally blocks) runs.
+		VMContext::pending_exception = thread_stack->injected_exception;
+		thread_stack->injected_exception = NULL;
+		return ExceptionEvent();
+	}
+	if (thread_stack && thread_stack->yield_pending)
+	{
+		// A blocking primitive or contended monitor parked this coroutine from
+		// inside an instruction handler that reported success; suspend now.
+		thread_stack->yield_pending = false;
+		return EN_YIELD;
+	}
+	if (thread_stack)
+	{
+		if (--thread_stack->safepoint_countdown <= 0)
+		{
+			thread_stack->safepoint_countdown = 512;
+			if (Scheduler::Instance().PollSafepoint(thread_stack))
+			{
+				return EN_SAFEPOINT;
+			}
+		}
+		if (--thread_stack->fairness_countdown <= 0)
+		{
+			thread_stack->fairness_countdown = 32768;
+			if (Scheduler::Instance().FairnessYield(thread_stack))
+			{
+				return EN_YIELD;
+			}
+		}
+	}
 	last_pc = pc;
 	if (op_stack)
 	{
@@ -1193,11 +1236,46 @@ EventNotify StackFrame::ExecuteCode()
 		break;
 		//////////////// Thread Synchronization ////////////////////
 
-	case monitorenter:// Enter and acquire object monitor 
+	case monitorenter:// Enter and acquire object monitor
+		{
+			Slot obj_slot;
+			op_stack->top(0, obj_slot);
+			if (!obj_slot.heapPtr)
+			{
+				VMContext::pending_exception = CreateJavaException(
+					"java/lang/NullPointerException", "monitorenter on null object");
+				return ExceptionEvent();
+			}
+			if (!Scheduler::Instance().MonitorEnter(this, obj_slot.heapPtr))
+			{
+				// Suspend; when granted the instruction is retried.  The
+				// objectref stays on the stack for the retry.
+				pc = last_pc;
+				return EN_YIELD;
+			}
+			Slot acquired_slot;
+			op_stack->pop(acquired_slot);
+		}
+		break;
+
 	case monitorexit:// Release and exit object monitor
-		// Single-threaded VM: monitors are accepted as no-ops, but both
-		// opcodes still pop their objectref operand.
-		op_stack->pop(s1);
+		{
+			Slot obj_slot;
+			op_stack->pop(obj_slot);
+			if (obj_slot.heapPtr)
+			{
+				for (size_t i = monitors_held.size(); i > 0; i--)
+				{
+					if (monitors_held[i - 1].second == NULL &&
+					    monitors_held[i - 1].first == obj_slot.heapPtr)
+					{
+						monitors_held.erase(monitors_held.begin() + (i - 1));
+						break;
+					}
+				}
+				Scheduler::Instance().MonitorExit(obj_slot.heapPtr);
+			}
+		}
 		break;
 
 	case checkcast:
@@ -2155,6 +2233,91 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		}
 	}
 	//动态分派 多态处理-------------------------------------
+	// ---- coroutine-blocking primitives --------------------------------
+	// Thread.sleep/yield/join and Object.wait/notify are native API entry
+	// points.  They are handled here (before libffi dispatch) so that the
+	// coroutine is suspended instead of occupying an OS thread.
+	{
+		const char *decl = (clazz && clazz->thisClass && clazz->thisClass->GetName())
+			? clazz->thisClass->GetName() : "";
+		const char *mn = method->methodName ? method->methodName->GetName() : "";
+		if (strcmp(decl, "java/lang/Thread") == 0 && method->isStatic() &&
+		    strcmp(mn, "sleep0") == 0)
+		{
+			LONG64 millis = popLong();
+			bool suspended = Scheduler::Instance().SleepCurrent(thread_stack, millis);
+			if (VMContext::pending_exception)
+			{
+				return ExceptionEvent();
+			}
+			if (suspended)
+			{
+				thread_stack->yield_pending = true;
+			}
+			return true;
+		}
+		if (strcmp(decl, "java/lang/Thread") == 0 && method->isStatic() &&
+		    strcmp(mn, "yield0") == 0)
+		{
+			if (Scheduler::Instance().YieldCurrent(thread_stack))
+			{
+				thread_stack->yield_pending = true;
+			}
+			return true;
+		}
+		if (strcmp(decl, "java/lang/Thread") == 0 && !method->isStatic() &&
+		    strcmp(mn, "join0") == 0)
+		{
+			LONG64 millis = popLong();
+			Slot recv;
+			op_stack->pop(recv);
+			bool suspended = Scheduler::Instance().JoinCurrent(thread_stack, recv.heapPtr, millis);
+			if (VMContext::pending_exception)
+			{
+				return ExceptionEvent();
+			}
+			if (suspended)
+			{
+				thread_stack->yield_pending = true;
+			}
+			return true;
+		}
+		if (strcmp(decl, "java/lang/Object") == 0 && !method->isStatic() &&
+		    strcmp(mn, "wait") == 0)
+		{
+			int64_t millis = 0;
+			if (!type_desc.empty())
+			{
+				millis = popLong();
+			}
+			Slot recv;
+			op_stack->pop(recv);
+			bool suspended = Scheduler::Instance().WaitCurrent(thread_stack, recv.heapPtr, millis);
+			if (VMContext::pending_exception)
+			{
+				return ExceptionEvent();
+			}
+			if (suspended)
+			{
+				thread_stack->yield_pending = true;
+			}
+			return true;
+		}
+		if (strcmp(decl, "java/lang/Object") == 0 && !method->isStatic() &&
+		    (strcmp(mn, "notify") == 0 || strcmp(mn, "notifyAll") == 0))
+		{
+			Slot recv;
+			op_stack->pop(recv);
+			Scheduler::Instance().NotifyCurrent(thread_stack, recv.heapPtr,
+				strcmp(mn, "notifyAll") == 0);
+			if (VMContext::pending_exception)
+			{
+				return ExceptionEvent();
+			}
+			return true;
+		}
+	}
+
 	if (type != SPECIAL_METHOD
 		&& !method->isSpecial()
 		&& !method->isStatic()
@@ -2208,6 +2371,53 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		}
 	}
 	//----------------------------------------------------------------------------------------------
+	// Synchronized methods acquire the receiver (or the declaring class for
+	// static methods) before the call; the monitor is released when the callee
+	// frame is popped, or right after a native call returns.
+	if ((method->accFlag & ACM_SYNCHRONIZED) != 0)
+	{
+		bool acquired = false;
+		if (method->isStatic())
+		{
+			acquired = Scheduler::Instance().MonitorEnterClass(this, clazz);
+			if (acquired)
+			{
+				pending_sync_obj = NULL;
+				pending_sync_class = clazz;
+				pending_sync_held = true;
+			}
+		}
+		else
+		{
+			int arg_slots = 0;
+			for (size_t ti = 0; ti < type_desc.size(); ti++)
+			{
+				DATA_TYPE at = type_desc[ti].data_type;
+				arg_slots += (at == DT_LONG || at == DT_DOUBLE) ? 2 : 1;
+			}
+			Slot recv;
+			op_stack->top(arg_slots, recv);
+			if (!recv.heapPtr)
+			{
+				VMContext::pending_exception = CreateJavaException(
+					"java/lang/NullPointerException", "null object reference");
+				return false;
+			}
+			acquired = Scheduler::Instance().MonitorEnter(this, recv.heapPtr);
+			if (acquired)
+			{
+				pending_sync_obj = recv.heapPtr;
+				pending_sync_class = NULL;
+				pending_sync_held = true;
+			}
+		}
+		if (!acquired)
+		{
+			pc = last_pc;
+			thread_stack->yield_pending = true;
+			return true;
+		}
+	}
 	if (!method->isNative())
 	{
 		return ExecuteNormalMethod(clazz, method, type_desc);
@@ -2228,6 +2438,14 @@ bool StackFrame::ExecuteNormalMethod(lpClass clazz, lpMethod method, vector<Type
 	}
 	frame->prev_frame = this;
 	frame->init();
+
+	if (pending_sync_held)
+	{
+		frame->monitors_held.push_back(std::make_pair(pending_sync_obj, pending_sync_class));
+		pending_sync_held = false;
+		pending_sync_obj = NULL;
+		pending_sync_class = NULL;
+	}
 
 	return StackToLocal(frame, type_desc, !method->isStatic());
 }
@@ -2501,8 +2719,24 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 	}
 
 	NativeValue ret;
+	Scheduler::Instance().EnterNative();
 	ffi_call(&cif, (void (*)(void))native_func, &ret, arg_values.data());
+	Scheduler::Instance().ExitNative();
 	JniSetCurrentEnv(prev_jni_env);
+	if (pending_sync_held)
+	{
+		pending_sync_held = false;
+		if (pending_sync_class)
+		{
+			Scheduler::Instance().MonitorExitClass(pending_sync_class);
+		}
+		else
+		{
+			Scheduler::Instance().MonitorExit(pending_sync_obj);
+		}
+		pending_sync_obj = NULL;
+		pending_sync_class = NULL;
+	}
 
 	bool raised = VMContext::pending_exception != NULL;
 	jobject result_ref = NULL;
@@ -3148,6 +3382,7 @@ bool StackFrame::ExecuteNewMultiArray(U2 index, int count)
 
 void StackFrame::SetArrayIndex(int index, Slot &slot)
 {
+	VMLock lk;
 	Slot ary;
 	op_stack->pop(ary);
 	LPOBJECT_REF obj_ref = ary.heapPtr;
@@ -3173,6 +3408,7 @@ void StackFrame::SetArrayIndex(int index, Slot &slot)
 
 void StackFrame::LoadArray(DATA_TYPE data_type)
 {
+	VMLock lk;
 	Slot ary, slot;
 	op_stack->pop(slot);
 	op_stack->pop(ary);
@@ -3263,6 +3499,7 @@ void StackFrame::LoadArray(DATA_TYPE data_type)
 
 void StackFrame::ArrayLength()
 {
+	VMLock lk;
 	Slot slot;
 	op_stack->pop(slot);
 	LPOBJECT_REF obj_ref = slot.heapPtr;
@@ -3284,6 +3521,7 @@ void StackFrame::ArrayLength()
 
 void StackFrame::PutStatic(U2 index)
 {
+	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
@@ -3326,6 +3564,7 @@ void StackFrame::PutStatic(U2 index)
 
 void StackFrame::GetStatic(U2 index)
 {
+	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
@@ -3369,6 +3608,7 @@ void StackFrame::GetStatic(U2 index)
 
 void StackFrame::GetField(U2 index)
 {
+	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
@@ -3419,6 +3659,7 @@ void StackFrame::GetField(U2 index)
 
 void StackFrame::PutField(U2 index)
 {
+	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{

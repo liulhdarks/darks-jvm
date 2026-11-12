@@ -27,6 +27,13 @@ public:
 	// invocations (JNI Call*Method) set it so a Java exception propagates back
 	// to the calling native frame instead of destroying it.
 	size_t unwind_stop_depth;
+	// Set while a blocking native (sleep/wait/join) suspended the coroutine.
+	bool yield_pending;
+	// Exception to raise at the next interpreter instruction (interrupt).
+	LPOBJECT_REF injected_exception;
+	// Interpreter poll counters (safepoints and cooperative preemption).
+	int safepoint_countdown;
+	int fairness_countdown;
 
 public:
 	ThreadStack()
@@ -37,6 +44,10 @@ public:
 		return_wide = false;
 		has_return = false;
 		unwind_stop_depth = 0;
+		yield_pending = false;
+		injected_exception = NULL;
+		safepoint_countdown = 512;
+		fairness_countdown = 32768;
 		return_value.iValue = 0;
 		return_value_hi.iValue = 0;
 		DarksVM_InitJniEnv(jni_env);
