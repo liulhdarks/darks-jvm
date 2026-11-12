@@ -31,3 +31,21 @@ if(DEFINED EXPECT_TEXT)
             "output:\n${all_output}")
     endif()
 endif()
+
+if(DEFINED EXPECT_TEXT2)
+    if(NOT all_output MATCHES "${EXPECT_TEXT2}")
+        message(FATAL_ERROR
+            "check.cmake: output did not match '${EXPECT_TEXT2}'\n"
+            "command: ${PROG} ${ARGS}\n"
+            "output:\n${all_output}")
+    endif()
+endif()
+
+if(DEFINED EXPECT_TEXT3)
+    if(NOT all_output MATCHES "${EXPECT_TEXT3}")
+        message(FATAL_ERROR
+            "check.cmake: output did not match '${EXPECT_TEXT3}'\n"
+            "command: ${PROG} ${ARGS}\n"
+            "output:\n${all_output}")
+    endif()
+endif()

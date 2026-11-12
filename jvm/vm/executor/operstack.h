@@ -141,6 +141,13 @@ public:
 	{
 		return index;
 	}
+
+	// Raw slot access for the conservative GC root scan. Only the live part
+	// (0..size()) is meaningful.
+	Slot *data()
+	{
+		return slots;
+	}
 };
 
 typedef OperStack *lpOperStack;

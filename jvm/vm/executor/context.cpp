@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "context.h"
+#include "methodarea.h"
 
 lpObjectHeap VMContext::object_heap = NULL;
 lpClassLoader VMContext::bootstrap_classloader = NULL;
@@ -29,6 +30,9 @@ bool VMContext::initialize()
 
 bool VMContext::destroy()
 {
+	// Class statics belong to this VM instance; drop them before the heap
+	// so the field values do not outlive the objects they point to.
+	MethodArea::ClearStaticFields();
 	if (object_heap)
 	{
 		delete object_heap;

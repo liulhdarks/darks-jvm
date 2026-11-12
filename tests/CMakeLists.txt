@@ -6,6 +6,9 @@ find_program(JAVA NAMES java)
 add_executable(unit_tests unit_tests.cpp)
 target_link_libraries(unit_tests PRIVATE darksvm)
 
+add_executable(gc_tests gc_tests.cpp)
+target_link_libraries(gc_tests PRIVATE darksvm)
+
 set(CLASSES_DIR "${CMAKE_BINARY_DIR}/classes")
 
 if(JAVAC)
@@ -16,6 +19,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/io/PrintStream.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/Hello.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/Clock.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/GcStress.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
     add_custom_command(
@@ -29,6 +33,7 @@ if(JAVAC)
     )
     add_custom_target(java_classes ALL DEPENDS "${CLASS_STAMP}")
     add_dependencies(unit_tests java_classes)
+    add_dependencies(gc_tests java_classes)
 
     set(CHECK "${CMAKE_CURRENT_SOURCE_DIR}/check.cmake")
     set(JVM "$<TARGET_FILE:darks-jvm>")
@@ -37,6 +42,23 @@ if(JAVAC)
         COMMAND "${CMAKE_COMMAND}" -DPROG=$<TARGET_FILE:unit_tests>
                 "-DARGS=${CLASSES_DIR}" -DEXPECT_RC=0
                 -DEXPECT_TEXT=54/54 -P "${CHECK}")
+
+    add_test(NAME gc_heap
+        COMMAND "${CMAKE_COMMAND}" -DPROG=$<TARGET_FILE:gc_tests>
+                "-DARGS=${CLASSES_DIR}" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
+
+    add_test(NAME gc_stress_survivors
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
+                "-DEXPECT_TEXT2=gc: static array survived"
+                "-DEXPECT_TEXT3=gc: local chain survived" -P "${CHECK}")
+
+    add_test(NAME gc_stress_collect
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc-collect" -P "${CHECK}")
 
     add_test(NAME dump_hello
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}

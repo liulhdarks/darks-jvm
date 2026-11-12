@@ -6,6 +6,14 @@
 class JVM_API ClassLoader
 {
 
+public:
+	// Loaded classes are permanent GC roots: their constant pools may cache
+	// java/lang/String objects created for string literals.
+	const std::map<string, lpClass> &GetClasses() const
+	{
+		return classMap;
+	}
+
 private:
 	ClassLoader *parent;
 
