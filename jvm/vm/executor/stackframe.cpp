@@ -137,7 +137,7 @@ EventNotify StackFrame::ExecuteCode()
 
 	case lconst_0:// 9 /*(0x9)*/ 
 	case lconst_1:// 10 /*(0xa)*/
-		op_stack->push((long)(code - lconst_0));
+		op_stack->push(static_cast<LONG64>(code - lconst_0));
 		break;
 	case fconst_0:
 	case fconst_1:

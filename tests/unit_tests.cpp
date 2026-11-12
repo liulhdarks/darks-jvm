@@ -90,6 +90,22 @@ int main(int argc, char **argv)
 	{
 		classes_dir = argv[1];
 	}
+	else
+	{
+		// When the binary is run directly (as opposed to through CTest, which
+		// passes the classes directory) there is no build-system context. Look
+		// for <build>/classes relative to the executable so that
+		// build/bin/unit_tests works from any working directory.
+		std::string exe_dir = dk::DirectoryName(dk::ExecutablePath());
+		if (!exe_dir.empty())
+		{
+			std::string candidate = dk::JoinPath(exe_dir, "../classes");
+			if (dk::FileExists(dk::JoinPath(candidate, "Hello.class")))
+			{
+				classes_dir = candidate;
+			}
+		}
+	}
 
 	// ---------------------------------------------------------------- UTF-8
 	const char ascii[] = "abc";
