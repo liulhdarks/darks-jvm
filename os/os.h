@@ -1,20 +1,26 @@
 #pragma once
 
+#include "common.h"
 
+#if defined(_WIN32)
 #define OS_API __declspec(dllexport)
+#else
+#define OS_API __attribute__((visibility("default")))
+#endif
 
+// Thin OS portability facade used by the VM and the native library.
 class OS_API OS
 {
 
 public:
 
-	static __int64 GetCurrentTimeMillis();
+	static LONG64 GetCurrentTimeMillis();
 
-	static long LoadNativeLibrary(const char* libs_name);
+	static void *LoadNativeLibrary(const char *libs_name);
 
-	static void ReleaseNativeLibrary(long handle);
+	static void ReleaseNativeLibrary(void *handle);
 
-	static char* MapLibraryName(const char* libs_name);
+	static char *MapLibraryName(const char *libs_name);
 
-	static void* GetNativeFunction(long handle, const char* func_name);
+	static void *GetNativeFunction(void *handle, const char *func_name);
 };

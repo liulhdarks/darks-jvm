@@ -3,8 +3,8 @@
 #include "common.h"
 #include "jni/jni.h"
 
-typedef LPVOID (JNICALL *NATIVE_FUNC)(...);
-typedef long LIB_HANDLE;
+typedef void *(JNICALL *NATIVE_FUNC)(...);
+typedef void *LIB_HANDLE;
 
 class NativeLibrary
 {

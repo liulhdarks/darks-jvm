@@ -1,7 +1,9 @@
-#pragma once;
+#pragma once
 
 #include "common.h"
 #include "vm/types.h"
+#include "platform/platform.h"
+#include "platform/platform.h"
 
 class JVM_API BytesInputStream
 {
@@ -28,6 +30,29 @@ public:
 		this->cursor = cursor;
 	}
 
+	int Tell() const
+	{
+		return cursor;
+	}
+
+	void Skip(int count)
+	{
+		if (count <= 0)
+		{
+			return;
+		}
+		cursor += count;
+		if (cursor > length)
+		{
+			cursor = length;
+		}
+	}
+
+	int Remaining() const
+	{
+		return length - cursor;
+	}
+
 	bool Vaildate(int offset)
 	{
 		int index = cursor + offset;
@@ -35,7 +60,7 @@ public:
 		{
 			return true;
 		}
-		cout<<"Bytes stream is invalid"<<endl;
+		dk::DebugPrint("Bytes stream is invalid\n");
 		return false;
 	}
 
@@ -59,7 +84,7 @@ public:
 
 	U8 ReadU8();
 
-	inline bool ReadBytes(int length, LPBYTE &result, bool reverse = false);
+	bool ReadBytes(int length, LPBYTE &result, bool reverse = false);
 
 	bool ReadString(int length, LPSTR &result);
 

@@ -4,9 +4,10 @@
 Field::Field()
 {
 	fieldName = NULL;
-	fieldName = NULL;
+	fieldDesc = NULL;
 	constValue = NULL;
 	attrCount = 0;
+	accFlag = 0;
 	simple_name = NULL;
 }
 
@@ -17,15 +18,24 @@ Field::~Field()
 		delete constValue;
 		constValue = NULL;
 	}
+	if (simple_name)
+	{
+		delete[] simple_name;
+		simple_name = NULL;
+	}
 }
 
 LPSTR &Field::GetSimpleName()
 {
 	if (!simple_name)
 	{
-		int len = strlen(fieldName->GetName()) + strlen(fieldDesc->GetName()) + 2;
+		LPCSTR name = fieldName ? fieldName->GetName() : "";
+		LPCSTR desc = fieldDesc ? fieldDesc->GetName() : "";
+		if (!name) name = "";
+		if (!desc) desc = "";
+		size_t len = strlen(name) + strlen(desc) + 2;
 		simple_name = new CHAR[len];
-		sprintf(simple_name, "%s:%s", fieldName->GetName(), fieldDesc->GetName());
+		snprintf(simple_name, len, "%s:%s", name, desc);
 	}
 	return simple_name;
 }
@@ -54,38 +64,43 @@ void FieldValue::initialize()
 	{
 		return;
 	}
-	U1 tag = field->constValue->constant->tag;
+	lpConstant constant = field->constValue->constant;
+	if (!constant)
+	{
+		return;
+	}
+	U1 tag = constant->tag;
 	switch (tag)
 	{
 	case INTEGER_CONSTANT:
 		{
-			IntegerConstant *cv = (IntegerConstant *)field->constValue->constant;
-			field_value.iValue = cv->bytes;
+			IntegerConstant *cv = (IntegerConstant *)constant;
+			field_value.iValue = static_cast<int>(cv->bytes);
 			break;
 		}
 	case FLOAT_CONSTANT:
 		{
-			FloatConstant *cv = (FloatConstant *)field->constValue->constant;
+			FloatConstant *cv = (FloatConstant *)constant;
 			field_value.set(cv->bytes, 4);
 			break;
 		}
 	case LONG_CONSTANT:
 		{
-			LongConstant *cv = (LongConstant *)field->constValue->constant;
+			LongConstant *cv = (LongConstant *)constant;
 			WByteValue bv(cv->bytes1, cv->bytes2);
 			field_value.lValue = bv.lValue;
 			break;
 		}
 	case DOUBLE_CONSTANT:
 		{
-			DoubleConstant *cv = (DoubleConstant *)field->constValue->constant;
+			DoubleConstant *cv = (DoubleConstant *)constant;
 			WByteValue bv(cv->bytes2, cv->bytes1);
 			field_value.dValue = bv.dValue;
 			break;
 		}
 	case STRING_CONSTANT:
 		{
-			StringConstant *st = (StringConstant*)field->constValue->constant;
+			StringConstant *st = (StringConstant*)constant;
 			field_value.heapPtr = st->GetString();
 			break;
 		}

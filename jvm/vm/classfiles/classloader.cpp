@@ -5,6 +5,7 @@
 #include "utils/CommonUtils.h"
 #include "utils/FileUtils.h"
 #include "parseclass.h"
+#include "platform/platform.h"
 
 ClassLoader::ClassLoader()
 {
@@ -29,6 +30,7 @@ ClassLoader::~ClassLoader()
 			it->second = NULL;
 		}
 	}
+	classMap.clear();
 }
 
 bool ClassLoader::GetClass(LPCSTR classname, lpClass &jclass)
@@ -45,6 +47,10 @@ bool ClassLoader::GetClass(LPCSTR classname, lpClass &jclass)
 
 bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool load_super)
 {
+	if (!classname)
+	{
+		throw new VMException((LPSTR)"Class name is null.");
+	}
 	if (GetClass(classname, jclass))
 	{
 		return true;
@@ -67,26 +73,20 @@ bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool load_super)
 	{
 		return DefineArrayClass(classname, jclass);
 	}
-	else
-	{
-		LPBYTE bytes = NULL;
-		int len = 0;
-		LoadClass(classname, bytes, len);
-		if (!bytes)
-		{
-			throw VMException("Fail to load class bytes");
-		}
-		if (DefineClass(bytes, len, jclass))
-		{
-			jclass->classloader = this;
-			return jclass->initialize(load_super);
-		}
-		else
-		{
-			return false;
-		}
-	}
 
+	LPBYTE bytes = NULL;
+	int len = 0;
+	LoadClass(classname, bytes, len);
+	if (!bytes)
+	{
+		throw new VMException((LPSTR)"Fail to load class bytes");
+	}
+	if (DefineClass(bytes, len, jclass))
+	{
+		jclass->classloader = this;
+		return jclass->initialize(load_super);
+	}
+	return false;
 }
 
 bool ClassLoader::FindBootClass(LPCSTR classname, lpClass &jclass)
@@ -97,36 +97,50 @@ bool ClassLoader::FindBootClass(LPCSTR classname, lpClass &jclass)
 void ClassLoader::LoadClass(LPCSTR classname, LPBYTE &bytes, int &length)
 {
 	string clazz(classname);
-	if (clazz.find('.') != string::npos)
+	for (size_t i = 0; i < clazz.size(); i++)
 	{
-		CommonUtils::ReplaceStr(clazz, ".", "/");
+		if (clazz[i] == '.')
+		{
+			clazz[i] = '/';
+		}
 	}
 	clazz.append(".class");
-	char path[256] = {0};
+
 	vector<string> classpath;
 	Environment::GetClassPath(&classpath);
-	if (classpath.empty())
+	// A missing classpath is not fatal by itself; the class simply is not found
+	// and the caller reports a class-not-found error (exit code 4).
+	for (size_t i = 0; i < classpath.size(); i++)
 	{
-		throw VMException("Class path is empty.");
-	}
-	int len = classpath.size();
-	for (int i = 0; i < len; i++)
-	{
-		memset(path, 0, sizeof(path));
-		string cp = classpath[i];
-		sprintf(path, "%s%s", cp.c_str(), clazz.c_str());
-		if (access(path, 0) == 0)
+		string path = dk::JoinPath(classpath[i], clazz);
+		if (!dk::FileExists(path))
 		{
-			FileUtils::ReadFile(path, bytes, length);
-			break;
+			continue;
 		}
+		vector<uint8_t> data;
+		if (!dk::ReadFileBytes(path, data))
+		{
+			continue;
+		}
+		length = static_cast<int>(data.size());
+		// parse_class_bytes takes ownership of the buffer (BytesInputStream
+		// deletes it), so hand it a heap copy.
+		bytes = new BYTE[data.empty() ? 1 : data.size()];
+		if (!data.empty())
+		{
+			memcpy(bytes, data.data(), data.size());
+		}
+		return;
 	}
 }
 
 bool ClassLoader::DefineClass(LPBYTE bytes, int length, lpClass &jclass)
 {
 	bool result = parse_class_bytes(bytes, length, jclass);
-	classMap[string(jclass->thisClass->GetName())] = jclass;
+	if (result && jclass && jclass->thisClass && jclass->thisClass->GetName())
+	{
+		classMap[string(jclass->thisClass->GetName())] = jclass;
+	}
 	return result;
 }
 
@@ -137,11 +151,10 @@ bool ClassLoader::DefineArrayClass(LPCSTR classname, lpClass &jclass)
 	{
 		return false;
 	}
-	int len = strlen(classname);
 	jclass->thisClass = new ClassConstant();
+	size_t len = strlen(classname);
 	jclass->thisClass->name = new CHAR[len + 1];
-	strcpy(jclass->thisClass->name, classname);
-	jclass->thisClass->name[len] = '\0';
+	memcpy(jclass->thisClass->name, classname, len + 1);
 	classMap[string(jclass->thisClass->GetName())] = jclass;
 	return true;
 }

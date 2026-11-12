@@ -5,3 +5,6 @@
 .log
 Debug/
 ipch/
+# CMake build trees
+build/
+build-*/

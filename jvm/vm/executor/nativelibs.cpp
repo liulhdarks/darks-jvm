@@ -1,6 +1,6 @@
 #include "stdafx.h"
 #include "nativelibs.h"
-#include "utils\DebugUtils.h"
+#include "utils/DebugUtils.h"
 
 NativeLibrary::NativeLibrary()
 {
@@ -51,22 +51,21 @@ bool NativeLibraryManager::LoadNativeLibrary(LPCSTR libs_name)
 	{
 		return true;
 	}
-	LPSTR real_name = MapLibraryName(libs_name);
-	if (real_name)
+	char *mapped_name = MapLibraryName(libs_name);
+	if (!mapped_name)
 	{
-		lpNativeLibrary native_lib = new NativeLibrary(str_libs);
-		native_lib->handle = OS::LoadNativeLibrary(real_name);
-		if (native_lib->handle)
-		{
-			DebugUtils::print(2, "Load native library ", real_name);
-			libs_map[str_libs] = native_lib;
-			return true;
-		}
-		else
-		{
-			return false;
-		}
+		return false;
 	}
+	lpNativeLibrary native_lib = new NativeLibrary(str_libs);
+	native_lib->handle = OS::LoadNativeLibrary(mapped_name);
+	delete[] mapped_name;
+	if (native_lib->handle)
+	{
+		DebugUtils::print(2, "Load native library ", libs_name);
+		libs_map[str_libs] = native_lib;
+		return true;
+	}
+	delete native_lib;
 	return false;
 }
 

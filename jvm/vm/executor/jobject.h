@@ -20,6 +20,10 @@ public:
 	int array_length;
 	DATA_TYPE array_data_type;
 
+private:
+	void DeleteArray();
+
+public:
 	JObject()
 	{
 		obj_class = NULL;
@@ -53,6 +57,7 @@ public:
 
 	bool newArrayInstance(DATA_TYPE data_type, int size);
 
+	// Takes ownership of a buffer allocated with new[].
 	void SetData(DATA_TYPE data_type, LPVOID data, int size);
 
 	void SetArrayIndex(int index, Slot &slot);

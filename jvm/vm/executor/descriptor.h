@@ -3,6 +3,8 @@
 #include "common.h"
 #include "vm/types.h"
 
+#include <string>
+
 typedef enum
 {
 	DT_INT = 1, DT_SHORT, DT_CHAR, DT_BYTE, DT_LONG, 
@@ -15,7 +17,7 @@ typedef struct TypeDesc
 	int array_level;
 	bool check_array;
 	DATA_TYPE data_type;
-	LPSTR class_name;
+	std::string class_name;
 
 	TypeDesc(){reset();}
 
@@ -24,7 +26,7 @@ typedef struct TypeDesc
 		array_level = 0;
 		check_array = false;
 		data_type = DT_VOID;
-		class_name = NULL;
+		class_name.clear();
 	}
 
 } TypeDesc, *lpTypeDesc;

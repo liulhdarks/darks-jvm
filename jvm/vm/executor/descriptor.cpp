@@ -4,7 +4,12 @@
 bool parse_method_desc_type(LPCSTR desc, vector<TypeDesc> &type_desc, 
 					TypeDesc &result_desc)
 {
-	int len = strlen(desc);
+	if (!desc)
+	{
+		return false;
+	}
+	result_desc.reset();
+	int len = static_cast<int>(strlen(desc));
 	int index = 0;
 	while (index < len)
 	{
@@ -12,8 +17,8 @@ bool parse_method_desc_type(LPCSTR desc, vector<TypeDesc> &type_desc,
 		if (ch == '(' || ch == ' ')continue;
 		if (ch == ')')
 		{
-			index = parse_desc_type(desc, result_desc, len, index);
-			break;
+			parse_desc_type(desc, result_desc, len, index);
+			return true;
 		}
 		index--;
 		TypeDesc tdesc;
@@ -43,7 +48,6 @@ int parse_desc_type(LPCSTR desc, TypeDesc &type_desc, int len, int offset)
 		}
 		else if (type_desc.data_type == DT_REF)
 		{
-			type_desc.class_name = new char[256];
 			int i = 0;
 			while (index < len)
 			{
@@ -52,9 +56,8 @@ int parse_desc_type(LPCSTR desc, TypeDesc &type_desc, int len, int offset)
 				{
 					break;
 				}
-				type_desc.class_name[i++] = ch;
+				type_desc.class_name.push_back(ch);
 			}
-			type_desc.class_name[i] = '\0';
 			break;
 		}
 		else
@@ -74,7 +77,7 @@ DATA_TYPE parse_data_type(char ch_type)
 	case 'C':
 		return DT_CHAR;
 	case 'D':
-		return DT_CHAR;
+		return DT_DOUBLE;
 	case 'F':
 		return DT_FLOAT;
 	case 'I':

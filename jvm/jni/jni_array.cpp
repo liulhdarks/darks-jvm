@@ -85,6 +85,17 @@ void JNICALL DarksVM_SetByteArrayRegion(JNIEnv *env, jbyteArray array,
 		DebugUtils::print("SetByteArrayRegion array is null.");
 		return;
 	}
-	buf += start;
-	arg_obj->SetData(DT_BYTE, (LPVOID)buf, len);
+	if (start < 0 || len < 0 || start + len > arg_obj->array_length)
+	{
+		DebugUtils::print("SetByteArrayRegion range is invalid.");
+		return;
+	}
+	// SetData takes ownership of the buffer, so copy instead of handing it an
+	// interior pointer into the caller's data.
+	jbyte *copy = new jbyte[len > 0 ? len : 1];
+	if (len > 0 && buf)
+	{
+		memcpy(copy, buf + start, len);
+	}
+	arg_obj->SetData(DT_BYTE, (LPVOID)copy, len);
 }

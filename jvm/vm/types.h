@@ -4,10 +4,12 @@
 
 #define INVALID_OBJECT 0
 
-typedef UCHAR U1;
-typedef SHORT U2;
-typedef UINT32 U4;
-typedef ULONG U8;
+// Fixed-width class file types: U8 used to be "unsigned long", which is 32-bit
+// on Windows and 64-bit on LP64 platforms.
+typedef uint8_t U1;
+typedef uint16_t U2;
+typedef uint32_t U4;
+typedef uint64_t U8;
 
 typedef enum ConstantEnum
 {
@@ -46,8 +48,10 @@ typedef enum ClassType
 	CT_OBJECT = 0, CT_ARRAY
 } ClassType;
 
-typedef long OBJECT_REF;
-typedef long *LPOBJECT_REF;
+// Heap references are indices into ObjectHeap. Keep the width explicit so the
+// value behaves identically on LP64 and LLP64 platforms.
+typedef int64_t OBJECT_REF;
+typedef OBJECT_REF *LPOBJECT_REF;
 
 typedef union FloatByteValue
 {
@@ -106,4 +110,4 @@ typedef StackFrame *lpStackFrame;
 class ClassLoader;
 typedef ClassLoader *lpClassLoader;
 
-typedef LPVOID JArray;
+typedef void *JArray;

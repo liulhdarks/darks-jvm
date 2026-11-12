@@ -4,131 +4,176 @@
 #include "utils/CommonUtils.h"
 #include "methodarea.h"
 #include "executor.h"
+#include "vm/exceptions.h"
+
+#include <string>
+
+ObjectHeap::~ObjectHeap()
+{
+	for (size_t i = 0; i < objs.size(); i++)
+	{
+		if (objs[i])
+		{
+			delete objs[i];
+			objs[i] = NULL;
+		}
+	}
+	objs.clear();
+	sequence = 0;
+}
 
 bool ObjectHeap::initialize(int init_size)
 {
-	objs = new lpObject[init_size];
-	memset(objs, NULL, init_size);
+	if (init_size < 1)
+	{
+		init_size = 1;
+	}
+	objs.assign(static_cast<size_t>(init_size), NULL);
+	sequence = 1;
 	return true;
 }
 
 void ObjectHeap::gc()
 {
+	// There is no mark-and-sweep collector yet; objects live until the heap is
+	// destroyed.
+}
 
+bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
+{
+	if (!obj)
+	{
+		return false;
+	}
+	obj->index = sequence++;
+	if (static_cast<size_t>(obj->index) >= objs.size())
+	{
+		objs.resize(static_cast<size_t>(obj->index) + 1, NULL);
+	}
+	objs[static_cast<size_t>(obj->index)] = obj;
+	object_ref = &obj->index;
+	return true;
 }
 
 bool ObjectHeap::NewObject(lpClass clazz, LPOBJECT_REF &object_ref)
 {
 	lpObject obj = new JObject(clazz);
-	if (!obj)
-	{
-		return false;
-	}
-	obj->index = sequence++;
-	objs[obj->index] = obj;
 	if (!obj->newInstance())
 	{
+		delete obj;
 		return false;
 	}
-	object_ref = &obj->index;
-	return true;
+	return Register(obj, object_ref);
 }
 
 bool ObjectHeap::NewArrayObject(int size, lpClass clazz, LPOBJECT_REF &object_ref)
 {
+	if (size < 0)
+	{
+		return false;
+	}
 	lpObject obj = new JObject(clazz);
-	if (!obj)
+	LPOBJECT_REF ref = NULL;
+	if (!Register(obj, ref) || !obj->newArrayInstance(size))
 	{
+		objs[static_cast<size_t>(obj->index)] = NULL;
+		delete obj;
 		return false;
 	}
-	obj->index = sequence++;
-	objs[obj->index] = obj;
-	if (!obj->newArrayInstance(size))
-	{
-		return false;
-	}
-	object_ref = &obj->index;
+	object_ref = ref;
 	return true;
 }
 
 bool ObjectHeap::NewObjectArrayObject(int size, lpClass clazz, LPOBJECT_REF &object_ref)
 {
+	if (size < 0)
+	{
+		return false;
+	}
 	lpObject obj = new JObject(clazz);
-	if (!obj)
+	LPOBJECT_REF ref = NULL;
+	if (!Register(obj, ref) || !obj->newArrayInstance(DT_REF, size))
+	{
+		objs[static_cast<size_t>(obj->index)] = NULL;
+		delete obj;
+		return false;
+	}
+	object_ref = ref;
+	return true;
+}
+
+bool ObjectHeap::CreateArrayDimension(lpClass array_class, LPINT32 nums, int level, int count,
+                                      LPOBJECT_REF &object_ref)
+{
+	if (!array_class || !array_class->thisClass || !nums || level < 0 || level >= count)
 	{
 		return false;
 	}
-	obj->index = sequence++;
-	objs[obj->index] = obj;
-	if (!obj->newArrayInstance(DT_REF, size))
+	lpObject obj = new JObject(array_class);
+	LPOBJECT_REF ref = NULL;
+	if (!Register(obj, ref))
+	{
+		delete obj;
+		return false;
+	}
+	object_ref = ref;
+
+	int length = nums[level];
+	if (level + 1 == count)
+	{
+		// Innermost dimension: the array class name is a one-dimensional
+		// descriptor such as "[I"; JObject infers the element type from it.
+		if (!obj->newArrayInstance(length))
+		{
+			return false;
+		}
+		return true;
+	}
+
+	if (!obj->newArrayInstance(DT_REF, length))
 	{
 		return false;
 	}
-	object_ref = &obj->index;
+	const char *name = array_class->thisClass->GetName();
+	if (!name || name[0] != '[')
+	{
+		return false;
+	}
+	lpClass child_class = NULL;
+	if (!VMContext::bootstrap_classloader->FindClass(name + 1, child_class))
+	{
+		return false;
+	}
+	jobject *refs = static_cast<jobject*>(obj->array_var);
+	for (int i = 0; i < length; i++)
+	{
+		LPOBJECT_REF child_ref = NULL;
+		if (!CreateArrayDimension(child_class, nums, level + 1, count, child_ref))
+		{
+			return false;
+		}
+		refs[i] = reinterpret_cast<jobject>(child_ref);
+	}
 	return true;
 }
 
 bool ObjectHeap::NewMultiArrayObject(LPINT32 nums, int count, lpClass clazz, LPOBJECT_REF &object_ref)
 {
-	lpObject obj = new JObject(clazz);
-	if (!obj)
+	if (!nums || count <= 0 || !clazz)
 	{
 		return false;
 	}
-	obj->index = sequence++;
-	objs[obj->index] = obj;
-	int index = 0;
-	if (!obj->newArrayInstance(DT_REF, nums[index]))
+	for (int i = 0; i < count; i++)
 	{
-		return false;
-	}
-	object_ref = &obj->index;
-	return NewMultiArrayObject(obj, nums, index, count, clazz);
-}
-
-bool ObjectHeap::NewMultiArrayObject(lpObject parent, LPINT32 nums, int index, int count, lpClass clazz)
-{
-	int ch_index = index + 1;
-	int num = nums[index];
-	for (int i = 0; i < num; i++)
-	{
-		lpClass clazz = new Class(CT_ARRAY);
-		clazz->thisClass = new ClassConstant();
-		clazz->thisClass->name = CommonUtils::SubString(clazz->thisClass->GetName(), 1);
-		lpObject obj = new JObject(clazz);
-		if (!obj)
+		if (nums[i] < 0)
 		{
 			return false;
 		}
-		obj->index = sequence++;
-		objs[obj->index] = obj;
-		int index = 0;
-		if (ch_index < count - 1)
-		{
-			if (!obj->newArrayInstance(DT_REF, nums[ch_index]))
-			{
-				return false;
-			}
-			if (!NewMultiArrayObject(obj, nums, ch_index, count, clazz))
-			{
-				return false;
-			}
-		}
-		else
-		{
-			if (!obj->newArrayInstance(nums[ch_index]))
-			{
-				return false;
-			}
-		}
-		LPOBJECT_REF obj_ref = &obj->index;
-		LPOBJECT_REF* refs = (LPOBJECT_REF*)parent->array_var;
-		refs[i] = obj_ref;
 	}
-	return true;
+	return CreateArrayDimension(clazz, nums, 0, count, object_ref);
 }
 
-//data为UTF8字符指针
+// data is a UTF-8 byte string.
 bool ObjectHeap::NewStringObject(LPSTR data, int length, LPOBJECT_REF &object_ref)
 {
 	int unicode_len = 0;
@@ -137,63 +182,78 @@ bool ObjectHeap::NewStringObject(LPSTR data, int length, LPOBJECT_REF &object_re
 	{
 		return false;
 	}
-	return NewStringObject(unicodes, length, object_ref);
+	// The UTF-16 code unit count is authoritative; the UTF-8 byte length is
+	// not a valid character count.
+	(void)length;
+	return NewStringObject(unicodes, unicode_len, object_ref);
 }
 
-//data为UNICODE字符指针
+// data is a UTF-16 code unit buffer; ownership is transferred to the char[]
+// object. length is the number of code units.
 bool ObjectHeap::NewStringObject(unsigned short *data, int length, LPOBJECT_REF &object_ref)
 {
-	lpClass data_clazz = NULL;
-	if (!VMContext::bootstrap_classloader->FindClass("[C", data_clazz))
+	bool transferred = false;
+	try
 	{
-		throw new VMException("Fail to load char array class.");
-	}
-	LPOBJECT_REF chars_ref = NULL;
-	if (!NewArrayObject(length, data_clazz, chars_ref))
-	{
-		throw new VMException("Fail to create char array.");
-	}
-	lpObject chars_obj = NULL;
-	if (!GetObject(chars_ref, chars_obj))
-	{
-		throw new VMException("Fail to get char array direct object.");
-	}
-	chars_obj->SetData(DT_CHAR, (LPVOID)data, length);
+		lpClass data_clazz = NULL;
+		if (!VMContext::bootstrap_classloader->FindClass("[C", data_clazz))
+		{
+			throw new VMException("Fail to load char array class.");
+		}
+		LPOBJECT_REF chars_ref = NULL;
+		if (!NewArrayObject(length, data_clazz, chars_ref))
+		{
+			throw new VMException("Fail to create char array.");
+		}
+		lpObject chars_obj = NULL;
+		if (!GetObject(chars_ref, chars_obj))
+		{
+			throw new VMException("Fail to get char array direct object.");
+		}
+		chars_obj->SetData(DT_CHAR, (LPVOID)data, length);
+		transferred = true;
 
-	lpClass str_class = NULL;
-	if (!VMContext::bootstrap_classloader->FindClass("java/lang/String", str_class))
-	{
-		throw new VMException("Fail to load string class.");
-	}
-	if (!NewObject(str_class, object_ref))
-	{
-		throw new VMException("Fail to new string object.");
-	}
-	lpMethod method = MethodArea::GetMethod(str_class, "<init>:([C)V");
-	if (!method)
-	{
-		throw new VMException("Fail to find string init method.");
-	}
-	lpVariant vars = new Variant[2];
-	vars[0].heapPtr = object_ref;
-	vars[1].heapPtr = chars_ref;
-	lpVMExecutor exec = new VMExecutor();
-	exec->Initialize();
-	exec->Execute(str_class, method, vars, 2);
-	if (exec)
-	{
+		lpClass str_class = NULL;
+		if (!VMContext::bootstrap_classloader->FindClass("java/lang/String", str_class))
+		{
+			throw new VMException("Fail to load string class.");
+		}
+		if (!NewObject(str_class, object_ref))
+		{
+			throw new VMException("Fail to new string object.");
+		}
+		lpMethod method = MethodArea::GetMethod(str_class, "<init>:([C)V");
+		if (!method)
+		{
+			throw new VMException("Fail to find string init method.");
+		}
+		lpVariant vars = new Variant[2];
+		vars[0].heapPtr = object_ref;
+		vars[1].heapPtr = chars_ref;
+		lpVMExecutor exec = new VMExecutor();
+		exec->Initialize();
+		exec->Execute(str_class, method, vars, 2);
+		delete[] vars;
 		delete exec;
-		exec = NULL;
+	}
+	catch (...)
+	{
+		if (!transferred)
+		{
+			delete[] data;
+		}
+		throw;
 	}
 	return true;
 }
 
 bool ObjectHeap::GetObject(OBJECT_REF obj_ref, lpObject &obj)
 {
-	obj = objs[obj_ref];
-	if (!obj)
+	obj = NULL;
+	if (obj_ref <= 0 || static_cast<size_t>(obj_ref) >= objs.size())
 	{
 		return false;
 	}
-	return true;
+	obj = objs[static_cast<size_t>(obj_ref)];
+	return obj != NULL;
 }

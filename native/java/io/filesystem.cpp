@@ -1,6 +1,14 @@
 #include "stdafx.h"
 #include "filesystem.h"
+#include "jni/jni_external.h"
+
+#if defined(_WIN32)
 #include <io.h>
+#define DK_WRITE _write
+#else
+#include <unistd.h>
+#define DK_WRITE ::write
+#endif
 jfieldID fd = NULL;
 
 /*
@@ -9,7 +17,7 @@ jfieldID fd = NULL;
  * Signature: (Ljava/lang/String;Z)V
  */
 void JNICALL Java_java_io_FileOutputStream_open
-  (JNIEnv *, jobject, jstring)
+  (JNIEnv *, jobject, jstring, jboolean)
 {
 
 }
@@ -31,7 +39,10 @@ void JNICALL Java_java_io_FileOutputStream_write
 	jclass fd_class = env->GetObjectClass(fdobj);
 	jfieldID fd_field = env->GetFieldID(fd_class, "fd", "I");
 	jint fd_val = env->GetIntField(fdobj, fd_field);
-	write(fd_val, &byte, 1);
+	if (fd_val >= 0)
+	{
+		DK_WRITE(fd_val, &byte, 1);
+	}
 }
 /*
  * Class:     java_io_FileOutputStream
@@ -51,8 +62,15 @@ void JNICALL Java_java_io_FileOutputStream_writeBytes
 	jfieldID fd_field = env->GetFieldID(fd_class, "fd", "I");
 	jint fd_val = env->GetIntField(fdobj, fd_field);
 	char *data = (char *)env->GetArrayDirectAddress(bytesarg);
+	if (!data || offset < 0 || len < 0)
+	{
+		return;
+	}
 	data += offset;
-	write(fd_val, (void*)data, len - 1);
+	if (fd_val >= 0)
+	{
+		DK_WRITE(fd_val, (void*)data, len);
+	}
 }
 
 /*

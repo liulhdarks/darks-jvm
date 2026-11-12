@@ -1,8 +1,10 @@
-#pragma once;
+#pragma once
 
 #include "vm/types.h"
 #include "vm/io/bytes_io.h"
 #include "vm/exceptions.h"
+
+#include <string>
 
 class Constant
 {
@@ -20,21 +22,23 @@ public:
 		name = NULL;
 	}
 
-	~Constant()
+	virtual ~Constant()
 	{
+		// Only owned strings are freed here. Utf8Constant keeps its payload in
+		// "bytes" and never aliases it into "name".
 		if (name) delete[] name;
-		flag = NULL;
 		name = NULL;
+		flag = NULL;
 	}
 
 	virtual void Parse(BytesInputStream *bis) = 0;
 
-	virtual void ToString(LPSTR &result)
+	virtual std::string ToString()
 	{
-		result =  name;
+		return name ? std::string(name) : std::string();
 	}
 
-	LPSTR GetName()
+	virtual LPSTR GetName()
 	{
 		return name;
 	}
@@ -49,7 +53,7 @@ public:
 	LPSTR bytes;
 
 public:
-	Utf8Constant() : Constant(UTF8_CONSTANT, "Utf8")
+	Utf8Constant() : Constant(UTF8_CONSTANT, (LPSTR)"Utf8")
 	{
 		bytes = NULL;
 		length = 0;
@@ -62,6 +66,16 @@ public:
 	}
 
 	void Parse(BytesInputStream *bis);
+
+	LPSTR GetName()
+	{
+		return bytes;
+	}
+
+	std::string ToString()
+	{
+		return bytes ? std::string(bytes, length) : std::string();
+	}
 };
 
 typedef Utf8Constant *lpUtf8Constant;
@@ -73,7 +87,7 @@ public:
 	U4 bytes;
 
 public:
-	IntegerConstant() : Constant(INTEGER_CONSTANT, "Integer")
+	IntegerConstant() : Constant(INTEGER_CONSTANT, (LPSTR)"Integer")
 	{
 		bytes = 0;
 	}
@@ -87,7 +101,7 @@ public:
 	LPBYTE bytes;
 
 public:
-	FloatConstant() : Constant(FLOAT_CONSTANT, "Float")
+	FloatConstant() : Constant(FLOAT_CONSTANT, (LPSTR)"Float")
 	{
 		bytes = NULL;
 	}
@@ -107,12 +121,11 @@ public:
 class LongConstant : public Constant
 {
 public:
-	//U8 bytes;
 	LPBYTE bytes1;
 	LPBYTE bytes2;
 
 public:
-	LongConstant() : Constant(LONG_CONSTANT, "Long")
+	LongConstant() : Constant(LONG_CONSTANT, (LPSTR)"Long")
 	{
 		bytes1 = NULL;
 		bytes2 = NULL;
@@ -142,7 +155,7 @@ public:
 	LPBYTE bytes2;
 
 public:
-	DoubleConstant() : Constant(DOUBLE_CONSTANT, "Double")
+	DoubleConstant() : Constant(DOUBLE_CONSTANT, (LPSTR)"Double")
 	{
 		bytes1 = NULL;
 		bytes2 = NULL;
@@ -173,14 +186,14 @@ public:
 	Utf8Constant *utf8;
 
 public:
-	ClassConstant() : Constant(CLASS_CONSTANT, "Class")
+	ClassConstant() : Constant(CLASS_CONSTANT, (LPSTR)"Class")
 	{
 		utf8 = NULL;
 	}
 
 	void Parse(BytesInputStream *bis);
 
-	void ToString(LPSTR &result);
+	std::string ToString();
 };
 
 typedef ClassConstant *lpClassConstant;
@@ -194,7 +207,7 @@ public:
 	LPOBJECT_REF string_ref;
 
 public:
-	StringConstant() : Constant(STRING_CONSTANT, "String")
+	StringConstant() : Constant(STRING_CONSTANT, (LPSTR)"String")
 	{
 		utf8 = NULL;
 		string_ref = NULL;
@@ -204,7 +217,7 @@ public:
 
 	LPOBJECT_REF GetString();
 
-	void ToString(LPSTR &result);
+	std::string ToString();
 };
 
 class NameTypeConstant : public Constant
@@ -217,7 +230,7 @@ public:
 	Utf8Constant *descUtf8;
 
 public:
-	NameTypeConstant() : Constant(NAMEANDTYPE_CONSTANT, "NameAndType")
+	NameTypeConstant() : Constant(NAMEANDTYPE_CONSTANT, (LPSTR)"NameAndType")
 	{
 		nameUtf8 = NULL;
 		descUtf8 = NULL;
@@ -225,7 +238,7 @@ public:
 
 	void Parse(BytesInputStream *bis);
 
-	void ToString(LPSTR &result);
+	std::string ToString();
 };
 
 class FieldRefConstant : public Constant
@@ -239,7 +252,7 @@ public:
 	LPSTR simple_name;
 
 public:
-	FieldRefConstant() : Constant(FIELDREF_CONSTANT, "Fieldref")
+	FieldRefConstant() : Constant(FIELDREF_CONSTANT, (LPSTR)"Fieldref")
 	{
 		clazz = NULL;
 		nameType = NULL;
@@ -253,16 +266,25 @@ public:
 		simple_name = NULL;
 	}
 
+	~FieldRefConstant()
+	{
+		if (simple_name)
+		{
+			delete[] simple_name;
+			simple_name = NULL;
+		}
+	}
+
 	void Parse(BytesInputStream *bis);
 
-	void ToString(LPSTR &result);
+	std::string ToString();
 };
 
 class MethodRefConstant : public FieldRefConstant
 {
 
 public:
-	MethodRefConstant() : FieldRefConstant(FIELDREF_CONSTANT, "Methodref")
+	MethodRefConstant() : FieldRefConstant(METHODREF_CONSTANT, (LPSTR)"Methodref")
 	{
 		
 	}
@@ -272,7 +294,7 @@ class InterfaceMethodConstant : public FieldRefConstant
 {
 
 public:
-	InterfaceMethodConstant() : FieldRefConstant(FIELDREF_CONSTANT, "Interface")
+	InterfaceMethodConstant() : FieldRefConstant(INTERFACE_CONSTANT, (LPSTR)"Interface")
 	{
 
 	}
@@ -282,19 +304,31 @@ class JVM_API ConstantPool
 {
 
 private:
-	//vector<Constant*> constants;
 	lpConstant *constants;
 	int count;
+	int capacity;
 
 public:
 	ConstantPool()
 	{
 		constants = NULL;
+		count = 0;
+		capacity = 0;
+	}
+
+	~ConstantPool()
+	{
+		Destroy();
 	}
 
 	void init(int init_size)
 	{
-		constants = new lpConstant[init_size];
+		constants = new lpConstant[init_size > 0 ? init_size : 1];
+		for (int i = 0; i < init_size; i++)
+		{
+			constants[i] = NULL;
+		}
+		capacity = init_size > 0 ? init_size : 1;
 		count = 0;
 	}
 
@@ -302,13 +336,16 @@ public:
 
 	void AddConstant(lpConstant constant)
 	{
-		//constants.push_back(constant);
+		if (count >= capacity)
+		{
+			return;
+		}
 		constants[count++] = constant;
 	}
 
 	Constant *GetConstant(int index)
 	{
-		if (count < index || index < 1)
+		if (index < 1 || index > count)
 		{
 			return NULL;
 		}

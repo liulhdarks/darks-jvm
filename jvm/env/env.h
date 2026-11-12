@@ -19,8 +19,25 @@ public:
 		*cp = classpath;
 	}
 
-	static void AddClassPath(string &cp)
+	static void AddClassPath(const string &cp)
 	{
+		if (cp.empty())
+		{
+			return;
+		}
 		classpath.push_back(cp);
+	}
+
+	static void AddClassPath(LPCSTR cp)
+	{
+		if (cp && *cp)
+		{
+			classpath.push_back(string(cp));
+		}
+	}
+
+	static void ClearClassPath()
+	{
+		classpath.clear();
 	}
 };

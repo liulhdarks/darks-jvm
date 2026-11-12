@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "vm/types.h"
 #include "exec_common.h"
@@ -14,6 +14,12 @@ public:
 	{
 		this->init_size = init_size;
 		slots = new Slot[init_size];
+	}
+
+	~LocalVarTable()
+	{
+		delete[] slots;
+		slots = NULL;
 	}
 
 	void set(int index, Slot &slot)

@@ -64,6 +64,8 @@ public:
 
 	JAttribute(){}
 
+	virtual ~JAttribute() {}
+
 	virtual void Parse(BytesInputStream *bis, ConstantPool *pool)
 	{
 		attr_length= bis->ReadInt();
@@ -79,7 +81,13 @@ public:
 	lpClassConstant *exception_table;
 
 public:
-	JException(){}
+	JException()
+	{
+		exception_count = 0;
+		exception_table = NULL;
+	}
+
+	~JException();
 
 	void Parse(BytesInputStream *bis, ConstantPool *pool);
 };
@@ -175,10 +183,12 @@ public:
 	~JCodeAttribute()
 	{
 		if (codes) delete[] codes;
-		if (line_number_table) delete[] line_number_table;
-		if (local_var_table) delete[] local_var_table;
+		if (line_number_table) delete line_number_table;
+		if (local_var_table) delete local_var_table;
 		if (exception_table) delete[] exception_table;
+		if (stack_map_table) delete stack_map_table;
 		codes = NULL;
+		stack_map_table = NULL;
 		line_number_table = NULL;
 		local_var_table = NULL;
 		exception_table = NULL;

@@ -2,6 +2,15 @@
 #include "attributes.h"
 
 
+JException::~JException()
+{
+	if (exception_table)
+	{
+		delete[] exception_table;
+		exception_table = NULL;
+	}
+}
+
 void JException::Parse(BytesInputStream *bis, ConstantPool *pool)
 {
 	JAttribute::Parse(bis, pool);
@@ -40,25 +49,38 @@ void JCodeAttribute::Parse(BytesInputStream *bis, ConstantPool *pool)
 	for (int i = 0; i < attr_count; i++)
 	{
 		U2 attrIndex = bis->ReadU2();
+		int length_pos = bis->Tell();
+		int attr_len = bis->ReadInt();
+		int payload_pos = bis->Tell();
 		lpUtf8Constant uc = (lpUtf8Constant) pool->GetConstant(attrIndex);
-		if (strcmp(uc->bytes, ATTR_LINENUMBER) == 0)
+		const char *name = uc ? uc->GetName() : NULL;
+		if (name && strcmp(name, ATTR_LINENUMBER) == 0)
 		{
+			bis->SetCursor(length_pos);
 			line_number_table = new JLineNumberTable();
 			line_number_table->Parse(bis, pool);
 			line_number_table->attr_name = uc;
 		}
-		else if (strcmp(uc->bytes, ATTR_LOCALVAR) == 0)
+		else if (name && strcmp(name, ATTR_LOCALVAR) == 0)
 		{
+			bis->SetCursor(length_pos);
 			local_var_table = new JLocalVariableTable();
 			local_var_table->Parse(bis, pool);
 			local_var_table->attr_name = uc;
-		} 
-		else if (strcmp(uc->bytes, ATTR_STACKMAP) == 0)
+		}
+		else if (name && strcmp(name, ATTR_STACKMAP) == 0)
 		{
+			bis->SetCursor(length_pos);
 			stack_map_table = new JStackMapTable();
 			stack_map_table->Parse(bis, pool);
 			stack_map_table->attr_name = uc;
-		} 
+		}
+		else
+		{
+			// Unknown code sub-attribute (e.g. LocalVariableTypeTable on some
+			// compilers): skip it instead of desynchronising the stream.
+			bis->SetCursor(payload_pos + attr_len);
+		}
 	}
 }
 
@@ -235,6 +257,10 @@ CommonAttributes::~CommonAttributes()
 
 bool CommonAttributes::ParseAttribute(lpUtf8Constant uc_name, BytesInputStream *bis, ConstantPool *pool)
 {
+	if (!uc_name || !uc_name->bytes)
+	{
+		return false;
+	}
 	if (strcmp(uc_name->bytes, ATTR_SIGNATURE) == 0)
 	{
 		signature_attr = new JSignature();

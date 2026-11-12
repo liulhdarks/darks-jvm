@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "vm/types.h"
 #include "exec_common.h"
@@ -18,6 +18,12 @@ public:
 		this->init_size = init_size;
 		slots = new Slot[init_size];
 		index = 0;
+	}
+
+	~OperStack()
+	{
+		delete[] slots;
+		slots = NULL;
 	}
 
 	void push(short v)
@@ -49,8 +55,10 @@ public:
 		slot1.set(bv.bytes, 4);
 		Slot slot2;
 		slot2.set(bv.bytes + 4, 4);
-		push(slot2);
+		// Bottom slot holds the low 32 bits, the top slot the high 32 bits,
+		// matching ldc2_w/lload and popLong/popDouble.
 		push(slot1);
+		push(slot2);
 	}
 
 	void push(double v)
@@ -61,8 +69,10 @@ public:
 		slot1.set(bv.bytes, 4);
 		Slot slot2;
 		slot2.set(bv.bytes + 4, 4);
-		push(slot2);
+		// Bottom slot holds the low 32 bits, the top slot the high 32 bits,
+		// matching ldc2_w/lload and popLong/popDouble.
 		push(slot1);
+		push(slot2);
 	}
 
 	void pushObject(LPOBJECT_REF &v)

@@ -1,5 +1,7 @@
 #include "stdafx.h"
 #include "system_md.h"
+#include "platform/platform.h"
+#include <cstdio>
 /*
  * Class:     java_lang_System
  * Method:    registerNatives
@@ -52,6 +54,10 @@ void JNICALL Java_java_lang_System_setErr0
 jlong JNICALL Java_java_lang_System_currentTimeMillis
 	(JNIEnv *, jclass)
 {
+	// Probe printed by the native method itself; the end-to-end test uses it
+	// to prove that native dispatch reached this function.
+	fprintf(stdout, "probe: entered native System.currentTimeMillis()\n");
+	fflush(stdout);
 	return OS::GetCurrentTimeMillis();
 }
 
@@ -63,7 +69,7 @@ jlong JNICALL Java_java_lang_System_currentTimeMillis
 jlong JNICALL Java_java_lang_System_nanoTime
 	(JNIEnv *, jclass)
 {
-	return 0;
+	return static_cast<jlong>(dk::NanoTime());
 }
 
 /*

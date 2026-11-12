@@ -19,6 +19,9 @@ Class::Class()
 	classloader = NULL;
 	super_class = NULL;
 	inner_classes = NULL;
+	fieldCount = 0;
+	methodCount = 0;
+	accFlag = 0;
 }
 
 Class::Class(ClassType class_type)
@@ -37,23 +40,35 @@ Class::Class(ClassType class_type)
 	classloader = NULL;
 	super_class = NULL;
 	inner_classes = NULL;
+	fieldCount = 0;
+	methodCount = 0;
+	accFlag = 0;
 }
 
 Class::~Class()
 {
 	if (fields)
 	{
+		for (U2 i = 0; i < fieldCount; i++)
+		{
+			delete fields[i];
+		}
 		delete[] fields;
 		fields = NULL;
 	}
 	if (methods)
 	{
+		for (U2 i = 0; i < methodCount; i++)
+		{
+			delete methods[i];
+		}
 		delete[] methods;
 		methods = NULL;
 	}
 	if (source_file)
 	{
-		delete[] source_file;
+		// source_file is a single object, not an array.
+		delete source_file;
 		source_file = NULL;
 	}
 	if (inner_classes)
@@ -61,9 +76,13 @@ Class::~Class()
 		delete inner_classes;
 		inner_classes = NULL;
 	}
+	if (interfaces)
+	{
+		delete[] interfaces;
+		interfaces = NULL;
+	}
 	if (const_pool)
 	{
-		const_pool->Destroy();
 		delete const_pool;
 		const_pool = NULL;
 	}
