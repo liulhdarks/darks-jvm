@@ -143,12 +143,41 @@ if(JAVAC)
     get_filename_component(JAVAC_REAL "${JAVAC}" REALPATH)
     get_filename_component(JDK_BIN_DIR "${JAVAC_REAL}" DIRECTORY)
     get_filename_component(JDK_HOME "${JDK_BIN_DIR}" DIRECTORY)
-    find_program(TEST_CC NAMES cc gcc clang)
-    if(UNIX AND TEST_CC AND EXISTS "${JDK_HOME}/include/jni.h")
+
+    # The JDK keeps jni.h in include/ but jni_md.h in an OS specific
+    # subdirectory: include/linux, include/darwin or include/win32.  Older
+    # JDKs put jni_md.h directly in include/, so keep that as a fallback.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+        set(JDK_JNI_PLATFORM_INCLUDE "${JDK_HOME}/include/darwin")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
+        set(JDK_JNI_PLATFORM_INCLUDE "${JDK_HOME}/include/win32")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(JDK_JNI_PLATFORM_INCLUDE "${JDK_HOME}/include/linux")
+    else()
+        # Other Unixes (FreeBSD, AIX, ...) use a lower case directory name.
+        string(TOLOWER "${CMAKE_SYSTEM_NAME}" JDK_JNI_PLATFORM_NAME)
+        set(JDK_JNI_PLATFORM_INCLUDE "${JDK_HOME}/include/${JDK_JNI_PLATFORM_NAME}")
+    endif()
+    if(NOT EXISTS "${JDK_JNI_PLATFORM_INCLUDE}/jni_md.h" AND
+       EXISTS "${JDK_HOME}/include/jni_md.h")
+        set(JDK_JNI_PLATFORM_INCLUDE "${JDK_HOME}/include")
+    endif()
+
+    if(EXISTS "${JDK_HOME}/include/jni.h" AND
+       NOT EXISTS "${JDK_JNI_PLATFORM_INCLUDE}/jni_md.h")
+        message(FATAL_ERROR
+            "Found ${JDK_HOME}/include/jni.h but no jni_md.h in "
+            "${JDK_JNI_PLATFORM_INCLUDE}. Set CMAKE_SYSTEM_NAME correctly or "
+            "install a JDK whose include/ layout matches ${CMAKE_SYSTEM_NAME}.")
+    endif()
+
+    if(EXISTS "${JDK_HOME}/include/jni.h")
         add_library(thirdparty_native SHARED native/thirdparty.cpp)
         target_include_directories(thirdparty_native PRIVATE
-            "${JDK_HOME}/include" "${JDK_HOME}/include/linux")
-        set_target_properties(thirdparty_native PROPERTIES PREFIX "lib")
+            "${JDK_HOME}/include" "${JDK_JNI_PLATFORM_INCLUDE}")
+        if(NOT WIN32)
+            set_target_properties(thirdparty_native PROPERTIES PREFIX "lib")
+        endif()
 
         add_test(NAME thirdparty_jni
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}

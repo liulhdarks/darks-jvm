@@ -3,6 +3,8 @@
 #include "utils/DebugUtils.h"
 #include "jni/jni_impl.h"
 
+#include <vector>
+
 NativeLibrary::NativeLibrary()
 {
 	handle = NULL;
@@ -51,26 +53,60 @@ NativeLibraryManager::~NativeLibraryManager()
 
 bool NativeLibraryManager::LoadNativeLibrary(LPCSTR libs_name)
 {
+	if (!libs_name || !*libs_name)
+	{
+		return false;
+	}
 	string str_libs = string(libs_name);
 	if (libs_map.find(str_libs) != libs_map.end())
 	{
 		return true;
 	}
+
+	// The canonical name is platform specific: lib<name>.so on Linux,
+	// lib<name>.dylib on macOS and <name>.dll on Windows.  The remaining
+	// spellings are tried as well so that a library shipped with another
+	// platform suffix (a jar bundling libfoo.so, for instance) can still be
+	// opened when the OS loader accepts it.
+	std::vector<string> candidates;
 	char *mapped_name = MapLibraryName(libs_name);
-	if (!mapped_name)
+	if (mapped_name)
 	{
-		return false;
+		candidates.push_back(string(mapped_name));
+		delete[] mapped_name;
 	}
-	lpNativeLibrary native_lib = new NativeLibrary(str_libs);
-	native_lib->handle = OS::LoadNativeLibrary(mapped_name);
-	delete[] mapped_name;
-	if (native_lib->handle)
+	static const char *kSuffixes[] = { ".so", ".dylib", ".dll" };
+	for (size_t i = 0; i < sizeof(kSuffixes) / sizeof(kSuffixes[0]); i++)
 	{
-		DebugUtils::print(2, "Load native library ", libs_name);
+		string candidate = string("lib") + libs_name + kSuffixes[i];
+		bool seen = false;
+		for (size_t j = 0; j < candidates.size(); j++)
+		{
+			if (candidates[j] == candidate)
+			{
+				seen = true;
+				break;
+			}
+		}
+		if (!seen)
+		{
+			candidates.push_back(candidate);
+		}
+	}
+
+	for (size_t i = 0; i < candidates.size(); i++)
+	{
+		void *handle = OS::LoadNativeLibrary(candidates[i].c_str());
+		if (!handle)
+		{
+			continue;
+		}
+		lpNativeLibrary native_lib = new NativeLibrary(str_libs);
+		native_lib->handle = handle;
+		DebugUtils::print(2, "Load native library ", candidates[i].c_str());
 		libs_map[str_libs] = native_lib;
 		return true;
 	}
-	delete native_lib;
 	return false;
 }
 
