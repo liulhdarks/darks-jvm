@@ -300,6 +300,112 @@ public:
 	}
 };
 
+
+// Java 7+ constants ---------------------------------------------------------
+
+class MethodHandleConstant : public Constant
+{
+public:
+	U1 reference_kind;
+	U2 reference_index;
+	Constant *reference;
+
+public:
+	MethodHandleConstant() : Constant(METHODHANDLE_CONSTANT, (LPSTR)"MethodHandle")
+	{
+		reference_kind = 0;
+		reference_index = 0;
+		reference = NULL;
+	}
+
+	void Parse(BytesInputStream *bis);
+};
+
+class MethodTypeConstant : public Constant
+{
+public:
+	U2 descriptor_index;
+	Utf8Constant *descriptor;
+
+public:
+	MethodTypeConstant() : Constant(METHODTYPE_CONSTANT, (LPSTR)"MethodType")
+	{
+		descriptor_index = 0;
+		descriptor = NULL;
+	}
+
+	void Parse(BytesInputStream *bis);
+};
+
+class InvokeDynamicConstant : public Constant
+{
+public:
+	U2 bootstrap_method_attr_index;
+	U2 name_and_type_index;
+	NameTypeConstant *nameType;
+
+public:
+	InvokeDynamicConstant() : Constant(INVOKEDYNAMIC_CONSTANT, (LPSTR)"InvokeDynamic")
+	{
+		bootstrap_method_attr_index = 0;
+		name_and_type_index = 0;
+		nameType = NULL;
+	}
+
+	InvokeDynamicConstant(ConstantEnum tag, LPSTR flag) : Constant(tag, flag)
+	{
+		bootstrap_method_attr_index = 0;
+		name_and_type_index = 0;
+		nameType = NULL;
+	}
+
+	void Parse(BytesInputStream *bis);
+};
+
+// CONSTANT_Dynamic (JVMS 4.4.10): lazily computed constant. Parsed so that
+// class files containing condy load, but materialising the value is outside the
+// supported subset and reports a clear error at use time.
+class DynamicConstant : public InvokeDynamicConstant
+{
+public:
+	DynamicConstant() : InvokeDynamicConstant(DYNAMIC_CONSTANT, (LPSTR)"Dynamic")
+	{
+	}
+};
+
+class ModuleConstant : public Constant
+{
+public:
+	U2 name_index;
+	Utf8Constant *utf8;
+
+public:
+	ModuleConstant() : Constant(MODULE_CONSTANT, (LPSTR)"Module")
+	{
+		name_index = 0;
+		utf8 = NULL;
+	}
+
+	void Parse(BytesInputStream *bis);
+};
+
+class PackageConstant : public Constant
+{
+public:
+	U2 name_index;
+	Utf8Constant *utf8;
+
+public:
+	PackageConstant() : Constant(PACKAGE_CONSTANT, (LPSTR)"Package")
+	{
+		name_index = 0;
+		utf8 = NULL;
+	}
+
+	void Parse(BytesInputStream *bis);
+};
+
+
 class JVM_API ConstantPool
 {
 

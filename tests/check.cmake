@@ -7,6 +7,12 @@ if(NOT DEFINED PROG)
     message(FATAL_ERROR "check.cmake: PROG is not set")
 endif()
 
+# Optional: a file that must NOT exist before the run and must exist after it
+# (used to observe native JNI_OnUnload side effects).
+if(DEFINED REMOVE_FILE AND EXISTS "${REMOVE_FILE}")
+    file(REMOVE "${REMOVE_FILE}")
+endif()
+
 execute_process(
     COMMAND "${PROG}" ${ARGS}
     RESULT_VARIABLE rc
@@ -30,6 +36,13 @@ if(DEFINED EXPECT_TEXT)
             "command: ${PROG} ${ARGS}\n"
             "output:\n${all_output}")
     endif()
+endif()
+
+if(DEFINED EXPECT_FILE AND NOT EXISTS "${EXPECT_FILE}")
+    message(FATAL_ERROR
+        "check.cmake: expected file '${EXPECT_FILE}' was not created\n"
+        "command: ${PROG} ${ARGS}\n"
+        "output:\n${all_output}")
 endif()
 
 if(DEFINED EXPECT_TEXT2)

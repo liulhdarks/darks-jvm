@@ -20,7 +20,15 @@
 #define ATTR_RT_INVA "RuntimeInvisibleAnnotations"
 #define ATTR_RT_VPA "RuntimeVisibleParameterAnnotations"
 #define ATTR_RT_INVPA "RuntimeInvisibleParameterAnnotations"
+#define ATTR_ANNOTATION_DEFAULT "AnnotationDefault"
 #define ATTR_LOCALVAR_TYPE "LocalVariableTypeTable"
+#define ATTR_BOOTSTRAP "BootstrapMethods"
+#define ATTR_NESTHOST "NestHost"
+#define ATTR_NESTMEMBERS "NestMembers"
+#define ATTR_NESTHOST_NAME "NestHost"
+#define ATTR_MODULE "Module"
+#define ATTR_MODULE_PACKAGES "ModulePackages"
+#define ATTR_MODULE_MAIN "ModuleMainClass"
 
 typedef struct ExceptionTable
 {
@@ -426,6 +434,65 @@ public:
 
 typedef JLocalVariableTypeTable *lpLocalVariableTypeTable;
 
+
+// One bootstrap method: a MethodHandle plus its static arguments
+// (constant pool indices). Used by invokedynamic and CONSTANT_Dynamic.
+typedef struct BootstrapMethodInfo
+{
+	U2 bootstrap_method_ref;
+	U2 num_bootstrap_arguments;
+	std::vector<U2> bootstrap_arguments;
+
+	BootstrapMethodInfo()
+	{
+		bootstrap_method_ref = 0;
+		num_bootstrap_arguments = 0;
+	}
+} BootstrapMethodInfo, *lpBootstrapMethodInfo;
+
+class JBootstrapMethods : public JAttribute
+{
+public:
+	U2 num_bootstrap_methods;
+	std::vector<BootstrapMethodInfo> methods;
+
+public:
+	JBootstrapMethods()
+	{
+		num_bootstrap_methods = 0;
+	}
+
+	void Parse(BytesInputStream *bis, ConstantPool *pool);
+};
+
+typedef JBootstrapMethods *lpBootstrapMethods;
+
+
+class JAnnotationDefault : public JAttribute
+{
+public:
+	LPBYTE bytes;
+
+public:
+	JAnnotationDefault()
+	{
+		bytes = NULL;
+	}
+
+	~JAnnotationDefault()
+	{
+		if (bytes)
+		{
+			delete[] bytes;
+			bytes = NULL;
+		}
+	}
+
+	void Parse(BytesInputStream *bis, ConstantPool *pool);
+};
+
+typedef JAnnotationDefault *lpAnnotationDefault;
+
 class JVM_API CommonAttributes
 {
 public:
@@ -438,6 +505,7 @@ public:
 	lpRuntimeVisibleParameterAnnotations rt_visible_param_attr;
 	lpRuntimeInvisibleParameterAnnotations rt_invisible_param_attr;
 	lpLocalVariableTypeTable local_var_type;
+	lpAnnotationDefault annotation_default;
 
 	CommonAttributes();
 

@@ -5,6 +5,8 @@
 lpObjectHeap VMContext::object_heap = NULL;
 lpClassLoader VMContext::bootstrap_classloader = NULL;
 lpNativeLibraryManager VMContext::native_libs = NULL;
+LPOBJECT_REF VMContext::pending_exception = NULL;
+std::vector<void*> VMContext::jni_envs;
 
 bool VMContext::initialize()
 {
@@ -14,6 +16,11 @@ bool VMContext::initialize()
 		return false;
 	}
 	object_heap->initialize(1024);
+	// The pending exception must stay alive while handlers run and while the
+	// uncaught handler prints it. Registering the global slot keeps the
+	// collector able to see it without special-casing.
+	VMContext::pending_exception = NULL;
+	object_heap->AddRootSlot(&VMContext::pending_exception);
 	bootstrap_classloader = new ClassLoader();
 	if (!bootstrap_classloader)
 	{
@@ -33,6 +40,7 @@ bool VMContext::destroy()
 	// Class statics belong to this VM instance; drop them before the heap
 	// so the field values do not outlive the objects they point to.
 	MethodArea::ClearStaticFields();
+	VMContext::pending_exception = NULL;
 	if (object_heap)
 	{
 		delete object_heap;

@@ -205,6 +205,16 @@ bool FileExists(const std::string &path) {
 #endif
 }
 
+bool IsDirectory(const std::string &path) {
+#if defined(_WIN32)
+    DWORD attr = GetFileAttributesA(path.c_str());
+    return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
+    struct stat st;
+    return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+}
+
 bool ReadFileBytes(const std::string &path, std::vector<uint8_t> &out) {
     // Always open in binary read-only mode: the original code used "rb+" which
     // fails on read-only files.

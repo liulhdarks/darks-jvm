@@ -82,6 +82,16 @@ public:
 	void AddRootSlot(LPOBJECT_REF *slot);
 	void RemoveRootSlot(LPOBJECT_REF *slot);
 
+	// ---- JNI reference management ----------------------------------------
+	// Global references are strong roots; weak globals are tracked but do not
+	// keep their referent alive.
+	void AddGlobalRef(LPOBJECT_REF ref);
+	void RemoveGlobalRef(LPOBJECT_REF ref);
+	void AddWeakGlobalRef(LPOBJECT_REF ref);
+	void RemoveWeakGlobalRef(LPOBJECT_REF ref);
+	bool IsGlobalRef(LPOBJECT_REF ref) const;
+	bool IsWeakGlobalRef(LPOBJECT_REF ref) const;
+
 	void RegisterThreadStack(ThreadStack *stack);
 	void UnregisterThreadStack(ThreadStack *stack);
 
@@ -127,6 +137,8 @@ private:
 	void MarkConstantPoolRoots();
 	void MarkThreadStackRoots();
 	void MarkTemporaryRoots();
+	void MarkGlobalRefs();
+	void MarkJniLocalRoots();
 
 	size_t ObjectBytes(lpObject obj) const;
 
@@ -136,6 +148,8 @@ private:
 
 	std::vector<OBJECT_REF> free_indices;
 	std::vector<LPOBJECT_REF *> root_slots;
+	std::vector<LPOBJECT_REF> global_refs;
+	std::vector<LPOBJECT_REF> weak_global_refs;
 	std::vector<ThreadStack *> thread_stacks;
 
 	bool gc_enabled;

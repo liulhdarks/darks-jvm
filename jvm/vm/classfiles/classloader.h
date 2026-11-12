@@ -3,6 +3,18 @@
 #include "vm/types.h"
 #include "vm/executor/jclass.h"
 
+#include <string>
+#include <vector>
+
+// Locates class bytes on the configured class path. Directory entries are
+// searched directly; file entries (jars/zips) are opened as archives. The
+// archive handles are cached so repeated lookups do not re-read the file.
+// "source" receives a human readable location such as "dir/Foo.class" or
+// "/path/lib.jar!/pkg/Foo.class".
+JVM_API bool DarksVM_FindClassBytes(const std::string &class_name,
+                                    std::vector<uint8_t> &out,
+                                    std::string *source);
+
 class JVM_API ClassLoader
 {
 

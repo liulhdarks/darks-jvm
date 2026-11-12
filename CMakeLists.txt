@@ -8,7 +8,7 @@
 # dispatch). The Java tests additionally need a JDK (javac) at build time.
 
 cmake_minimum_required(VERSION 3.10)
-project(darks-jvm CXX)
+project(darks-jvm C CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,6 +39,14 @@ if(NOT FFI_FOUND)
 endif()
 
 # ---------------------------------------------------------------------------
+# zlib (optional): required to read DEFLATE-compressed JAR entries.
+# ---------------------------------------------------------------------------
+find_package(ZLIB QUIET)
+if(ZLIB_FOUND)
+    add_definitions(-DDARKS_JVM_HAVE_ZLIB=1)
+endif()
+
+# ---------------------------------------------------------------------------
 # Core VM library
 # ---------------------------------------------------------------------------
 set(DARKS_JVM_CORE_SOURCES
@@ -46,9 +54,12 @@ set(DARKS_JVM_CORE_SOURCES
     os/os.cpp
     jvm/env/env.cpp
     jvm/jni/jni.cpp
+    jvm/jni/jni_ref.cpp
     jvm/jni/jni_array.cpp
     jvm/jni/jni_external.cpp
     jvm/jni/jni_object.cpp
+    jvm/jni/jni_string.cpp
+    jvm/jni/jni_vm.cpp
     jvm/utils/CommonUtils.cpp
     jvm/utils/StackUtils.cpp
     jvm/vm/classfiles/classloader.cpp
@@ -58,6 +69,7 @@ set(DARKS_JVM_CORE_SOURCES
     jvm/vm/executor/context.cpp
     jvm/vm/executor/descriptor.cpp
     jvm/vm/executor/executor.cpp
+    jvm/vm/executor/javaexception.cpp
     jvm/vm/executor/jclass.cpp
     jvm/vm/executor/jfield.cpp
     jvm/vm/executor/jmethod.cpp
@@ -68,6 +80,7 @@ set(DARKS_JVM_CORE_SOURCES
     jvm/vm/executor/stackframe.cpp
     jvm/vm/executor/threadstack.cpp
     jvm/vm/io/bytes_io.cpp
+    jvm/vm/io/zipreader.cpp
 )
 
 if(WIN32)
@@ -90,6 +103,10 @@ target_include_directories(darksvm PUBLIC
 )
 target_include_directories(darksvm PRIVATE ${FFI_INCLUDE_DIRS})
 target_link_libraries(darksvm PUBLIC ${FFI_LIBRARIES})
+if(ZLIB_FOUND)
+    target_link_libraries(darksvm PUBLIC ${ZLIB_LIBRARIES})
+    target_include_directories(darksvm PUBLIC ${ZLIB_INCLUDE_DIRS})
+endif()
 if(NOT WIN32)
     target_link_libraries(darksvm PUBLIC ${CMAKE_DL_LIBS})
 endif()
@@ -140,6 +157,8 @@ endif()
 # ---------------------------------------------------------------------------
 set(DARKS_JVM_NATIVE_SOURCES
     native/native.cpp
+    native/java/lang/core_md.cpp
+    native/java/lang/reflect_md.cpp
     native/java/lang/system_md.cpp
     native/java/lang/string_md.cpp
     native/java/io/filesystem.cpp

@@ -2,6 +2,27 @@
 #include "attributes.h"
 
 
+
+void JBootstrapMethods::Parse(BytesInputStream *bis, ConstantPool *pool)
+{
+	(void)pool;
+	JAttribute::Parse(bis, pool);
+	num_bootstrap_methods = bis->ReadU2();
+	methods.clear();
+	for (U2 i = 0; i < num_bootstrap_methods; i++)
+	{
+		BootstrapMethodInfo info;
+		info.bootstrap_method_ref = bis->ReadU2();
+		info.num_bootstrap_arguments = bis->ReadU2();
+		for (U2 j = 0; j < info.num_bootstrap_arguments; j++)
+		{
+			info.bootstrap_arguments.push_back(bis->ReadU2());
+		}
+		methods.push_back(info);
+	}
+}
+
+
 JException::~JException()
 {
 	if (exception_table)
@@ -214,6 +235,12 @@ void JRuntimeInvisibleParameterAnnotations::Parse(BytesInputStream *bis, Constan
 	bis->ReadBytes(this->attr_length, bytes);
 }
 
+void JAnnotationDefault::Parse(BytesInputStream *bis, ConstantPool *pool)
+{
+	JAttribute::Parse(bis, pool);
+	bis->ReadBytes(this->attr_length, bytes);
+}
+
 void JLocalVariableTypeTable::Parse(BytesInputStream *bis, ConstantPool *pool)
 {
 	JAttribute::Parse(bis, pool);
@@ -231,6 +258,7 @@ CommonAttributes::CommonAttributes()
 	rt_visible_param_attr = NULL;
 	rt_invisible_param_attr = NULL;
 	local_var_type = NULL;
+	annotation_default = NULL;
 }
 
 CommonAttributes::~CommonAttributes()
@@ -244,6 +272,7 @@ CommonAttributes::~CommonAttributes()
 	if (rt_visible_param_attr)delete rt_visible_param_attr;
 	if (rt_invisible_param_attr)delete rt_invisible_param_attr;
 	if (local_var_type)delete local_var_type;
+	if (annotation_default)delete annotation_default;
 	deprecated_attr = NULL;
 	synthetic_attr = NULL;
 	signature_attr = NULL;
@@ -253,6 +282,7 @@ CommonAttributes::~CommonAttributes()
 	rt_visible_param_attr = NULL;
 	rt_invisible_param_attr = NULL;
 	local_var_type = NULL;
+	annotation_default = NULL;
 }
 
 bool CommonAttributes::ParseAttribute(lpUtf8Constant uc_name, BytesInputStream *bis, ConstantPool *pool)
@@ -309,6 +339,12 @@ bool CommonAttributes::ParseAttribute(lpUtf8Constant uc_name, BytesInputStream *
 		rt_invisible_param_attr->Parse(bis, pool);
 		rt_invisible_param_attr->attr_name = uc_name;
 	} 
+	else if (strcmp(uc_name->bytes, ATTR_ANNOTATION_DEFAULT) == 0)
+	{
+		annotation_default = new JAnnotationDefault();
+		annotation_default->Parse(bis, pool);
+		annotation_default->attr_name = uc_name;
+	}
 	else if (strcmp(uc_name->bytes, ATTR_LOCALVAR_TYPE) == 0)
 	{
 		local_var_type = new JLocalVariableTypeTable();

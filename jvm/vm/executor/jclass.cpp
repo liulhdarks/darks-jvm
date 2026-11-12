@@ -2,6 +2,7 @@
 #include "jclass.h"
 #include "executor.h"
 #include "methodarea.h"
+#include "utils/DebugUtils.h"
 
 Class::Class()
 {
@@ -18,7 +19,11 @@ Class::Class()
 	clinitMethod = NULL;
 	classloader = NULL;
 	super_class = NULL;
+	initialized_state = false;
 	inner_classes = NULL;
+	bootstrap_methods = NULL;
+	major_version = 0;
+	minor_version = 0;
 	fieldCount = 0;
 	methodCount = 0;
 	accFlag = 0;
@@ -39,7 +44,11 @@ Class::Class(ClassType class_type)
 	clinitMethod = NULL;
 	classloader = NULL;
 	super_class = NULL;
+	initialized_state = false;
 	inner_classes = NULL;
+	bootstrap_methods = NULL;
+	major_version = 0;
+	minor_version = 0;
 	fieldCount = 0;
 	methodCount = 0;
 	accFlag = 0;
@@ -47,6 +56,10 @@ Class::Class(ClassType class_type)
 
 Class::~Class()
 {
+	if (thisClass && thisClass->GetName())
+	{
+		DebugUtils::trace("~Class %s\n", thisClass->GetName());
+	}
 	if (fields)
 	{
 		for (U2 i = 0; i < fieldCount; i++)
@@ -60,7 +73,10 @@ Class::~Class()
 	{
 		for (U2 i = 0; i < methodCount; i++)
 		{
-			delete methods[i];
+			if (methods[i])
+			{
+				delete methods[i];
+			}
 		}
 		delete[] methods;
 		methods = NULL;
@@ -75,6 +91,11 @@ Class::~Class()
 	{
 		delete inner_classes;
 		inner_classes = NULL;
+	}
+	if (bootstrap_methods)
+	{
+		delete bootstrap_methods;
+		bootstrap_methods = NULL;
 	}
 	if (interfaces)
 	{
@@ -92,6 +113,11 @@ Class::~Class()
 
 bool Class::initialize(bool load_super)
 {
+	if (initialized_state)
+	{
+		return true;
+	}
+	initialized_state = true;
 	if (load_super)
 	{
 		LoadSuperClass();
@@ -123,23 +149,33 @@ void Class::LoadSuperClass()
 bool Class::FindMethod(LPSTR method_name, lpMethod& method)
 {
 	method = MethodArea::GetMethod(this, method_name);
-	if (!method)
+	if (method)
 	{
-		if (super_class)
+		return true;
+	}
+	// Interface default/static methods are inherited by implementing classes,
+	// so resolution has to walk the interface graph as well as the superclass
+	// chain.  Interfaces are resolved lazily (they may not have been loaded
+	// when this class was defined).
+	for (U2 i = 0; i < interfaceCount; i++)
+	{
+		lpClassConstant ic = interfaces ? interfaces[i] : NULL;
+		if (!ic || !ic->GetName() || !classloader)
 		{
-			if (super_class->FindMethod(method_name, method))
-			{
-				MethodArea::AddMethod(this, method);
-			}
-			else
-			{
-				return false;
-			}
+			continue;
 		}
-		else
+		lpClass iface = NULL;
+		if (classloader->FindClass(ic->GetName(), iface) && iface &&
+		    iface->FindMethod(method_name, method))
 		{
-			return false;
+			MethodArea::AddMethod(this, method);
+			return true;
 		}
 	}
-	return true;
+	if (super_class && super_class->FindMethod(method_name, method))
+	{
+		MethodArea::AddMethod(this, method);
+		return true;
+	}
+	return false;
 }

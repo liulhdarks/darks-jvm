@@ -9,6 +9,7 @@
 #include "vm/classfiles/classloader.h"
 #include "vm/classfiles/constant.h"
 #include "vm/exceptions.h"
+#include "jni/jni.h"
 
 #include <string>
 
@@ -288,12 +289,96 @@ void ObjectHeap::MarkTemporaryRoots()
 	}
 }
 
+void ObjectHeap::AddGlobalRef(LPOBJECT_REF ref)
+{
+	if (ref)
+	{
+		global_refs.push_back(ref);
+	}
+}
+
+void ObjectHeap::RemoveGlobalRef(LPOBJECT_REF ref)
+{
+	for (std::vector<LPOBJECT_REF>::iterator it = global_refs.begin();
+	     it != global_refs.end(); ++it)
+	{
+		if (*it == ref)
+		{
+			global_refs.erase(it);
+			return;
+		}
+	}
+}
+
+void ObjectHeap::AddWeakGlobalRef(LPOBJECT_REF ref)
+{
+	if (ref)
+	{
+		weak_global_refs.push_back(ref);
+	}
+}
+
+void ObjectHeap::RemoveWeakGlobalRef(LPOBJECT_REF ref)
+{
+	for (std::vector<LPOBJECT_REF>::iterator it = weak_global_refs.begin();
+	     it != weak_global_refs.end(); ++it)
+	{
+		if (*it == ref)
+		{
+			weak_global_refs.erase(it);
+			return;
+		}
+	}
+}
+
+bool ObjectHeap::IsGlobalRef(LPOBJECT_REF ref) const
+{
+	for (size_t i = 0; i < global_refs.size(); i++)
+	{
+		if (global_refs[i] == ref)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool ObjectHeap::IsWeakGlobalRef(LPOBJECT_REF ref) const
+{
+	for (size_t i = 0; i < weak_global_refs.size(); i++)
+	{
+		if (weak_global_refs[i] == ref)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void ObjectHeap::MarkGlobalRefs()
+{
+	for (size_t i = 0; i < global_refs.size(); i++)
+	{
+		MarkObjectRef(global_refs[i]);
+	}
+}
+
+void ObjectHeap::MarkJniLocalRoots()
+{
+	for (size_t i = 0; i < VMContext::jni_envs.size(); i++)
+	{
+		DarksVM_MarkJniEnvRoots(VMContext::jni_envs[i], this);
+	}
+}
+
 void ObjectHeap::MarkRoots()
 {
 	MarkThreadStackRoots();
 	MarkStaticRoots();
 	MarkConstantPoolRoots();
 	MarkTemporaryRoots();
+	MarkGlobalRefs();
+	MarkJniLocalRoots();
 }
 
 void ObjectHeap::gc()

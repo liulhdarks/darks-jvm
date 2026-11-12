@@ -6,6 +6,119 @@
 #include "utils/FileUtils.h"
 #include "parseclass.h"
 #include "platform/platform.h"
+#include "vm/io/zipreader.h"
+#include "utils/DebugUtils.h"
+
+#include <map>
+
+namespace {
+
+// Cache of opened archives. Class path entries are few and archives stay open
+// for the process lifetime.  The map itself is heap allocated so that the
+// cached ZipFile objects remain reachable at exit; otherwise the static
+// destructor would run and LeakSanitizer would report them as leaks.
+std::map<std::string, ZipFile*> &ArchiveCache()
+{
+	static std::map<std::string, ZipFile*> *cache = new std::map<std::string, ZipFile*>();
+	return *cache;
+}
+
+ZipFile *OpenArchive(const std::string &path)
+{
+	std::map<std::string, ZipFile*>::iterator it = ArchiveCache().find(path);
+	if (it != ArchiveCache().end())
+	{
+		return it->second->IsOpen() ? it->second : NULL;
+	}
+	ZipFile *zip = new ZipFile();
+	if (!zip->Open(path))
+	{
+		DebugUtils::trace("jar: cannot open %s: %s\n", path.c_str(), zip->LastError().c_str());
+		delete zip;
+		ArchiveCache()[path] = NULL;
+		return NULL;
+	}
+	ArchiveCache()[path] = zip;
+	return zip;
+}
+
+bool LooksLikeArchive(const std::string &path)
+{
+	size_t n = path.size();
+	if (n >= 4)
+	{
+		std::string ext = path.substr(n - 4);
+		for (size_t i = 0; i < ext.size(); i++)
+		{
+			if (ext[i] >= 'A' && ext[i] <= 'Z') ext[i] = static_cast<char>(ext[i] - 'A' + 'a');
+		}
+		if (ext == ".jar" || ext == ".zip") return true;
+	}
+	return false;
+}
+
+std::string ClassRelativePath(const std::string &class_name)
+{
+	std::string path = class_name;
+	for (size_t i = 0; i < path.size(); i++)
+	{
+		if (path[i] == '.') path[i] = '/';
+	}
+	path += ".class";
+	return path;
+}
+
+} // namespace
+
+JVM_API bool DarksVM_FindClassBytes(const std::string &class_name,
+                                    std::vector<uint8_t> &out,
+                                    std::string *source)
+{
+	out.clear();
+	std::vector<std::string> classpath;
+	Environment::GetClassPath(&classpath);
+	if (classpath.empty())
+	{
+		classpath.push_back(".");
+	}
+	std::string relative = ClassRelativePath(class_name);
+	for (size_t i = 0; i < classpath.size(); i++)
+	{
+		const std::string &entry = classpath[i];
+		if (dk::IsDirectory(entry))
+		{
+			std::string candidate = dk::JoinPath(entry, relative);
+			if (dk::FileExists(candidate) && dk::ReadFileBytes(candidate, out) && !out.empty())
+			{
+				if (source) *source = candidate;
+				return true;
+			}
+			continue;
+		}
+		if (!dk::FileExists(entry))
+		{
+			continue;
+		}
+		// A file class path entry is treated as an archive. Only report the
+		// archive error for .jar/.zip names to keep unrelated paths quiet.
+		ZipFile *zip = OpenArchive(entry);
+		if (!zip)
+		{
+			continue;
+		}
+		if (zip->ReadEntry(relative, out) && !out.empty())
+		{
+			if (source) *source = entry + "!/" + relative;
+			return true;
+		}
+		if (LooksLikeArchive(entry))
+		{
+			// Continue: the class may still live in a later entry.
+			continue;
+		}
+	}
+	return false;
+}
 
 ClassLoader::ClassLoader()
 {
@@ -79,6 +192,7 @@ bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool load_super)
 	LoadClass(classname, bytes, len);
 	if (!bytes)
 	{
+		DebugUtils::trace("class bytes not found for %s\n", classname);
 		throw new VMException((LPSTR)"Fail to load class bytes");
 	}
 	if (DefineClass(bytes, len, jclass))
@@ -96,42 +210,22 @@ bool ClassLoader::FindBootClass(LPCSTR classname, lpClass &jclass)
 
 void ClassLoader::LoadClass(LPCSTR classname, LPBYTE &bytes, int &length)
 {
-	string clazz(classname);
-	for (size_t i = 0; i < clazz.size(); i++)
+	bytes = NULL;
+	length = 0;
+	if (!classname)
 	{
-		if (clazz[i] == '.')
-		{
-			clazz[i] = '/';
-		}
-	}
-	clazz.append(".class");
-
-	vector<string> classpath;
-	Environment::GetClassPath(&classpath);
-	// A missing classpath is not fatal by itself; the class simply is not found
-	// and the caller reports a class-not-found error (exit code 4).
-	for (size_t i = 0; i < classpath.size(); i++)
-	{
-		string path = dk::JoinPath(classpath[i], clazz);
-		if (!dk::FileExists(path))
-		{
-			continue;
-		}
-		vector<uint8_t> data;
-		if (!dk::ReadFileBytes(path, data))
-		{
-			continue;
-		}
-		length = static_cast<int>(data.size());
-		// parse_class_bytes takes ownership of the buffer (BytesInputStream
-		// deletes it), so hand it a heap copy.
-		bytes = new BYTE[data.empty() ? 1 : data.size()];
-		if (!data.empty())
-		{
-			memcpy(bytes, data.data(), data.size());
-		}
 		return;
 	}
+	std::vector<uint8_t> data;
+	if (!DarksVM_FindClassBytes(std::string(classname), data, NULL) || data.empty())
+	{
+		return;
+	}
+	length = static_cast<int>(data.size());
+	// parse_class_bytes takes ownership of the buffer (BytesInputStream
+	// deletes it), so hand it a heap copy.
+	bytes = new BYTE[data.size()];
+	memcpy(bytes, data.data(), data.size());
 }
 
 bool ClassLoader::DefineClass(LPBYTE bytes, int length, lpClass &jclass)

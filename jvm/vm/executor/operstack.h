@@ -11,6 +11,9 @@ private:
 	int init_size;
 	Slot *slots;
 	int index;
+public:
+	const char *debug_method;
+	int debug_pc;
 
 public:
 	OperStack(int init_size)
@@ -18,6 +21,8 @@ public:
 		this->init_size = init_size;
 		slots = new Slot[init_size];
 		index = 0;
+		debug_method = NULL;
+		debug_pc = -1;
 	}
 
 	~OperStack()
@@ -86,7 +91,9 @@ public:
 	{
 		if (index >= init_size)
 		{
-			throw new VMExecutorException("Operation stack out of memory.");
+			char msg[256];
+			snprintf(msg, sizeof(msg), "Operation stack overflow (index=%d, capacity=%d) at %s pc=%d.", index, init_size, debug_method ? debug_method : "?", debug_pc);
+			throw new VMExecutorException(msg);
 		}
 		slots[index++] = slot;
 	}
@@ -95,7 +102,9 @@ public:
 	{
 		if (index <= 0)
 		{
-			throw new VMExecutorException("Operation stack out of memory.");
+			char msg[256];
+			snprintf(msg, sizeof(msg), "Operation stack underflow (pop) at %s pc=%d.", debug_method ? debug_method : "?", debug_pc);
+			throw new VMExecutorException(msg);
 		}
 		slot = slots[--index];
 		return true;
@@ -105,7 +114,9 @@ public:
 	{
 		if (index <= 0)
 		{
-			throw new VMExecutorException("Operation stack out of memory.");
+			char msg[256];
+			snprintf(msg, sizeof(msg), "Operation stack underflow (top) at %s pc=%d.", debug_method ? debug_method : "?", debug_pc);
+			throw new VMExecutorException(msg);
 		}
 		return slots[index - 1];
 	}
@@ -116,7 +127,9 @@ public:
 		tmp -= offset;
 		if (tmp < 0 || tmp >= index)
 		{
-			throw new VMExecutorException("Operation stack out of memory.");
+			char msg[128];
+			snprintf(msg, sizeof(msg), "Operation stack top(offset) out of range (offset=%d, index=%d).", offset, index);
+			throw new VMExecutorException(msg);
 		}
 		slot = slots[tmp];
 		return true;
@@ -126,7 +139,9 @@ public:
 	{
 		if (i < 0 || i >= index)
 		{
-			throw new VMExecutorException("Operation stack out of memory.");
+			char msg[128];
+			snprintf(msg, sizeof(msg), "Operation stack get(%d) out of range (index=%d).", i, index);
+			throw new VMExecutorException(msg);
 		}
 		slot = slots[i];
 		return true;
@@ -135,6 +150,11 @@ public:
 	bool isEmpty()
 	{
 		return (index <= 0);
+	}
+
+	void clear()
+	{
+		index = 0;
 	}
 
 	int size()

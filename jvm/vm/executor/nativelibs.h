@@ -38,6 +38,12 @@ public:
 
 	bool LoadNativeLibrary(LPCSTR libs_name);
 
+	// Loads an exact file name (System.load).
+	bool LoadNativeLibraryPath(LPCSTR path);
+
+	// Handle of an already loaded library (NULL when unknown).
+	void *GetLibraryHandle(LPCSTR libs_name);
+
 	LPSTR MapLibraryName(LPCSTR libs_name);
 
 	bool GetNativeFunction(LPCSTR func_name, NATIVE_FUNC& native_func);

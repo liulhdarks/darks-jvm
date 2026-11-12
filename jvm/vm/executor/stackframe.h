@@ -51,6 +51,16 @@ public:
 	// may hold an LPOBJECT_REF.
 	void MarkRoots(ObjectHeap *heap);
 
+	// Searches this frame's exception table at last_pc and, on a match,
+	// replaces the operand stack with the exception and jumps to the handler.
+	bool HandleException();
+
+	// After a raise: returns EN_NOOP when the current frame caught it, else
+	// EN_EXCEPTION so the caller unwinds.
+	EventNotify ExceptionEvent();
+
+	bool HasPendingException() const;
+
 private:
 
 	EventNotify ExecuteCode();
@@ -70,6 +80,23 @@ private:
 	bool ExecuteSpecial(int index);
 	bool ExecuteStatic(int index);
 	bool ExecuteVirtual(int index, int type);
+	bool ExecuteInvokeDynamic(U2 index);
+	bool CloneArrayReceiver();
+	bool InvokeLambda(int lambda_id, lpMethod call_method,
+	                  vector<TypeDesc> &call_args);
+
+	// Runs a Java method on a nested ThreadStack frame and returns its value.
+	// The caller's frame stays suspended (and therefore stays a GC root), so
+	// this is only safe from inside ExecuteCode.
+	bool InvokeJavaSync(lpClass target, lpMethod method,
+	                    const std::vector<Slot> &vars, Slot &result,
+	                    bool &wide);
+
+	// Appends the Java string representation of a value to a UTF-16 buffer.
+	bool AppendValueUnits(const TypeDesc &desc, Slot *slots,
+	                      std::vector<uint16_t> &out);
+	bool AppendStringRefUnits(LPOBJECT_REF ref, std::vector<uint16_t> &out);
+
 	bool ExecuteNormalMethod(lpClass clazz, lpMethod method, vector<TypeDesc> &type_desc);
 	bool ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<TypeDesc> &type_desc, TypeDesc &result_desc);
 

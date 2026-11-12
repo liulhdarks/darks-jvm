@@ -25,8 +25,12 @@ void FloatConstant::Parse(BytesInputStream *bis)
 {
 	bis->ReadBytes(4, bytes, true);
 	FloatByteValue fv(bytes);
-	name = new CHAR[64];
-	sprintf(name, "%f", fv.fValue);
+	// "%g" keeps the text bounded even for very large/small values; the old
+	// fixed 64-byte "%f" buffer overflowed for values such as 1e38.
+	char tmp[64];
+	snprintf(tmp, sizeof(tmp), "%g", fv.fValue);
+	name = new CHAR[strlen(tmp) + 1];
+	memcpy(name, tmp, strlen(tmp) + 1);
 }
 
 void LongConstant::Parse(BytesInputStream *bis)
@@ -44,8 +48,10 @@ void DoubleConstant::Parse(BytesInputStream *bis)
 	bis->ReadBytes(4, bytes2, true);
 	bis->ReadBytes(4, bytes1, true);
 	WByteValue wv(bytes1, bytes2);
-	name = new CHAR[128];
-	sprintf(name, "%f", wv.dValue);
+	char tmp[64];
+	snprintf(tmp, sizeof(tmp), "%g", wv.dValue);
+	name = new CHAR[strlen(tmp) + 1];
+	memcpy(name, tmp, strlen(tmp) + 1);
 }
 
 void ClassConstant::Parse(BytesInputStream *bis)
@@ -155,6 +161,35 @@ std::string FieldRefConstant::ToString()
 	return std::string(tmp);
 }
 
+
+void MethodHandleConstant::Parse(BytesInputStream *bis)
+{
+	reference_kind = bis->ReadU1();
+	reference_index = bis->ReadU2();
+}
+
+void MethodTypeConstant::Parse(BytesInputStream *bis)
+{
+	descriptor_index = bis->ReadU2();
+}
+
+void InvokeDynamicConstant::Parse(BytesInputStream *bis)
+{
+	bootstrap_method_attr_index = bis->ReadU2();
+	name_and_type_index = bis->ReadU2();
+}
+
+void ModuleConstant::Parse(BytesInputStream *bis)
+{
+	name_index = bis->ReadU2();
+}
+
+void PackageConstant::Parse(BytesInputStream *bis)
+{
+	name_index = bis->ReadU2();
+}
+
+
 bool ConstantPool::BuildConstant(U1 tag, lpConstant &constant)
 {
 	bool result = true;
@@ -193,6 +228,24 @@ bool ConstantPool::BuildConstant(U1 tag, lpConstant &constant)
 	case NAMEANDTYPE_CONSTANT:
 		constant = new NameTypeConstant();
 		break;
+	case METHODHANDLE_CONSTANT:
+		constant = new MethodHandleConstant();
+		break;
+	case METHODTYPE_CONSTANT:
+		constant = new MethodTypeConstant();
+		break;
+	case DYNAMIC_CONSTANT:
+		constant = new DynamicConstant();
+		break;
+	case INVOKEDYNAMIC_CONSTANT:
+		constant = new InvokeDynamicConstant();
+		break;
+	case MODULE_CONSTANT:
+		constant = new ModuleConstant();
+		break;
+	case PACKAGE_CONSTANT:
+		constant = new PackageConstant();
+		break;
 	default:
 		result = false;
 		constant = NULL;
@@ -217,7 +270,10 @@ void ConstantPool::ReBuild()
 			}
 			bool reference = constant->tag == FIELDREF_CONSTANT ||
 				constant->tag == METHODREF_CONSTANT ||
-				constant->tag == INTERFACE_CONSTANT;
+				constant->tag == INTERFACE_CONSTANT ||
+				constant->tag == METHODHANDLE_CONSTANT ||
+				constant->tag == INVOKEDYNAMIC_CONSTANT ||
+				constant->tag == DYNAMIC_CONSTANT;
 			if ((pass == 0) == reference)
 			{
 				continue;
@@ -301,6 +357,49 @@ void ConstantPool::ReBuild(Constant* constant)
 
 			ct->simple_name = new CHAR[member.size() + 1];
 			memcpy(ct->simple_name, member.c_str(), member.size() + 1);
+			break;
+		}
+	case METHODHANDLE_CONSTANT:
+		{
+			MethodHandleConstant *ct = (MethodHandleConstant*) constant;
+			ct->reference = this->GetConstant(ct->reference_index);
+			break;
+		}
+	case METHODTYPE_CONSTANT:
+		{
+			MethodTypeConstant *ct = (MethodTypeConstant*) constant;
+			ct->descriptor = (Utf8Constant*)this->GetConstant(ct->descriptor_index);
+			if (ct->descriptor && ct->descriptor->bytes)
+			{
+				std::string text(ct->descriptor->bytes, ct->descriptor->length);
+				ct->name = new CHAR[text.size() + 1];
+				memcpy(ct->name, text.c_str(), text.size() + 1);
+			}
+			break;
+		}
+	case INVOKEDYNAMIC_CONSTANT:
+	case DYNAMIC_CONSTANT:
+		{
+			InvokeDynamicConstant *ct = (InvokeDynamicConstant*) constant;
+			ct->nameType = (NameTypeConstant*)this->GetConstant(ct->name_and_type_index);
+			if (ct->nameType && ct->nameType->name)
+			{
+				std::string text(ct->nameType->name);
+				ct->name = new CHAR[text.size() + 1];
+				memcpy(ct->name, text.c_str(), text.size() + 1);
+			}
+			break;
+		}
+	case MODULE_CONSTANT:
+		{
+			ModuleConstant *ct = (ModuleConstant*) constant;
+			ct->utf8 = (Utf8Constant*)this->GetConstant(ct->name_index);
+			break;
+		}
+	case PACKAGE_CONSTANT:
+		{
+			PackageConstant *ct = (PackageConstant*) constant;
+			ct->utf8 = (Utf8Constant*)this->GetConstant(ct->name_index);
 			break;
 		}
 	default:

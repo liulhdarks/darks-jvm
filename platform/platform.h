@@ -28,6 +28,7 @@ char PathListSeparator();
 std::string JoinPath(const std::string &base, const std::string &name);
 std::string DirectoryName(const std::string &path);
 bool FileExists(const std::string &path);
+bool IsDirectory(const std::string &path);
 bool ReadFileBytes(const std::string &path, std::vector<uint8_t> &out);
 
 // ---- dynamic libraries -----------------------------------------------------

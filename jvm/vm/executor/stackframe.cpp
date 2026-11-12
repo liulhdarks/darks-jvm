@@ -8,11 +8,105 @@
 #include "exec_common.h"
 #include "threadstack.h"
 #include "methodarea.h"
+#include "javaexception.h"
+#include "jni/jni_impl.h"
 
 #include <ffi.h>
 
 #include <string>
 #include <vector>
+#include <map>
+
+namespace {
+
+struct LambdaCapture
+{
+	DATA_TYPE type;      // DT_* of the captured value (DT_REF/DT_ARRAY for refs)
+	bool wide;           // long/double occupy two slots
+	Slot low;
+	Slot high;
+};
+
+struct LambdaInfo
+{
+	int kind;                 // MethodHandle reference_kind (5..9)
+	lpClass target_class;
+	lpMethod target_method;
+	std::string sam_name;
+	std::vector<LambdaCapture> captures;
+};
+
+// Lambda objects are ordinary heap objects of a synthetic class.  Captured
+// values live in instance fields ($capN) so the collector traces them; the
+// C++-only method identity lives in this side table keyed by a monotonically
+// increasing id stored in the object ($lambda:id).
+// Kept alive until process exit: the table is bookkeeping for objects that
+// live as long as the interpreter, and a heap-allocated map keeps its
+// entries reachable from a global for leak checkers.
+std::map<int, LambdaInfo> &LambdaTable()
+{
+	static std::map<int, LambdaInfo> *table = new std::map<int, LambdaInfo>();
+	return *table;
+}
+#define g_lambdas LambdaTable()
+int g_next_lambda_id = 1;
+
+lpClass FindSyntheticLambdaClass(const std::string &iface_name,
+                                 lpClassLoader loader)
+{
+	static std::map<std::string, lpClass> *cache = new std::map<std::string, lpClass>();
+	std::map<std::string, lpClass>::iterator it = cache->find(iface_name);
+	if (it != cache->end())
+	{
+		return it->second;
+	}
+	lpClass synth = new Class(CT_OBJECT);
+	std::string synth_name = "darks/Lambda$" + iface_name;
+	synth->thisClass = new ClassConstant();
+	synth->thisClass->name = new CHAR[synth_name.size() + 1];
+	memcpy(synth->thisClass->name, synth_name.c_str(), synth_name.size() + 1);
+	synth->superClass = new ClassConstant();
+	const char *object_name = "java/lang/Object";
+	size_t object_name_len = strlen(object_name) + 1;
+	synth->superClass->name = new CHAR[object_name_len];
+	memcpy(synth->superClass->name, object_name, object_name_len);
+	synth->classloader = loader;
+	lpClass object_class = NULL;
+	if (loader)
+	{
+		loader->FindClass("java/lang/Object", object_class);
+	}
+	synth->super_class = object_class;
+	synth->interfaceCount = 1;
+	synth->interfaces = new lpClassConstant[1];
+	synth->interfaces[0] = new ClassConstant();
+	synth->interfaces[0]->name = new CHAR[iface_name.size() + 1];
+	memcpy(synth->interfaces[0]->name, iface_name.c_str(), iface_name.size() + 1);
+	synth->accFlag = 0;
+	(*cache)[iface_name] = synth;
+	return synth;
+}
+
+void StoreSlotField(lpObject obj, const std::string &name, const Slot &slot)
+{
+	lpFieldValue fv = new FieldValue();
+	fv->field_value = slot;
+	obj->varants[name] = fv;
+}
+
+bool LoadSlotField(lpObject obj, const std::string &name, Slot &slot)
+{
+	FIELD_MAP::iterator it = obj->varants.find(name);
+	if (it == obj->varants.end() || !it->second)
+	{
+		return false;
+	}
+	slot = it->second->field_value;
+	return true;
+}
+
+} // namespace
+
 
 StackFrame::StackFrame()
 {
@@ -59,6 +153,9 @@ void StackFrame::init(lpVariant vars, int count)
 {
 	if (!method || !method->code_attr)
 	{
+		fprintf(stderr, "[frame] no code: %s.%s\n",
+			(method && method->clazz && method->clazz->thisClass) ? method->clazz->thisClass->GetName() : "?",
+			(method && method->fullName) ? method->fullName : "?");
 		throw new VMExecutorException("Stack frame method is invalid.");
 	}
 	pc = 0;
@@ -139,6 +236,11 @@ EventNotify StackFrame::ExecuteCode()
 	LONG64 lValue,lValue2;
 	double dValue,dValue2;
 	last_pc = pc;
+	if (op_stack)
+	{
+		op_stack->debug_method = method && method->fullName ? method->fullName : "?";
+		op_stack->debug_pc = pc;
+	}
 	BYTE code = codes[pc++];
 	switch (code)
 	{
@@ -224,7 +326,7 @@ EventNotify StackFrame::ExecuteCode()
 
 
 	case lload:// 22 /*(0x16)*/
-		index = codes[pc];
+		index = codes[pc++];
 		s1 = local_var_table->get(index);
 		s2 = local_var_table->get(index + 1);
 		op_stack->push(s1);
@@ -248,6 +350,29 @@ EventNotify StackFrame::ExecuteCode()
 		s1 = local_var_table->get(code - fload_0);
 		op_stack->push(s1);			
 		break;		
+
+	case fload:// 23 /*(0x17)*/
+		s1 = local_var_table->get(codes[pc++]);
+		op_stack->push(s1);
+		break;
+	case dload:// 24 /*(0x18)*/
+		index = codes[pc];
+		s1 = local_var_table->get(index);
+		s2 = local_var_table->get(index + 1);
+		op_stack->push(s1);
+		op_stack->push(s2);
+		pc++;
+		break;
+	case dload_0:// 38 /*(0x26) */
+	case dload_1:// 39 /*(0x27) */
+	case dload_2:// 40 /*(0x28) */
+	case dload_3:// 41 /*(0x29) */
+		index = code - dload_0;
+		s1 = local_var_table->get(index);
+		s2 = local_var_table->get(index + 1);
+		op_stack->push(s1);
+		op_stack->push(s2);
+		break;
 
 	case aload_0:  //42 Load reference from local variable 0
 	case aload_1:  //Load reference from local variable 1
@@ -508,11 +633,24 @@ EventNotify StackFrame::ExecuteCode()
 	case idiv:
 		op_stack->pop(s1);
 		op_stack->pop(s2);
+		if (s1.iValue == 0)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/ArithmeticException", "/ by zero");
+			return ExceptionEvent();
+		}
 		op_stack->push(s2.iValue / s1.iValue);	
 		break;
 	case ldiv:
-		lValue = popLong() / popLong();
-		op_stack->push(lValue);
+		lValue = popLong();
+		lValue2 = popLong();
+		if (lValue == 0)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/ArithmeticException", "/ by zero");
+			return ExceptionEvent();
+		}
+		op_stack->push(lValue2 / lValue);
 		break;
 	case fdiv:
 		op_stack->pop(s1);
@@ -526,11 +664,24 @@ EventNotify StackFrame::ExecuteCode()
 	case irem:
 		op_stack->pop(s1);
 		op_stack->pop(s2);
+		if (s1.iValue == 0)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/ArithmeticException", "/ by zero");
+			return ExceptionEvent();
+		}
 		op_stack->push(s2.iValue % s1.iValue);	
 		break;
 	case lrem:
-		lValue = popLong() % popLong();
-		op_stack->push(lValue);
+		lValue = popLong();
+		lValue2 = popLong();
+		if (lValue == 0)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/ArithmeticException", "/ by zero");
+			return ExceptionEvent();
+		}
+		op_stack->push(lValue2 % lValue);
 		break;
 	case frem:
 		op_stack->pop(s1);
@@ -844,6 +995,25 @@ EventNotify StackFrame::ExecuteCode()
 		}
 		break;
 
+	case if_acmpeq: // 165
+		index = ReadShort();
+		op_stack->pop(s2);
+		op_stack->pop(s1);
+		if (s1.heapPtr == s2.heapPtr)
+		{
+			pc = last_pc + index;
+		}
+		break;
+	case if_acmpne: // 166
+		index = ReadShort();
+		op_stack->pop(s2);
+		op_stack->pop(s1);
+		if (s1.heapPtr != s2.heapPtr)
+		{
+			pc = last_pc + index;
+		}
+		break;
+
 	case ifeq:// 153 /*(0x99) */
 		index = ReadShort();
 		op_stack->pop(s1);
@@ -909,8 +1079,18 @@ EventNotify StackFrame::ExecuteCode()
 
 		////////////// Exceptions ///////////////////////
 	case athrow:
-/*		error =1;*/
-		return EN_EXCEPTION;
+		{
+			Slot ex_slot;
+			op_stack->pop(ex_slot);
+			LPOBJECT_REF ex_ref = ex_slot.heapPtr;
+			if (!ex_ref)
+			{
+				ex_ref = CreateJavaException("java/lang/NullPointerException",
+					"cannot throw a null object");
+			}
+			VMContext::pending_exception = ex_ref;
+			return ExceptionEvent();
+		}
 
 		//////////////////////// Method Invocation and Return ////////
 
@@ -923,21 +1103,26 @@ EventNotify StackFrame::ExecuteCode()
 		}
 		else
 		{
-			return EN_EXCEPTION;
+			return ExceptionEvent();
 		}
 		break;
 
-	case invokeinterface: //185
+	case invokeinterface: //185: index(2) + count(1) + zero(1)
+		index = ReadU2();
+		pc += 2;
+		if (ExecuteVirtual(index, NORMAL_METHOD))
+		{
+			return EN_KEEP;
+		}
+		return ExceptionEvent();
+
 	case invokevirtual: //182
 		index = ReadU2();
 		if (ExecuteVirtual(index, NORMAL_METHOD))
 		{
 			return EN_KEEP;
 		}
-		else
-		{
-			return EN_EXCEPTION;
-		}
+		return ExceptionEvent();
 
 	case invokestatic:// 184 
 		index = ReadU2();
@@ -945,10 +1130,16 @@ EventNotify StackFrame::ExecuteCode()
 		{
 			return EN_KEEP;
 		}
-		else
+		return ExceptionEvent();
+
+	case invokedynamic:// 186 (0xba): index(2) + zero(2)
+		index = ReadU2();
+		pc += 2;
+		if (ExecuteInvokeDynamic(static_cast<U2>(index)))
 		{
-			return EN_EXCEPTION;
+			break;
 		}
+		return ExceptionEvent();
 		
 		//Method return instructions
 	case ireturn: //172 (0xac)		
@@ -958,6 +1149,12 @@ EventNotify StackFrame::ExecuteCode()
 		if (prev_frame)
 		{
 			prev_frame->op_stack->push(s1);
+		}
+		else
+		{
+			thread_stack->return_value = s1;
+			thread_stack->return_wide = false;
+			thread_stack->has_return = true;
 		}
 		return EN_POP;
 
@@ -970,9 +1167,21 @@ EventNotify StackFrame::ExecuteCode()
 			prev_frame->op_stack->push(s2);
 			prev_frame->op_stack->push(s1);
 		}
+		else
+		{
+			thread_stack->return_value = s2;
+			thread_stack->return_value_hi = s1;
+			thread_stack->return_wide = true;
+			thread_stack->has_return = true;
+		}
 		return EN_POP;
 
 	case _return: //177 (0xb1): Return (void) from method			
+		if (!prev_frame)
+		{
+			thread_stack->has_return = true;
+			thread_stack->return_wide = false;
+		}
 		return EN_POP;
 	case getstatic: //178 (0xb2): Return (void) from method			
 		index = ReadU2();
@@ -986,7 +1195,55 @@ EventNotify StackFrame::ExecuteCode()
 
 	case monitorenter:// Enter and acquire object monitor 
 	case monitorexit:// Release and exit object monitor
-/*		error = 1;*/
+		// Single-threaded VM: monitors are accepted as no-ops, but both
+		// opcodes still pop their objectref operand.
+		op_stack->pop(s1);
+		break;
+
+	case checkcast:
+		{
+			u2 = ReadU2();
+			Slot obj_slot;
+			op_stack->pop(obj_slot);
+			LPOBJECT_REF cast_ref = obj_slot.heapPtr;
+			if (cast_ref)
+			{
+				lpClassConstant cc = (lpClassConstant)clazz->const_pool->GetConstant(u2);
+				lpClass target = NULL;
+				if (cc && cc->utf8)
+				{
+					class_loader->FindClass(cc->utf8->bytes, target);
+				}
+				lpObject cast_obj = NULL;
+				if (target && VMContext::object_heap->GetObject(cast_ref, cast_obj) &&
+				    !IsInstanceOfClass(cast_obj, target))
+				{
+					VMContext::pending_exception = CreateJavaException(
+						"java/lang/ClassCastException", cc && cc->utf8 ? cc->utf8->bytes : NULL);
+					return ExceptionEvent();
+				}
+			}
+			op_stack->push(obj_slot);
+		}
+		break;
+
+	case instanceof:
+		{
+			u2 = ReadU2();
+			Slot obj_slot;
+			op_stack->pop(obj_slot);
+			lpClassConstant cc = (lpClassConstant)clazz->const_pool->GetConstant(u2);
+			lpClass target = NULL;
+			if (cc && cc->utf8)
+			{
+				class_loader->FindClass(cc->utf8->bytes, target);
+			}
+			lpObject inst_obj = NULL;
+			bool yes = obj_slot.heapPtr &&
+				VMContext::object_heap->GetObject(obj_slot.heapPtr, inst_obj) &&
+				IsInstanceOfClass(inst_obj, target);
+			op_stack->push(yes ? 1 : 0);
+		}
 		break;
 	case multianewarray:// Release and exit object monitor
 		u2 = ReadU2();
@@ -1013,6 +1270,81 @@ EventNotify StackFrame::ExecuteCode()
 		break;
 	}
 	return EN_NOOP;
+}
+
+bool StackFrame::HasPendingException() const
+{
+	return VMContext::pending_exception != NULL;
+}
+
+EventNotify StackFrame::ExceptionEvent()
+{
+	if (VMContext::pending_exception && HandleException())
+	{
+		return EN_NOOP;
+	}
+	return EN_EXCEPTION;
+}
+
+bool StackFrame::HandleException()
+{
+	if (!VMContext::pending_exception || !method || !method->code_attr)
+	{
+		return false;
+	}
+	lpCodeAttribute code = method->code_attr;
+	if (!code->exception_table || code->exception_length == 0)
+	{
+		return false;
+	}
+	lpObject exception = NULL;
+	lpClass exception_class = NULL;
+	if (VMContext::object_heap->GetObject(VMContext::pending_exception, exception) && exception)
+	{
+		exception_class = exception->obj_class;
+	}
+	for (U2 i = 0; i < code->exception_length; i++)
+	{
+		const ExceptionTable &entry = code->exception_table[i];
+		if (last_pc < static_cast<int>(entry.start_pc) ||
+		    last_pc >= static_cast<int>(entry.end_pc))
+		{
+			continue;
+		}
+		bool matches = (entry.catch_type == 0);
+		if (!matches && exception_class)
+		{
+			lpClassConstant cc = (lpClassConstant)clazz->const_pool->GetConstant(entry.catch_type);
+			if (cc && cc->utf8 && cc->utf8->bytes)
+			{
+				lpClass catch_class = NULL;
+				try
+				{
+					class_loader->FindClass(cc->utf8->bytes, catch_class);
+				}
+				catch (...)
+				{
+					catch_class = NULL;
+				}
+				matches = catch_class && ClassIsAssignable(catch_class, exception_class);
+			}
+		}
+		if (matches)
+		{
+			op_stack->clear();
+			Slot ex_slot;
+			ex_slot.heapPtr = VMContext::pending_exception;
+			op_stack->push(ex_slot);
+			// The handler receives the object on the operand stack; the
+			// pending-exception flag must be cleared or the exception would
+			// still be reported as uncaught after the catch completes.
+			VMContext::pending_exception = NULL;
+			pc = static_cast<int>(entry.handler_pc);
+			last_pc = pc;
+			return true;
+		}
+	}
+	return false;
 }
 
 U2 StackFrame::ReadU2()
@@ -1063,6 +1395,26 @@ bool StackFrame::LoadConstant(int index, Slot &slot)
 		{
 			StringConstant *st = (StringConstant*)ct;
 			slot.heapPtr = st->GetString();
+			break;
+		}
+
+	case CLASS_CONSTANT:
+		{
+			// Java 5+ class literals: ldc of a CONSTANT_Class produces the
+			// java.lang.Class mirror of the referenced type.
+			ClassConstant *cc = (ClassConstant*)ct;
+			lpClass target = NULL;
+			if (!class_loader->FindClass(cc->GetName(), target) || !target)
+			{
+				return false;
+			}
+			target->initialize();
+			jobject mirror = JniClassMirror(reinterpret_cast<jclass>(target));
+			if (!mirror)
+			{
+				return false;
+			}
+			slot.heapPtr = JniRef(mirror);
 			break;
 		}
 	default:
@@ -1151,6 +1503,565 @@ bool StackFrame::ExecuteStatic(int index)
 	return ExecuteVirtual(index, STATIC_METHOD);
 }
 
+bool StackFrame::InvokeJavaSync(lpClass target, lpMethod method,
+                                const std::vector<Slot> &vars, Slot &result,
+                                bool &wide)
+{
+	wide = false;
+	if (!target || !method || !method->code_attr)
+	{
+		return false;
+	}
+	Slot *argv = vars.empty() ? NULL : const_cast<Slot *>(&vars[0]);
+	EventNotify ev = thread_stack->execute(target, method, argv,
+		static_cast<int>(vars.size()));
+	if (ev == EN_EXCEPTION || VMContext::pending_exception)
+	{
+		return false;
+	}
+	if (!thread_stack->has_return)
+	{
+		result = Slot();
+		return true;
+	}
+	result = thread_stack->return_value;
+	wide = thread_stack->return_wide;
+	return true;
+}
+
+bool StackFrame::AppendStringRefUnits(LPOBJECT_REF ref, std::vector<uint16_t> &out)
+{
+	if (!ref)
+	{
+		static const char *kNul = "null";
+		for (const char *p = kNul; *p; p++)
+		{
+			out.push_back(static_cast<uint16_t>(static_cast<unsigned char>(*p)));
+		}
+		return true;
+	}
+	lpObject str = NULL;
+	if (!VMContext::object_heap->GetObject(ref, str) || !str)
+	{
+		return false;
+	}
+	const std::string key("value:[C");
+	std::map<std::string, lpFieldValue>::iterator it = str->varants.find(key);
+	if (it == str->varants.end() || !it->second || !it->second->field_value.heapPtr)
+	{
+		return true; // empty string
+	}
+	lpObject chars = NULL;
+	if (!VMContext::object_heap->GetObject(it->second->field_value.heapPtr, chars) ||
+	    !chars || !chars->array_var)
+	{
+		return false;
+	}
+	uint16_t *units = static_cast<uint16_t *>(chars->array_var);
+	for (int i = 0; i < chars->array_length; i++)
+	{
+		out.push_back(units[i]);
+	}
+	return true;
+}
+
+static void AppendAscii(std::vector<uint16_t> &out, const char *text)
+{
+	if (!text)
+	{
+		return;
+	}
+	for (const char *p = text; *p; p++)
+	{
+		out.push_back(static_cast<uint16_t>(static_cast<unsigned char>(*p)));
+	}
+}
+
+bool StackFrame::AppendValueUnits(const TypeDesc &desc, Slot *slots,
+                                  std::vector<uint16_t> &out)
+{
+	DATA_TYPE type = desc.data_type;
+	if (desc.check_array)
+	{
+		type = DT_ARRAY;
+	}
+	char tmp[64];
+	switch (type)
+	{
+	case DT_BOOL:
+		AppendAscii(out, slots[0].blValue ? "true" : "false");
+		return true;
+	case DT_BYTE:
+		snprintf(tmp, sizeof(tmp), "%d", static_cast<int>(slots[0].bValue));
+		AppendAscii(out, tmp);
+		return true;
+	case DT_SHORT:
+		snprintf(tmp, sizeof(tmp), "%d", static_cast<int>(slots[0].sValue));
+		AppendAscii(out, tmp);
+		return true;
+	case DT_CHAR:
+		out.push_back(slots[0].cValue);
+		return true;
+	case DT_INT:
+		snprintf(tmp, sizeof(tmp), "%d", slots[0].iValue);
+		AppendAscii(out, tmp);
+		return true;
+	case DT_LONG:
+		{
+			WByteValue bv(slots[0].bytes, slots[1].bytes);
+			snprintf(tmp, sizeof(tmp), "%lld", static_cast<long long>(bv.lValue));
+			AppendAscii(out, tmp);
+			return true;
+		}
+	case DT_FLOAT:
+	case DT_DOUBLE:
+		{
+			double value;
+			if (type == DT_FLOAT)
+			{
+				value = static_cast<double>(slots[0].fValue);
+			}
+			else
+			{
+				WByteValue bv(slots[0].bytes, slots[1].bytes);
+				value = bv.dValue;
+			}
+			lpClass dbl = NULL;
+			if (!class_loader->FindClass("java/lang/Double", dbl))
+			{
+				return false;
+			}
+			lpMethod m = NULL;
+			if (!dbl->FindMethod("toString:(D)Ljava/lang/String;", m) || !m)
+			{
+				return false;
+			}
+			WByteValue bv;
+			bv.dValue = value;
+			std::vector<Slot> vars(2);
+			vars[0].set(bv.bytes, 4);
+			vars[1].set(bv.bytes + 4, 4);
+			Slot res;
+			bool wide = false;
+			if (!InvokeJavaSync(dbl, m, vars, res, wide))
+			{
+				return false;
+			}
+			return AppendStringRefUnits(res.heapPtr, out);
+		}
+	case DT_REF:
+	case DT_ARRAY:
+		{
+			if (!slots[0].heapPtr)
+			{
+				AppendAscii(out, "null");
+				return true;
+			}
+			lpObject obj = NULL;
+			if (!VMContext::object_heap->GetObject(slots[0].heapPtr, obj) || !obj)
+			{
+				return false;
+			}
+			if (obj->obj_class && obj->obj_class->thisClass &&
+			    strcmp(obj->obj_class->thisClass->GetName(), "java/lang/String") == 0)
+			{
+				return AppendStringRefUnits(slots[0].heapPtr, out);
+			}
+			lpClass str_class = NULL;
+			if (!class_loader->FindClass("java/lang/String", str_class))
+			{
+				return false;
+			}
+			lpMethod m = NULL;
+			if (!str_class->FindMethod("valueOf:(Ljava/lang/Object;)Ljava/lang/String;", m) || !m)
+			{
+				return false;
+			}
+			std::vector<Slot> vars(1);
+			vars[0] = slots[0];
+			Slot res;
+			bool wide = false;
+			if (!InvokeJavaSync(str_class, m, vars, res, wide))
+			{
+				return false;
+			}
+			return AppendStringRefUnits(res.heapPtr, out);
+		}
+	default:
+		return false;
+	}
+}
+
+bool StackFrame::ExecuteInvokeDynamic(U2 index)
+{
+	InvokeDynamicConstant *indy =
+		(InvokeDynamicConstant *)clazz->const_pool->GetConstant(index);
+	if (!indy || !indy->nameType || !indy->nameType->descUtf8)
+	{
+		return false;
+	}
+	const char *desc_bytes = indy->nameType->descUtf8->bytes;
+	std::string desc(desc_bytes ? desc_bytes : "",
+	                 indy->nameType->descUtf8->length);
+	std::vector<TypeDesc> arg_types;
+	TypeDesc result_type;
+	if (!parse_method_desc_type(desc.c_str(), arg_types, result_type))
+	{
+		return false;
+	}
+
+	lpBootstrapMethods bootstrap = clazz->bootstrap_methods;
+	if (!bootstrap || indy->bootstrap_method_attr_index >= bootstrap->methods.size())
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/UnsupportedOperationException",
+			"invokedynamic call site has no BootstrapMethods entry");
+		return false;
+	}
+	BootstrapMethodInfo &bm = bootstrap->methods[indy->bootstrap_method_attr_index];
+	MethodHandleConstant *mh =
+		(MethodHandleConstant *)clazz->const_pool->GetConstant(bm.bootstrap_method_ref);
+	if (!mh || !mh->reference)
+	{
+		return false;
+	}
+	MethodRefConstant *boot = (MethodRefConstant *)mh->reference;
+	const char *boot_class = boot->clazz && boot->clazz->utf8 ? boot->clazz->utf8->bytes : "";
+	const char *boot_name = boot->nameType && boot->nameType->nameUtf8
+		? boot->nameType->nameUtf8->bytes : "";
+
+	if (strcmp(boot_class, "java/lang/invoke/LambdaMetafactory") == 0)
+	{
+		DebugUtils::trace("lambda bootstrap %s.%s\n", boot_class, boot_name);
+		if (bm.bootstrap_arguments.size() < 3)
+		{
+			return false;
+		}
+		Constant *impl_constant =
+			clazz->const_pool->GetConstant(bm.bootstrap_arguments[1]);
+		MethodHandleConstant *impl_mh = (MethodHandleConstant *)impl_constant;
+		if (!impl_mh || !impl_mh->reference)
+		{
+			return false;
+		}
+		MethodRefConstant *impl_ref = (MethodRefConstant *)impl_mh->reference;
+		if (!impl_ref->clazz || !impl_ref->clazz->utf8 || !impl_ref->nameType)
+		{
+			return false;
+		}
+		lpClass impl_class = NULL;
+		if (!class_loader->FindClass(impl_ref->clazz->utf8->bytes, impl_class) || !impl_class)
+		{
+			return false;
+		}
+		lpMethod impl_method = NULL;
+		if (!impl_class->FindMethod(impl_ref->simple_name, impl_method) || !impl_method)
+		{
+			return false;
+		}
+		// The functional interface is the return type of the call site.
+		std::string iface = result_type.class_name;
+		if (iface.empty())
+		{
+			return false;
+		}
+		lpClass synth = FindSyntheticLambdaClass(iface, class_loader);
+
+		int cap_slots = 0;
+		for (size_t i = 0; i < arg_types.size(); i++)
+		{
+			cap_slots += (arg_types[i].data_type == DT_LONG ||
+			              arg_types[i].data_type == DT_DOUBLE) ? 2 : 1;
+		}
+		int cap_base = op_stack->size() - cap_slots;
+		if (cap_base < 0)
+		{
+			return false;
+		}
+		LPOBJECT_REF lambda_ref = NULL;
+		if (!VMContext::object_heap->NewObject(synth, lambda_ref))
+		{
+			return false;
+		}
+		lpObject lambda_obj = NULL;
+		if (!VMContext::object_heap->GetObject(lambda_ref, lambda_obj) || !lambda_obj)
+		{
+			return false;
+		}
+		LambdaInfo info;
+		info.kind = impl_mh->reference_kind;
+		info.target_class = impl_class;
+		info.target_method = impl_method;
+		info.sam_name = indy->nameType->nameUtf8 && indy->nameType->nameUtf8->bytes
+			? indy->nameType->nameUtf8->bytes : "";
+		int slot_index = cap_base;
+		int cap_index = 0;
+		for (size_t i = 0; i < arg_types.size(); i++)
+		{
+			LambdaCapture cap;
+			cap.type = arg_types[i].data_type;
+			if (arg_types[i].check_array)
+			{
+				cap.type = DT_ARRAY;
+			}
+			cap.wide = (cap.type == DT_LONG || cap.type == DT_DOUBLE);
+			if (!op_stack->get(slot_index, cap.low))
+			{
+				return false;
+			}
+			char name[32];
+			snprintf(name, sizeof(name), "$cap%d", cap_index);
+			StoreSlotField(lambda_obj, name, cap.low);
+			if (cap.wide)
+			{
+				if (!op_stack->get(slot_index + 1, cap.high))
+				{
+					return false;
+				}
+				snprintf(name, sizeof(name), "$caph%d", cap_index);
+				StoreSlotField(lambda_obj, name, cap.high);
+				slot_index += 2;
+			}
+			else
+			{
+				slot_index += 1;
+			}
+			info.captures.push_back(cap);
+			cap_index++;
+		}
+		int lambda_id = g_next_lambda_id++;
+		Slot id_slot;
+		id_slot.iValue = lambda_id;
+		StoreSlotField(lambda_obj, "$lambda:id", id_slot);
+		g_lambdas[lambda_id] = info;
+		for (int i = 0; i < cap_slots; i++)
+		{
+			Slot ignored;
+			op_stack->pop(ignored);
+		}
+		op_stack->pushObject(lambda_ref);
+		return true;
+	}
+	if (strcmp(boot_class, "java/lang/invoke/StringConcatFactory") != 0)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/UnsupportedOperationException",
+			(std::string("invokedynamic bootstrap not supported: ") +
+			 boot_class + "." + boot_name).c_str());
+		return false;
+	}
+
+	// String concat: the recipe is bootstrap argument 0 for
+	// makeConcatWithConstants; makeConcat has no recipe and concatenates every
+	// dynamic argument in order.
+	std::vector<uint16_t> recipe;
+	if (strcmp(boot_name, "makeConcatWithConstants") == 0)
+	{
+		if (bm.bootstrap_arguments.empty())
+		{
+			return false;
+		}
+		Constant *c = clazz->const_pool->GetConstant(bm.bootstrap_arguments[0]);
+		if (!c || c->tag != STRING_CONSTANT)
+		{
+			return false;
+		}
+		StringConstant *sc = (StringConstant *)c;
+		if (sc->utf8 && sc->utf8->bytes)
+		{
+			recipe = dk::Utf8ToUtf16(sc->utf8->bytes, sc->utf8->length);
+		}
+	}
+	else if (strcmp(boot_name, "makeConcat") != 0)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/UnsupportedOperationException",
+			(std::string("StringConcatFactory method not supported: ") + boot_name).c_str());
+		return false;
+	}
+
+	int total_slots = 0;
+	for (size_t i = 0; i < arg_types.size(); i++)
+	{
+		DATA_TYPE t = arg_types[i].data_type;
+		total_slots += (t == DT_LONG || t == DT_DOUBLE) ? 2 : 1;
+	}
+	int base = op_stack->size() - total_slots;
+	if (base < 0)
+	{
+		return false;
+	}
+
+	std::vector<uint16_t> out;
+	if (recipe.empty())
+	{
+		// makeConcat: concatenate every dynamic argument.
+		int slot_index = base;
+		for (size_t i = 0; i < arg_types.size(); i++)
+		{
+			Slot pair[2];
+			if (!op_stack->get(slot_index, pair[0]))
+			{
+				return false;
+			}
+			if (arg_types[i].data_type == DT_LONG || arg_types[i].data_type == DT_DOUBLE)
+			{
+				if (!op_stack->get(slot_index + 1, pair[1]))
+				{
+					return false;
+				}
+				slot_index += 2;
+			}
+			else
+			{
+				slot_index += 1;
+			}
+			if (!AppendValueUnits(arg_types[i], pair, out))
+			{
+				return false;
+			}
+		}
+	}
+	else
+	{
+		int slot_index = base;
+		size_t arg_index = 0;
+		size_t const_index = 1; // bootstrap argument 0 is the recipe itself
+		for (size_t i = 0; i < recipe.size(); i++)
+		{
+			uint16_t unit = recipe[i];
+			if (unit == 0x0001)
+			{
+				if (arg_index >= arg_types.size())
+				{
+					return false;
+				}
+				Slot pair[2];
+				if (!op_stack->get(slot_index, pair[0]))
+				{
+					return false;
+				}
+				if (arg_types[arg_index].data_type == DT_LONG ||
+				    arg_types[arg_index].data_type == DT_DOUBLE)
+				{
+					if (!op_stack->get(slot_index + 1, pair[1]))
+					{
+						return false;
+					}
+					slot_index += 2;
+				}
+				else
+				{
+					slot_index += 1;
+				}
+				if (!AppendValueUnits(arg_types[arg_index], pair, out))
+				{
+					return false;
+				}
+				arg_index++;
+			}
+			else if (unit == 0x0002)
+			{
+				if (const_index < bm.bootstrap_arguments.size())
+				{
+					Constant *c = clazz->const_pool->GetConstant(
+						bm.bootstrap_arguments[const_index]);
+					if (c)
+					{
+						if (c->tag == STRING_CONSTANT)
+						{
+							StringConstant *sc = (StringConstant *)c;
+							if (sc->utf8 && sc->utf8->bytes)
+							{
+								std::vector<uint16_t> units = dk::Utf8ToUtf16(
+									sc->utf8->bytes, sc->utf8->length);
+								out.insert(out.end(), units.begin(), units.end());
+							}
+						}
+						else
+						{
+							AppendAscii(out, c->name);
+						}
+					}
+					const_index++;
+				}
+			}
+			else
+			{
+				out.push_back(unit);
+			}
+		}
+	}
+
+	for (int i = 0; i < total_slots; i++)
+	{
+		Slot ignored;
+		op_stack->pop(ignored);
+	}
+
+	// NewStringObject takes ownership of the buffer.
+	size_t count = out.size();
+	unsigned short *buf = new unsigned short[count ? count : 1];
+	for (size_t i = 0; i < count; i++)
+	{
+		buf[i] = out[i];
+	}
+	LPOBJECT_REF str_ref = NULL;
+	if (!VMContext::object_heap->NewStringObject(buf, static_cast<int>(count), str_ref))
+	{
+		return false;
+	}
+	op_stack->pushObject(str_ref);
+	return true;
+}
+
+
+bool StackFrame::CloneArrayReceiver()
+{
+	Slot slot_obj;
+	op_stack->pop(slot_obj);
+	LPOBJECT_REF source_ref = slot_obj.heapPtr;
+	lpObject source = NULL;
+	if (!source_ref || !VMContext::object_heap->GetObject(source_ref, source) || !source)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NullPointerException", "null array reference");
+		return false;
+	}
+	int element_size = 1;
+	switch (source->array_data_type)
+	{
+	case DT_BOOL:    element_size = static_cast<int>(sizeof(jboolean)); break;
+	case DT_BYTE:    element_size = static_cast<int>(sizeof(jbyte)); break;
+	case DT_CHAR:    element_size = static_cast<int>(sizeof(jchar)); break;
+	case DT_SHORT:   element_size = static_cast<int>(sizeof(jshort)); break;
+	case DT_INT:     element_size = static_cast<int>(sizeof(jint)); break;
+	case DT_LONG:    element_size = static_cast<int>(sizeof(jlong)); break;
+	case DT_FLOAT:   element_size = static_cast<int>(sizeof(jfloat)); break;
+	case DT_DOUBLE:  element_size = static_cast<int>(sizeof(jdouble)); break;
+	case DT_ARRAY:
+	case DT_REF:     element_size = static_cast<int>(sizeof(jobject)); break;
+	default:         break;
+	}
+	LPOBJECT_REF copy_ref = NULL;
+	if (!VMContext::object_heap->NewArrayObject(source->array_length,
+		source->obj_class, copy_ref))
+	{
+		return false;
+	}
+	lpObject copy = NULL;
+	if (!VMContext::object_heap->GetObject(copy_ref, copy) || !copy)
+	{
+		return false;
+	}
+	if (source->array_var && copy->array_var && source->array_length > 0)
+	{
+		memcpy(copy->array_var, source->array_var,
+			static_cast<size_t>(source->array_length) * element_size);
+	}
+	op_stack->pushObject(copy_ref);
+	return true;
+}
 
 bool StackFrame::ExecuteVirtual(int index, int type)
 {
@@ -1159,6 +2070,15 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 	{
 		cout<<"Cannot find method index"<<index<<endl;
 		return false;
+	}
+	// Array classes have no parsed method table, so the generated
+	// `$VALUES.clone()` in enum values() (and manual array copying) is
+	// handled here as a shallow copy.
+	if (method_ref->clazz && method_ref->clazz->GetName() &&
+	    method_ref->clazz->GetName()[0] == '[' && method_ref->simple_name &&
+	    strcmp(method_ref->simple_name, "clone:()Ljava/lang/Object;") == 0)
+	{
+		return CloneArrayReceiver();
 	}
 	lpClass clazz = NULL;
 	class_loader->FindClass(method_ref->clazz->GetName(), clazz);
@@ -1174,6 +2094,13 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		cout<<"Cannot find method "<<method_ref->GetName()<<endl;
 		return false;
 	}
+	// The resolved method may be declared by a superclass or interface. The
+	// bytecode (and therefore the constant pool) belongs to the declaring
+	// class, so the frame must execute with that class.
+	if (method->clazz)
+	{
+		clazz = method->clazz;
+	}
 
 	vector<TypeDesc> type_desc;
 	TypeDesc result_desc;
@@ -1181,18 +2108,97 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 	{
 		return false;
 	}
+	// Annotation instances materialised from RuntimeVisibleAnnotations store
+	// their element values under "ann:<name>".  Element methods are abstract
+	// (no bytecode), so answer the call from the stored value.
+	if (type != STATIC_METHOD && !method->isSpecial() && method->methodName)
+	{
+		int ann_arg_slots = 0;
+		for (size_t ti = 0; ti < type_desc.size(); ti++)
+		{
+			DATA_TYPE at = type_desc[ti].data_type;
+			ann_arg_slots += (at == DT_LONG || at == DT_DOUBLE) ? 2 : 1;
+		}
+		Slot ann_recv;
+		op_stack->top(ann_arg_slots, ann_recv);
+		lpObject ann_obj = NULL;
+		if (ann_recv.heapPtr &&
+		    VMContext::object_heap->GetObject(ann_recv.heapPtr, ann_obj) && ann_obj)
+		{
+			std::string ann_key = std::string("ann:") + method->methodName->GetName();
+			FIELD_MAP::iterator ann_it = ann_obj->varants.find(ann_key);
+			if (ann_it != ann_obj->varants.end() && ann_it->second)
+			{
+				for (int k = 0; k < ann_arg_slots; k++)
+				{
+					Slot dropped;
+					op_stack->pop(dropped);
+				}
+				op_stack->pop(ann_recv);
+				Variant ann_value = ann_it->second->field_value;
+				switch (result_desc.data_type)
+				{
+				case DT_VOID:
+					break;
+				case DT_LONG:
+					op_stack->push(ann_value.lValue);
+					break;
+				case DT_DOUBLE:
+					op_stack->push(ann_value.dValue);
+					break;
+				default:
+					op_stack->push(ann_value);
+					break;
+				}
+				return true;
+			}
+		}
+	}
 	//动态分派 多态处理-------------------------------------
-	if (!method->isSpecial()
+	if (type != SPECIAL_METHOD
+		&& !method->isSpecial()
 		&& !method->isStatic()
 		&& !method->isFinal())
 	{
 		Slot slot_this;
-		op_stack->top(type_desc.size(), slot_this);
+		// long/double arguments occupy two stack slots; the receiver sits
+		// below all of them.
+		int arg_slots = 0;
+		for (size_t ti = 0; ti < type_desc.size(); ti++)
+		{
+			DATA_TYPE at = type_desc[ti].data_type;
+			arg_slots += (at == DT_LONG || at == DT_DOUBLE) ? 2 : 1;
+		}
+		op_stack->top(arg_slots, slot_this);
 		LPOBJECT_REF obj_ref = slot_this.heapPtr;
 		lpObject obj = NULL;
-		if (!VMContext::object_heap->GetObject(obj_ref, obj))
+		if (!obj_ref || !VMContext::object_heap->GetObject(obj_ref, obj))
 		{
-			throw new VMExecutorException("Target object is invalid.");
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NullPointerException", "null object reference");
+			return false;
+		}
+		int lambda_id = 0;
+		FIELD_MAP::iterator lit = obj->varants.find("$lambda:id");
+		if (lit != obj->varants.end() && lit->second)
+		{
+			lambda_id = lit->second->field_value.iValue;
+		}
+		if (lambda_id > 0)
+		{
+			std::map<int, LambdaInfo>::iterator li = g_lambdas.find(lambda_id);
+			if (li != g_lambdas.end() && method->methodName &&
+			    method->methodName->GetName())
+			{
+				const char *call_name = method->methodName->GetName();
+				const std::string &sam = li->second.sam_name;
+				if (sam.size() > 0 &&
+				    strncmp(call_name, sam.c_str(), sam.size()) == 0 &&
+				    call_name[sam.size()] == '\0')
+				{
+					return InvokeLambda(lambda_id, method, type_desc);
+				}
+			}
 		}
 		lpMethod tmp_method = NULL;
 		if (obj->obj_class->FindMethod(method->fullName, tmp_method))
@@ -1235,10 +2241,61 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 		throw new VMExecutorException("Native method has no JNI name.");
 	}
 
+	// Registered natives (RegisterNatives) take precedence over dlsym. The
+	// short JNI name is tried first, then the "long" name that encodes the
+	// method descriptor so overloaded natives resolve correctly.
 	NATIVE_FUNC native_func = NULL;
-	if (!VMContext::native_libs->GetNativeFunction(jni_name, native_func) || !native_func)
+	void *registered = DarksVM_GetRegisteredNative(method);
+	if (registered)
 	{
-		throw new VMExecutorException((LPSTR)(std::string("Cannot find native method in library: ") + jni_name).c_str());
+		native_func = reinterpret_cast<NATIVE_FUNC>(registered);
+	}
+	if (!native_func)
+	{
+		// Long JNI name: Java_<class>_<method>__<mangled argument types>.
+		// The parentheses and the return type are not part of the suffix
+		// (javah/javac convention), e.g. (I)I -> "..._m__I" and
+		// (Ljava/lang/String;)V -> "..._m__Ljava_lang_String_2".
+		std::string long_name = std::string(jni_name) + "__";
+		const char *desc = method->methodDesc ? method->methodDesc->GetName() : "";
+		const char *args_begin = desc ? strchr(desc, '(') : NULL;
+		const char *args_end = args_begin ? strchr(args_begin, ')') : NULL;
+		if (args_begin && args_end)
+		{
+			for (const char *p = args_begin + 1; p < args_end; p++)
+			{
+				char c = *p;
+				if (c == '/')
+				{
+					long_name += '_';
+				}
+				else if (c == '_')
+				{
+					long_name += "_1";
+				}
+				else if (c == ';')
+				{
+					long_name += "_2";
+				}
+				else if (c == '[')
+				{
+					long_name += "_3";
+				}
+				else
+				{
+					long_name += c;
+				}
+			}
+		}
+		if (!VMContext::native_libs->GetNativeFunction(long_name.c_str(), native_func) ||
+		    !native_func)
+		{
+			if (!VMContext::native_libs->GetNativeFunction(jni_name, native_func) ||
+			    !native_func)
+			{
+				throw new VMExecutorException((LPSTR)(std::string("Cannot find native method in library: ") + jni_name).c_str());
+			}
+		}
 	}
 
 	// libffi needs one storage cell per C argument. The JNIEnv pointer and the
@@ -1378,12 +2435,10 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 		values[1].p = (void*)this_slot.heapPtr;
 	}
 
-	// JNI references created inside the native function are invisible to the
-	// collector, so automatic collection is deferred for the whole call.
-	GCNativeScope native_scope(VMContext::object_heap);
-	// In addition, pin the receiver and the reference arguments (defensive: they
-	// are already popped off the operand stack).
-	GCRootSet native_roots(VMContext::object_heap);
+	// JNI local references: every object handed to the native function is
+	// pinned in a JNI local frame, which the collector treats as a GC root.
+	// This replaces the old blanket "disable GC while native runs".
+	JniPushLocalFrame(jni_env);
 	for (int i = 0; i < count; i++)
 	{
 		DATA_TYPE arg_type = type_desc[i].data_type;
@@ -1393,13 +2448,15 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 		}
 		if (arg_type == DT_REF || arg_type == DT_ARRAY)
 		{
-			native_roots.Add(reinterpret_cast<LPOBJECT_REF*>(&values[base + static_cast<size_t>(i)].p));
+			JniAddLocalRef(jni_env, (jobject)values[base + static_cast<size_t>(i)].p);
 		}
 	}
 	if (!method->isStatic())
 	{
-		native_roots.Add(reinterpret_cast<LPOBJECT_REF*>(&values[1].p));
+		JniAddLocalRef(jni_env, (jobject)values[1].p);
 	}
+	JNIEnv *prev_jni_env = JniGetCurrentEnv();
+	JniSetCurrentEnv(jni_env);
 
 	DATA_TYPE result_type = result_desc.data_type;
 	if (result_desc.check_array)
@@ -1445,6 +2502,21 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 
 	NativeValue ret;
 	ffi_call(&cif, (void (*)(void))native_func, &ret, arg_values.data());
+	JniSetCurrentEnv(prev_jni_env);
+
+	bool raised = VMContext::pending_exception != NULL;
+	jobject result_ref = NULL;
+	if (!raised && (result_type == DT_REF || result_type == DT_ARRAY))
+	{
+		result_ref = (jobject)ret.p;
+	}
+	// Pop the native frame; a returned reference is promoted into the caller
+	// frame (normal JNI local-reference lifetime).
+	JniPopLocalFrame(jni_env, result_ref);
+	if (raised)
+	{
+		return false;
+	}
 
 	switch (result_type)
 	{
@@ -1504,6 +2576,376 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 	default:
 		break;
 	}
+	return true;
+}
+
+namespace {
+
+// Extracts a primitive value from a wrapper object field (Integer.value:I,
+// Long.value:J, ...).  Used when a generic functional interface passes
+// Object arguments to a primitive-typed implementation method.
+bool UnboxWrapper(LPOBJECT_REF ref, DATA_TYPE target, Slot &value, bool &wide)
+{
+	wide = false;
+	lpObject obj = NULL;
+	if (!ref || !VMContext::object_heap->GetObject(ref, obj) || !obj)
+	{
+		return false;
+	}
+	const char *key = NULL;
+	switch (target)
+	{
+	case DT_BOOL: key = "value:Z"; break;
+	case DT_BYTE: key = "value:B"; break;
+	case DT_CHAR: key = "value:C"; break;
+	case DT_SHORT: key = "value:S"; break;
+	case DT_INT: key = "value:I"; break;
+	case DT_FLOAT: key = "value:F"; break;
+	case DT_LONG: key = "value:J"; break;
+	case DT_DOUBLE: key = "value:D"; break;
+	default: return false;
+	}
+	FIELD_MAP::iterator it = obj->varants.find(std::string(key));
+	if (it == obj->varants.end() || !it->second)
+	{
+		return false;
+	}
+	Slot stored = it->second->field_value;
+	if (target == DT_LONG || target == DT_DOUBLE)
+	{
+		WByteValue bv;
+		if (target == DT_LONG) bv.lValue = stored.lValue; else bv.dValue = stored.dValue;
+		value.set(bv.bytes, 4);
+		// Caller reads the high half separately in this case.
+		wide = true;
+		return true;
+	}
+	value = stored;
+	return true;
+}
+
+} // namespace
+
+bool StackFrame::InvokeLambda(int lambda_id, lpMethod call_method,
+                              vector<TypeDesc> &call_args)
+{
+	std::map<int, LambdaInfo>::iterator it = g_lambdas.find(lambda_id);
+	if (it == g_lambdas.end())
+	{
+		return false;
+	}
+	LambdaInfo &info = it->second;
+	if (!info.target_method || !info.target_method->methodDesc)
+	{
+		return false;
+	}
+
+	std::vector<TypeDesc> targs;
+	TypeDesc tret;
+	if (!parse_method_desc_type(info.target_method->methodDesc->GetName(), targs, tret))
+	{
+		return false;
+	}
+	std::vector<TypeDesc> sam_args;
+	TypeDesc sam_ret;
+	if (!parse_method_desc_type(call_method->methodDesc->GetName(), sam_args, sam_ret))
+	{
+		return false;
+	}
+
+	int call_slots = 0;
+	for (size_t i = 0; i < call_args.size(); i++)
+	{
+		call_slots += (call_args[i].data_type == DT_LONG ||
+		               call_args[i].data_type == DT_DOUBLE) ? 2 : 1;
+	}
+	Slot receiver;
+	if (!op_stack->top(call_slots, receiver))
+	{
+		return false;
+	}
+	LPOBJECT_REF self = receiver.heapPtr;
+	GCRootScope root_self(VMContext::object_heap, &self);
+
+	std::vector<Slot> vars;
+	size_t target_index = 0;
+	size_t cap_start = 0;
+	bool is_static = info.target_method->isStatic();
+	bool is_constructor = (info.kind == 8);
+	bool receiver_in_args = false;
+	LPOBJECT_REF ctor_obj = NULL;
+	GCRootScope root_ctor(VMContext::object_heap, &ctor_obj);
+	if (is_constructor)
+	{
+		// Constructor reference (REF_newInvokeSpecial): allocate the target
+		// object, pass it as local 0 and invoke <init> on it.  The object is
+		// the call-site result; <init> itself returns void.
+		if (!info.target_class ||
+		    !VMContext::object_heap->NewObject(info.target_class, ctor_obj) ||
+		    !ctor_obj)
+		{
+			return false;
+		}
+		Slot this_slot;
+		this_slot.heapPtr = ctor_obj;
+		vars.push_back(this_slot);
+	}
+	else if (!is_static)
+	{
+		if (info.captures.empty())
+		{
+			// Unbound instance method reference: the first SAM argument is
+			// the receiver and becomes local variable 0.
+			receiver_in_args = true;
+		}
+		else
+		{
+			vars.push_back(info.captures[0].low);
+			cap_start = 1;
+		}
+	}
+	for (size_t ci = cap_start; ci < info.captures.size(); ci++)
+	{
+		Slot low = info.captures[ci].low;
+		if (target_index < targs.size() && info.captures[ci].type == DT_REF &&
+		    targs[target_index].data_type != DT_REF && !targs[target_index].check_array)
+		{
+			Slot unboxed;
+			bool wide = false;
+			if (UnboxWrapper(low.heapPtr, targs[target_index].data_type, unboxed, wide))
+			{
+				low = unboxed;
+				if (wide)
+				{
+					WByteValue bv;
+					bv.lValue = info.captures[ci].low.lValue;
+					Slot hi;
+					hi.set(bv.bytes + 4, 4);
+					vars.push_back(low);
+					vars.push_back(hi);
+					target_index++;
+					continue;
+				}
+			}
+		}
+		vars.push_back(low);
+		if (info.captures[ci].wide)
+		{
+			vars.push_back(info.captures[ci].high);
+		}
+		target_index++;
+	}
+
+	int base = op_stack->size() - call_slots;
+	int slot_index = base;
+	for (size_t ai = 0; ai < call_args.size(); ai++)
+	{
+		Slot low, high;
+		if (!op_stack->get(slot_index, low))
+		{
+			return false;
+		}
+		bool wide = (call_args[ai].data_type == DT_LONG || call_args[ai].data_type == DT_DOUBLE);
+		if (wide && !op_stack->get(slot_index + 1, high))
+		{
+			return false;
+		}
+		// The first SAM argument of an unbound instance method reference is
+		// the receiver, not a declared parameter.
+		bool is_receiver = receiver_in_args && ai == 0;
+		// Unbox Integer/Long/... when the implementation expects a primitive.
+		if (!is_receiver && target_index < targs.size() && call_args[ai].data_type == DT_REF &&
+		    targs[target_index].data_type != DT_REF && !targs[target_index].check_array)
+		{
+			Slot unboxed;
+			bool uwide = false;
+			if (UnboxWrapper(low.heapPtr, targs[target_index].data_type, unboxed, uwide))
+			{
+				low = unboxed;
+				wide = uwide;
+				if (wide)
+				{
+					WByteValue bv;
+					bv.lValue = unboxed.lValue;
+					Slot hi;
+					hi.set(bv.bytes + 4, 4);
+					high = hi;
+				}
+			}
+		}
+		vars.push_back(low);
+		if (wide)
+		{
+			vars.push_back(high);
+		}
+		slot_index += wide ? 2 : 1;
+		if (!is_receiver)
+		{
+			target_index++;
+		}
+	}
+
+	if (info.target_method->isNative())
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/UnsupportedOperationException",
+			"lambda implementation method is native");
+		return false;
+	}
+
+	// Call-site arguments and the receiver may now be discarded; the values
+	// live in vars (and captured refs remain reachable through the lambda).
+	for (int i = 0; i < call_slots + 1; i++)
+	{
+		Slot ignored;
+		op_stack->pop(ignored);
+	}
+
+	Slot result;
+	bool result_wide = false;
+	if (!InvokeJavaSync(info.target_class, info.target_method, vars, result, result_wide))
+	{
+		return false;
+	}
+
+	if (is_constructor)
+	{
+		Slot out;
+		out.heapPtr = ctor_obj;
+		op_stack->push(out);
+		return true;
+	}
+
+	DATA_TYPE ret = tret.data_type;
+	if (tret.check_array)
+	{
+		ret = DT_ARRAY;
+	}
+	DATA_TYPE sam = sam_ret.data_type;
+	if (sam_ret.check_array)
+	{
+		sam = DT_ARRAY;
+	}
+	if (sam == DT_VOID || ret == DT_VOID)
+	{
+		return true;
+	}
+	if (ret == DT_REF || ret == DT_ARRAY)
+	{
+		Slot out = result;
+		if ((sam != DT_REF && sam != DT_ARRAY) && out.heapPtr)
+		{
+			Slot unboxed;
+			bool wide = false;
+			if (!UnboxWrapper(out.heapPtr, sam, unboxed, wide))
+			{
+				return false;
+			}
+			out = unboxed;
+			if (wide)
+			{
+				WByteValue bv;
+				bv.lValue = result.lValue;
+				Slot hi;
+				hi.set(bv.bytes + 4, 4);
+				op_stack->push(out);
+				op_stack->push(hi);
+				return true;
+			}
+		}
+		op_stack->push(out);
+		return true;
+	}
+	if (result_wide)
+	{
+		Slot low = result;
+		Slot high = thread_stack->return_value_hi;
+		if ((sam == DT_REF || sam == DT_ARRAY))
+		{
+			// Box the primitive so it can satisfy an Object-returning SAM.
+			const char *wrapper = NULL;
+			const char *method = NULL;
+			if (ret == DT_INT) { wrapper = "java/lang/Integer"; method = "valueOf:(I)Ljava/lang/Integer;"; }
+			else if (ret == DT_LONG) { wrapper = "java/lang/Long"; method = "valueOf:(J)Ljava/lang/Long;"; }
+			else if (ret == DT_DOUBLE) { wrapper = "java/lang/Double"; method = "valueOf:(D)Ljava/lang/Double;"; }
+			if (!wrapper)
+			{
+				return false;
+			}
+			lpClass wc = NULL;
+			if (!class_loader->FindClass(wrapper, wc))
+			{
+				return false;
+			}
+			lpMethod wm = NULL;
+			if (!wc->FindMethod((LPSTR)method, wm) || !wm)
+			{
+				return false;
+			}
+			std::vector<Slot> wvars;
+			wvars.push_back(low);
+			wvars.push_back(high);
+			Slot boxed;
+			bool bwide = false;
+			if (!InvokeJavaSync(wc, wm, wvars, boxed, bwide))
+			{
+				return false;
+			}
+			op_stack->push(boxed);
+			return true;
+		}
+		op_stack->push(low);
+		op_stack->push(high);
+		return true;
+	}
+	if (sam == DT_REF || sam == DT_ARRAY)
+	{
+		const char *wrapper = NULL;
+		const char *method = NULL;
+		switch (ret)
+		{
+		case DT_BOOL: wrapper = "java/lang/Boolean"; method = "valueOf:(Z)Ljava/lang/Boolean;"; break;
+		case DT_CHAR: wrapper = "java/lang/Character"; method = "valueOf:(C)Ljava/lang/Character;"; break;
+		case DT_FLOAT: wrapper = "java/lang/Double"; method = "valueOf:(D)Ljava/lang/Double;"; break;
+		case DT_INT: wrapper = "java/lang/Integer"; method = "valueOf:(I)Ljava/lang/Integer;"; break;
+		default: return false;
+		}
+		lpClass wc = NULL;
+		if (!class_loader->FindClass(wrapper, wc))
+		{
+			return false;
+		}
+		lpMethod wm = NULL;
+		if (!wc->FindMethod((LPSTR)method, wm) || !wm)
+		{
+			return false;
+		}
+		std::vector<Slot> wvars;
+		if (ret == DT_FLOAT)
+		{
+			double d = static_cast<double>(result.fValue);
+			WByteValue bv;
+			bv.dValue = d;
+			Slot lo, hi;
+			lo.set(bv.bytes, 4);
+			hi.set(bv.bytes + 4, 4);
+			wvars.push_back(lo);
+			wvars.push_back(hi);
+		}
+		else
+		{
+			wvars.push_back(result);
+		}
+		Slot boxed;
+		bool bwide = false;
+		if (!InvokeJavaSync(wc, wm, wvars, boxed, bwide))
+		{
+			return false;
+		}
+		op_stack->push(boxed);
+		return true;
+	}
+	op_stack->push(result);
 	return true;
 }
 
@@ -1643,8 +3085,20 @@ bool StackFrame::ExecuteNewObjectArray(U2 index)
 	{
 		return false;
 	}
+	// anewarray names the *component* type; the new object has the array
+	// class "[" + component (needed for checkcast/instanceof on arrays).
+	std::string component(cc->utf8->bytes);
+	std::string array_name;
+	if (!component.empty() && component[0] == '[')
+	{
+		array_name = std::string("[") + component;
+	}
+	else
+	{
+		array_name = "[L" + component + ";";
+	}
 	lpClass clazz = NULL;
-	class_loader->FindClass(cc->utf8->bytes, clazz);
+	class_loader->FindClass(array_name.c_str(), clazz);
 
 	Slot slot;
 	op_stack->pop(slot);
@@ -1835,28 +3289,29 @@ void StackFrame::PutStatic(U2 index)
 	{
 		throw new VMExecutorException("Put static field have the invalid index.");
 	}
-	lpField field = clazz->fields_map[string(frc->simple_name)];
-	if (!field)
+	// Resolve the class that declares the field (it may differ from the
+	// current class for inherited/other-class statics).
+	lpClass target_class = NULL;
+	if (!class_loader->FindClass(frc->clazz->GetName(), target_class) || !target_class)
+	{
+		throw new VMExecutorException("Class does not exists when put static field.");
+	}
+	const char *name = frc->nameType && frc->nameType->nameUtf8 ? frc->nameType->nameUtf8->bytes : NULL;
+	const char *desc = frc->nameType && frc->nameType->descUtf8 ? frc->nameType->descUtf8->bytes : NULL;
+	lpField field = JniFindField(target_class, name, desc, true);
+	lpFieldValue fv = JniStaticFieldValue(target_class, field, true);
+	if (!fv)
 	{
 		throw new VMExecutorException("Class field does not exists.");
 	}
-	lpFieldValue fv = new FieldValue(field);
 
 	TypeDesc type_desc;
-	LPSTR desc = frc->nameType->descUtf8->GetName();
-	parse_desc_type(desc, type_desc, strlen(desc));
+	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	{
+		throw new VMExecutorException("Invalid static field descriptor.");
+	}
 	switch (type_desc.data_type)
 	{
-	case DT_BOOL:
-	case DT_BYTE:
-	case DT_CHAR:
-	case DT_FLOAT:
-	case DT_SHORT:
-	case DT_INT:
-	case DT_ARRAY:
-	case DT_REF:
-		op_stack->pop(fv->field_value);
-		break;
 	case DT_LONG:
 		fv->field_value.lValue = popLong();
 		break;
@@ -1864,10 +3319,9 @@ void StackFrame::PutStatic(U2 index)
 		fv->field_value.dValue = popDouble();
 		break;
 	default:
+		op_stack->pop(fv->field_value);
 		break;
 	}
-
-	MethodArea::AddStaticField(frc->GetName(), fv);
 }
 
 void StackFrame::GetStatic(U2 index)
@@ -1877,33 +3331,30 @@ void StackFrame::GetStatic(U2 index)
 	{
 		throw new VMExecutorException("Get static field have the invalid index.");
 	}
-	
-	lpClass clazz = NULL;
-	if (!class_loader->FindClass(frc->clazz->GetName(), clazz))
+
+	lpClass target_class = NULL;
+	if (!class_loader->FindClass(frc->clazz->GetName(), target_class) || !target_class)
 	{
 		throw new VMExecutorException("Fail to find class when get static field.");
 	}
 
-	lpFieldValue fv = MethodArea::GetStaticField(frc->GetName());
+	const char *name = frc->nameType && frc->nameType->nameUtf8 ? frc->nameType->nameUtf8->bytes : NULL;
+	const char *desc = frc->nameType && frc->nameType->descUtf8 ? frc->nameType->descUtf8->bytes : NULL;
+	lpField field = JniFindField(target_class, name, desc, true);
+	// A static field without an explicit initializer has no <clinit> entry;
+	// create its default value lazily on first access.
+	lpFieldValue fv = JniStaticFieldValue(target_class, field, true);
 	if (!fv)
 	{
 		throw new VMExecutorException("Static field does not exists.");
 	}
 	TypeDesc type_desc;
-	LPSTR desc = frc->nameType->descUtf8->GetName();
-	parse_desc_type(desc, type_desc, strlen(desc));
+	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	{
+		throw new VMExecutorException("Invalid static field descriptor.");
+	}
 	switch (type_desc.data_type)
 	{
-	case DT_BOOL:
-	case DT_BYTE:
-	case DT_CHAR:
-	case DT_FLOAT:
-	case DT_SHORT:
-	case DT_INT:
-	case DT_ARRAY:
-	case DT_REF:
-		op_stack->push(fv->field_value);
-		break;
 	case DT_LONG:
 		op_stack->push(fv->field_value.lValue);
 		break;
@@ -1911,6 +3362,7 @@ void StackFrame::GetStatic(U2 index)
 		op_stack->push(fv->field_value.dValue);
 		break;
 	default:
+		op_stack->push(fv->field_value);
 		break;
 	}
 }

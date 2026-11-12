@@ -12,14 +12,20 @@ target_link_libraries(gc_tests PRIVATE darksvm)
 set(CLASSES_DIR "${CMAKE_BINARY_DIR}/classes")
 
 if(JAVAC)
+    file(GLOB RUNTIME_JAVA_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/io/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/function/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/reflect/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/annotation/*.java"
+    )
     set(JAVA_SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/Object.java"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/String.java"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/System.java"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/io/PrintStream.java"
+        ${RUNTIME_JAVA_SOURCES}
         "${CMAKE_CURRENT_SOURCE_DIR}/java/Hello.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/Clock.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/GcStress.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/dev/darks/jni/NativeLib.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
     add_custom_command(
@@ -37,6 +43,172 @@ if(JAVAC)
 
     set(CHECK "${CMAKE_CURRENT_SOURCE_DIR}/check.cmake")
     set(JVM "$<TARGET_FILE:darks-jvm>")
+
+    # ------------------------------------------------------------------
+    # Java 11 bytecode (major version 55) and language-feature coverage.
+    # These sources are compiled with --release 11 so the produced class
+    # files exercise the newer constant-pool tags and invokedynamic paths.
+    # ------------------------------------------------------------------
+    execute_process(COMMAND "${JAVAC}" --version
+                    OUTPUT_VARIABLE JAVAC_VERSION
+                    ERROR_VARIABLE JAVAC_VERSION_ERROR)
+    if(NOT JAVAC_VERSION)
+        execute_process(COMMAND "${JAVAC}" -version
+                        OUTPUT_QUIET ERROR_VARIABLE JAVAC_VERSION)
+    endif()
+    string(STRIP "${JAVAC_VERSION}${JAVAC_VERSION_ERROR}" JAVAC_VERSION)
+    string(REGEX MATCH "[0-9]+" JAVAC_MAJOR "${JAVAC_VERSION}")
+    if(JAVAC_MAJOR GREATER_EQUAL 11)
+        file(GLOB JAVA11_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/java11/*.java")
+        set(JAVA11_STAMP "${CLASSES_DIR}/.stamp_java11")
+        add_custom_command(
+            OUTPUT "${JAVA11_STAMP}"
+            COMMAND "${JAVAC}" --release 11 -d "${CLASSES_DIR}" ${JAVA11_SOURCES}
+            COMMAND "${CMAKE_COMMAND}" -E touch "${JAVA11_STAMP}"
+            DEPENDS ${JAVA11_SOURCES}
+            COMMENT "Compiling Java 11 language-feature tests")
+        add_custom_target(java11_classes ALL DEPENDS "${JAVA11_STAMP}")
+        add_dependencies(java11_classes java_classes)
+
+        add_test(NAME java11_language
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};LangFeatures" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=summary=dflt:named:n!:static,conflict:alpha/beta,lam:5:8:6:4:42:0,anonlocal:6,nested:9:6,var:10,auto:8:4,enum:3:1:GREEN:g:ABother,twr:5,multi:caught:ise:caught:nfe,sup:primary:1:close-x,sync:4:5:5,init:5,vol:12,bridge:n5"
+                    "-DEXPECT_TEXT2=java11\ language:\ ok" -P "${CHECK}")
+
+        add_test(NAME java11_collections
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};CollectionsDemo" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=coll=2:2:true:5:3:20:2:3:6:9:5:8:12:7:0:3:1:0"
+                    "-DEXPECT_TEXT2=java11\ collections:\ ok" -P "${CHECK}")
+
+        add_test(NAME java11_reflect
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};ReflectDemo" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=refl=java.lang.Object:7:3:4:42:40:1:1:1:1:1"
+                    "-DEXPECT_TEXT2=java11\ reflect:\ ok" -P "${CHECK}")
+
+        # module-info.class (CONSTANT_Module / CONSTANT_Package) must parse,
+        # and a class inside the module must still run from the classpath.
+        file(GLOB JAVA11_MODULE_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/java11mod/module-info.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java11mod/pkg/Main.java")
+        set(JAVA11_MODULE_STAMP "${CLASSES_DIR}/.stamp_java11mod")
+        add_custom_command(
+            OUTPUT "${JAVA11_MODULE_STAMP}"
+            COMMAND "${JAVAC}" --release 11 -d "${CLASSES_DIR}" ${JAVA11_MODULE_SOURCES}
+            COMMAND "${CMAKE_COMMAND}" -E touch "${JAVA11_MODULE_STAMP}"
+            DEPENDS ${JAVA11_MODULE_SOURCES}
+            COMMENT "Compiling the Java 11 module-info fixture")
+        add_custom_target(java11_module_classes ALL DEPENDS "${JAVA11_MODULE_STAMP}")
+        add_dependencies(java11_module_classes java_classes)
+
+        add_test(NAME java11_module_dump
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};--dump;module-info" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=this_class:\ \ module-info" -P "${CHECK}")
+
+        add_test(NAME java11_module_run
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};pkg.Main" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=module\ main" -P "${CHECK}")
+
+        # Newer class files must be rejected with a clear diagnostic, not
+        # mis-parsed.  Only possible when the installed javac is newer than 11.
+        if(JAVAC_MAJOR GREATER_EQUAL 12)
+            set(JAVA11_REJECT_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/java11reject/High.java")
+            set(JAVA11_REJECT_STAMP "${CLASSES_DIR}/.stamp_java11reject")
+            add_custom_command(
+                OUTPUT "${JAVA11_REJECT_STAMP}"
+                COMMAND "${JAVAC}" --release ${JAVAC_MAJOR} -d "${CLASSES_DIR}"
+                        ${JAVA11_REJECT_SOURCES}
+                COMMAND "${CMAKE_COMMAND}" -E touch "${JAVA11_REJECT_STAMP}"
+                DEPENDS ${JAVA11_REJECT_SOURCES}
+                COMMENT "Compiling a post-Java-11 class for the rejection test")
+            add_custom_target(java11_reject_classes ALL DEPENDS "${JAVA11_REJECT_STAMP}")
+            add_dependencies(java11_reject_classes java_classes)
+
+            add_test(NAME java11_reject_newer
+                COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                        "-DARGS=-cp;${CLASSES_DIR};High" -DEXPECT_RC=3
+                        "-DEXPECT_TEXT=unsupported\ class\ file\ version" -P "${CHECK}")
+        endif()
+    else()
+        message(STATUS "javac ${JAVAC_VERSION} is older than 11: Java 11 tests disabled.")
+    endif()
+
+    # ------------------------------------------------------------------
+    # Third-party native library compiled with the *official* JDK jni.h.
+    # ------------------------------------------------------------------
+    get_filename_component(JAVAC_REAL "${JAVAC}" REALPATH)
+    get_filename_component(JDK_BIN_DIR "${JAVAC_REAL}" DIRECTORY)
+    get_filename_component(JDK_HOME "${JDK_BIN_DIR}" DIRECTORY)
+    find_program(TEST_CC NAMES cc gcc clang)
+    if(UNIX AND TEST_CC AND EXISTS "${JDK_HOME}/include/jni.h")
+        add_library(thirdparty_native SHARED native/thirdparty.cpp)
+        target_include_directories(thirdparty_native PRIVATE
+            "${JDK_HOME}/include" "${JDK_HOME}/include/linux")
+        set_target_properties(thirdparty_native PROPERTIES PREFIX "lib")
+
+        add_test(NAME thirdparty_jni
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};dev.darks.jni.NativeLib;$<TARGET_FILE:thirdparty_native>"
+                    -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=thirdparty jni checks: 14, failed: 0" -P "${CHECK}")
+
+        add_test(NAME thirdparty_jni_unload
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                    "-DARGS=-E;env;DARKS_JNI_UNLOAD_MARKER=${CMAKE_BINARY_DIR}/jni_unload.marker;${JVM};-cp;${CLASSES_DIR};dev.darks.jni.NativeLib;$<TARGET_FILE:thirdparty_native>"
+                    -DEXPECT_RC=0
+                    "-DREMOVE_FILE=${CMAKE_BINARY_DIR}/jni_unload.marker"
+                    "-DEXPECT_FILE=${CMAKE_BINARY_DIR}/jni_unload.marker"
+                    -P "${CHECK}")
+    endif()
+
+    # ------------------------------------------------------------------
+    # Executable jar support: an application jar that bundles the minimal
+    # runtime is launched with -jar (Main-Class from the manifest) and is
+    # also usable as a plain class path entry.
+    # ------------------------------------------------------------------
+    find_program(JAR_TOOL NAMES jar)
+    if(JAR_TOOL)
+        set(JAR_STAGE "${CMAKE_BINARY_DIR}/jarstage")
+        set(TEST_APP_JAR "${CMAKE_BINARY_DIR}/app.jar")
+        set(JAR_DEPS java_classes)
+        if(DEFINED JAVA11_MODULE_STAMP)
+            list(APPEND JAR_DEPS "${JAVA11_MODULE_STAMP}")
+        endif()
+        if(DEFINED JAVA11_REJECT_STAMP)
+            list(APPEND JAR_DEPS "${JAVA11_REJECT_STAMP}")
+        endif()
+        add_custom_command(
+            OUTPUT "${TEST_APP_JAR}"
+            COMMAND "${CMAKE_COMMAND}" -E rm -rf "${JAR_STAGE}"
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory "${CLASSES_DIR}" "${JAR_STAGE}"
+            COMMAND "${CMAKE_COMMAND}" -E rm -f "${JAR_STAGE}/module-info.class"
+            COMMAND "${CMAKE_COMMAND}" -E rm -f "${JAR_STAGE}/High.class"
+            COMMAND "${JAR_TOOL}" --create --file "${TEST_APP_JAR}"
+                    --main-class Hello -C "${JAR_STAGE}" .
+            DEPENDS ${JAR_DEPS}
+            COMMENT "Packaging the executable jar fixture")
+        add_custom_target(test_app_jar ALL DEPENDS "${TEST_APP_JAR}")
+        add_dependencies(test_app_jar java_classes)
+        if(TARGET java11_module_classes)
+            add_dependencies(test_app_jar java11_module_classes)
+        endif()
+        if(TARGET java11_reject_classes)
+            add_dependencies(test_app_jar java11_reject_classes)
+        endif()
+
+        add_test(NAME jar_main_class
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-jar;${TEST_APP_JAR}" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=Hello, darks-jvm!" -P "${CHECK}")
+        add_test(NAME jar_classpath
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${TEST_APP_JAR};pkg.Main" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=module main" -P "${CHECK}")
+    endif()
 
     add_test(NAME unit_tests
         COMMAND "${CMAKE_COMMAND}" -DPROG=$<TARGET_FILE:unit_tests>

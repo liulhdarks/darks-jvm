@@ -99,17 +99,6 @@ void JNICALL Java_java_lang_System_arraycopy
 
 /*
  * Class:     java_lang_System
- * Method:    identityHashCode
- * Signature: (Ljava/lang/Object;)I
- */
-jint JNICALL Java_java_lang_System_identityHashCode
-	(JNIEnv *, jclass, jobject)
-{
-	return 0;
-}
-
-/*
- * Class:     java_lang_System
  * Method:    initProperties
  * Signature: (Ljava/util/Properties;)Ljava/util/Properties;
  */

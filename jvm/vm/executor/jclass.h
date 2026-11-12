@@ -30,8 +30,22 @@ public:
 
 	lpSourceFile source_file;
 	lpInnerClasses inner_classes;
+	lpBootstrapMethods bootstrap_methods;
 	ClassType class_type;
 	lpClass super_class;
+
+	// Class file version (major 45..55 supported; 52 == Java 8, 55 == Java 11).
+	U2 major_version;
+	U2 minor_version;
+
+	// Nestmate linkage (Java 11).  nest_host is the internal name of the host
+	// class (empty when the class is its own host); nest_members lists the
+	// internal names declared by a NestMembers attribute.
+	string nest_host;
+	vector<string> nest_members;
+	// Set once <clinit> has run (or when the class has none); guards against
+	// repeated initialisation from JNI GetStaticMethodID/GetStaticFieldID.
+	bool initialized_state;
 
 public:
 	Class();

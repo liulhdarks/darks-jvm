@@ -67,21 +67,27 @@ bool JObject::newInstance(lpClass obj_class)
 	{
 		return false;
 	}
-	if (obj_class->fieldCount <= 0)
+	// Instance fields are inherited: an object layout contains the fields of
+	// the whole superclass chain (matching the JVM). Without this, subclass
+	// constructors cannot initialise Throwable.detailMessage or any other
+	// inherited field.
+	for (lpClass c = obj_class; c; c = c->super_class)
 	{
-		return true;
-	}
-
-	for (int i = 0; i < obj_class->fieldCount; i++)
-	{
-		lpField field = obj_class->fields[i];
-		if (!field)
+		for (int i = 0; i < c->fieldCount; i++)
 		{
-			continue;
+			lpField field = c->fields[i];
+			if (!field)
+			{
+				continue;
+			}
+			if ((field->accFlag & ACF_STATIC) != 0)
+			{
+				continue;
+			}
+			lpFieldValue fv = new FieldValue(field);
+			fv->initialize();
+			varants[string(field->GetSimpleName())] = fv;
 		}
-		lpFieldValue fv = new FieldValue(field);
-		fv->initialize();
-		varants[string(field->GetSimpleName())] = fv;
 	}
 
 	return true;

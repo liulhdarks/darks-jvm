@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "nativelibs.h"
 #include "utils/DebugUtils.h"
+#include "jni/jni_impl.h"
 
 NativeLibrary::NativeLibrary()
 {
@@ -17,7 +18,11 @@ NativeLibrary::~NativeLibrary()
 {
 	if (handle)
 	{
-		OS::ReleaseNativeLibrary(handle);
+		DarksVM_UnloadJniLibrary(handle);
+		// The OS handle is intentionally left mapped: dlclose() at process exit
+		// buys nothing, and unmapping a library while its static destructors /
+		// exit handlers may still run is unsafe.  JNI_OnUnload above performs
+		// the library's own cleanup.
 	}
 }
 
@@ -67,6 +72,43 @@ bool NativeLibraryManager::LoadNativeLibrary(LPCSTR libs_name)
 	}
 	delete native_lib;
 	return false;
+}
+
+bool NativeLibraryManager::LoadNativeLibraryPath(LPCSTR path)
+{
+	if (!path || !*path)
+	{
+		return false;
+	}
+	string str_libs = string(path);
+	if (libs_map.find(str_libs) != libs_map.end())
+	{
+		return true;
+	}
+	lpNativeLibrary native_lib = new NativeLibrary(str_libs);
+	native_lib->handle = OS::LoadNativeLibrary(path);
+	if (native_lib->handle)
+	{
+		DebugUtils::print(2, "Load native library ", path);
+		libs_map[str_libs] = native_lib;
+		return true;
+	}
+	delete native_lib;
+	return false;
+}
+
+void *NativeLibraryManager::GetLibraryHandle(LPCSTR libs_name)
+{
+	if (!libs_name)
+	{
+		return NULL;
+	}
+	map<string, lpNativeLibrary>::iterator it = libs_map.find(string(libs_name));
+	if (it == libs_map.end() || !it->second)
+	{
+		return NULL;
+	}
+	return it->second->handle;
 }
 
 LPSTR NativeLibraryManager::MapLibraryName(LPCSTR libs_name)

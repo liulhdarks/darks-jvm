@@ -14,9 +14,12 @@
 #include "platform/platform.h"
 #include "utils/DebugUtils.h"
 #include "vm/classfiles/parseclass.h"
+#include "vm/classfiles/classloader.h"
+#include "vm/io/zipreader.h"
 #include "vm/executor/executor.h"
 #include "vm/executor/context.h"
 #include "vm/exceptions.h"
+#include "vm/executor/javaexception.h"
 
 #include <cstdio>
 #include <iostream>
@@ -89,38 +92,24 @@ static string class_relative_path(const string &class_name)
 
 static bool find_class_file(const string &class_name, string &found)
 {
-	vector<string> classpath;
-	Environment::GetClassPath(&classpath);
-	if (classpath.empty())
+	vector<uint8_t> data;
+	string source;
+	if (!DarksVM_FindClassBytes(class_name, data, &source))
 	{
-		classpath.push_back(".");
+		return false;
 	}
-	string relative = class_relative_path(class_name);
-	for (size_t i = 0; i < classpath.size(); i++)
-	{
-		string candidate = dk::JoinPath(classpath[i], relative);
-		if (dk::FileExists(candidate))
-		{
-			found = candidate;
-			return true;
-		}
-	}
-	return false;
+	found = source;
+	return true;
 }
 
 static int dump_class(const string &class_name)
 {
+	vector<uint8_t> data;
 	string path;
-	if (!find_class_file(class_name, path))
+	if (!DarksVM_FindClassBytes(class_name, data, &path) || data.empty())
 	{
 		cerr << "Error: could not find class file for " << class_name << endl;
 		return 4;
-	}
-	vector<uint8_t> data;
-	if (!dk::ReadFileBytes(path, data) || data.empty())
-	{
-		cerr << "Error: could not read " << path << endl;
-		return 3;
 	}
 	uint8_t *buffer = new uint8_t[data.size()];
 	memcpy(buffer, data.data(), data.size());
@@ -182,8 +171,8 @@ static int run_class(const string &class_name, int argc, char **argv)
 	try
 	{
 		lpClass clazz = NULL;
-		VMContext::bootstrap_classloader->FindClass(class_name.c_str(), clazz);
-		if (!clazz)
+		if (!VMContext::bootstrap_classloader->FindClass(class_name.c_str(), clazz) ||
+		    !clazz)
 		{
 			throw new VMException("Failed to load main class.");
 		}
@@ -227,6 +216,14 @@ static int run_class(const string &class_name, int argc, char **argv)
 		exec = new VMExecutor();
 		exec->Initialize();
 		exec->Execute(clazz, clazz->mainMethod, &args_var, 1);
+		if (VMContext::pending_exception)
+		{
+			// Uncaught Java exception: print a readable trace and exit with a
+			// non-zero status (3, the VM/runtime error code).
+			PrintUncaughtException(VMContext::pending_exception);
+			VMContext::pending_exception = NULL;
+			result = 3;
+		}
 	}
 	catch (VMException *e)
 	{
@@ -264,6 +261,8 @@ int main(int argc, char **argv)
 
 	vector<string> args;
 	bool classpath_set = false;
+	bool jar_mode = false;
+	string jar_main_class;
 	for (int i = 1; i < argc; i++)
 	{
 		string arg(argv[i]);
@@ -295,10 +294,36 @@ int main(int argc, char **argv)
 			classpath_set = true;
 			continue;
 		}
+		if (arg == "-jar")
+		{
+			if (i + 1 >= argc)
+			{
+				cerr << "Error: missing jar file after -jar" << endl;
+				print_usage();
+				return 2;
+			}
+			string jar_path = argv[++i];
+			ZipFile jar;
+			if (!jar.Open(jar_path))
+			{
+				cerr << "Error: cannot open jar " << jar_path << ": " << jar.LastError() << endl;
+				return 3;
+			}
+			string main_from_manifest = jar.GetManifestMainClass();
+			if (main_from_manifest.empty())
+			{
+				cerr << "Error: no Main-Class in " << jar_path << endl;
+				return 3;
+			}
+			Environment::AddClassPath(jar_path);
+			jar_main_class = main_from_manifest;
+			jar_mode = true;
+			continue;
+		}
 		args.push_back(arg);
 	}
 
-	if (!classpath_set)
+	if (!classpath_set && !jar_mode)
 	{
 		const char *env_cp = getenv("DARKS_JVM_CLASSPATH");
 		if (env_cp && *env_cp)
@@ -309,6 +334,17 @@ int main(int argc, char **argv)
 		{
 			Environment::AddClassPath(".");
 		}
+	}
+
+	if (jar_mode)
+	{
+		vector<char*> jar_argv;
+		for (size_t i = 0; i < args.size(); i++)
+		{
+			jar_argv.push_back(const_cast<char*>(args[i].c_str()));
+		}
+		return run_class(jar_main_class, static_cast<int>(jar_argv.size()),
+		                 jar_argv.empty() ? NULL : jar_argv.data());
 	}
 
 	if (args.empty())

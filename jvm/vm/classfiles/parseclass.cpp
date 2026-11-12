@@ -55,6 +55,8 @@ bool parse_class_bytes(LPBYTE bytes, int length, lpClass &clazz)
 		DebugUtils::print("Fail to read file header.");
 		bis->Close();
 		delete bis;
+		delete clazz;
+		clazz = NULL;
 		return false;
 	}
 
@@ -63,6 +65,8 @@ bool parse_class_bytes(LPBYTE bytes, int length, lpClass &clazz)
 		DebugUtils::print("Fail to read constant pool.");
 		bis->Close();
 		delete bis;
+		delete clazz;
+		clazz = NULL;
 		return false;
 	}
 
@@ -71,6 +75,8 @@ bool parse_class_bytes(LPBYTE bytes, int length, lpClass &clazz)
 		DebugUtils::print("Fail to read class header.");
 		bis->Close();
 		delete bis;
+		delete clazz;
+		clazz = NULL;
 		return false;
 	}
 
@@ -79,6 +85,8 @@ bool parse_class_bytes(LPBYTE bytes, int length, lpClass &clazz)
 		DebugUtils::print("Fail to read fields.");
 		bis->Close();
 		delete bis;
+		delete clazz;
+		clazz = NULL;
 		return false;
 	}
 
@@ -87,6 +95,8 @@ bool parse_class_bytes(LPBYTE bytes, int length, lpClass &clazz)
 		DebugUtils::print("Fail to read methods.");
 		bis->Close();
 		delete bis;
+		delete clazz;
+		clazz = NULL;
 		return false;
 	}
 
@@ -95,6 +105,8 @@ bool parse_class_bytes(LPBYTE bytes, int length, lpClass &clazz)
 		DebugUtils::print("Fail to read class attributes.");
 		bis->Close();
 		delete bis;
+		delete clazz;
+		clazz = NULL;
 		return false;
 	}
 
@@ -115,8 +127,20 @@ bool read_file_header(BytesInputStream *bis, lpClass &clazz)
 		DebugUtils::print("Magic number is invalid.");
 		return false;
 	}
-	bis->ReadU2(); // minor
-	bis->ReadU2(); // major
+	U2 minor = bis->ReadU2();
+	U2 major = bis->ReadU2();
+	clazz->minor_version = minor;
+	clazz->major_version = major;
+	// 45.0 (JDK 1.0) .. 55.0 (Java 11) are supported.  Newer class files
+	// are rejected with a clear diagnostic instead of being parsed as
+	// garbage; 56+ (Java 12+) needs newer bytecode features.
+	if (major < 45 || major > 55)
+	{
+		fprintf(stderr,
+			"Error: unsupported class file version %u.%u (max supported: 55.0 / Java 11)\n",
+			static_cast<unsigned>(major), static_cast<unsigned>(minor));
+		return false;
+	}
 	return true;
 }
 
@@ -238,7 +262,7 @@ bool read_field_info(BytesInputStream *bis, lpClass &clazz, lpField &field)
 			field->constValue->Parse(bis, clazz->const_pool);
 			field->constValue->attr_name = uc;
 		}
-		else if (name && field->ParseAttribute(uc, bis, clazz->const_pool))
+		else if (name && (bis->SetCursor(h.payload_pos - 4), field->ParseAttribute(uc, bis, clazz->const_pool)))
 		{
 			// Parsed by the common attribute handler.
 		}
@@ -259,12 +283,18 @@ bool read_methods_info(BytesInputStream *bis, lpClass &clazz)
 		clazz->methods = new lpMethod[clazz->methodCount];
 		for (U2 i = 0; i < clazz->methodCount; i++)
 		{
+			clazz->methods[i] = NULL;
 			lpMethod method = NULL;
 			if (read_method_info(bis, clazz, method))
 			{
 				method->clazz = clazz;
 				clazz->methods[i] = method;
 				MethodArea::AddMethod(clazz, method);
+			}
+			else
+			{
+				DebugUtils::trace("Failed to parse a method of %s\n",
+					clazz->thisClass ? clazz->thisClass->GetName() : "?");
 			}
 		}
 	}
@@ -299,7 +329,7 @@ bool read_method_info(BytesInputStream *bis, lpClass &clazz, lpMethod &method)
 			method->exception_attr->Parse(bis, clazz->const_pool);
 			method->exception_attr->attr_name = uc;
 		}
-		else if (name && method->ParseAttribute(uc, bis, clazz->const_pool))
+		else if (name && (bis->SetCursor(h.payload_pos - 4), method->ParseAttribute(uc, bis, clazz->const_pool)))
 		{
 		}
 		else
@@ -309,6 +339,9 @@ bool read_method_info(BytesInputStream *bis, lpClass &clazz, lpMethod &method)
 	}
 	if (!method->methodName || !method->methodDesc)
 	{
+		DebugUtils::trace("method parse: nameIndex=%u descIndex=%u acc=0x%x attrs=%u\n",
+			static_cast<unsigned>(nameIndex), static_cast<unsigned>(descIndex),
+			static_cast<unsigned>(method->accFlag), static_cast<unsigned>(method->attrCount));
 		return false;
 	}
 	method->fullName = new char[512];
@@ -350,7 +383,36 @@ bool read_attributes_info(BytesInputStream *bis, lpClass &clazz)
 			clazz->inner_classes->Parse(bis, clazz->const_pool);
 			clazz->inner_classes->attr_name = uc;
 		}
-		else if (name && clazz->ParseAttribute(uc, bis, clazz->const_pool))
+		else if (name && strcmp(name, ATTR_BOOTSTRAP) == 0)
+		{
+			bis->SetCursor(h.payload_pos - 4);
+			clazz->bootstrap_methods = new JBootstrapMethods();
+			clazz->bootstrap_methods->Parse(bis, clazz->const_pool);
+			clazz->bootstrap_methods->attr_name = uc;
+		}
+		else if (name && strcmp(name, ATTR_NESTHOST) == 0)
+		{
+			U2 host_index = bis->ReadU2();
+			lpUtf8Constant host = (lpUtf8Constant) clazz->const_pool->GetConstant(host_index);
+			if (host && host->GetName())
+			{
+				clazz->nest_host = host->GetName();
+			}
+		}
+		else if (name && strcmp(name, ATTR_NESTMEMBERS) == 0)
+		{
+			U2 member_count = bis->ReadU2();
+			for (U2 m = 0; m < member_count; m++)
+			{
+				U2 member_index = bis->ReadU2();
+				lpUtf8Constant member = (lpUtf8Constant) clazz->const_pool->GetConstant(member_index);
+				if (member && member->GetName())
+				{
+					clazz->nest_members.push_back(member->GetName());
+				}
+			}
+		}
+		else if (name && (bis->SetCursor(h.payload_pos - 4), clazz->ParseAttribute(uc, bis, clazz->const_pool)))
 		{
 		}
 		else

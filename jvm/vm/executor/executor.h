@@ -1,6 +1,7 @@
 #pragma once
 
 #include "threadstack.h"
+#include "context.h"
 #include "jclass.h"
 #include "vm/exceptions.h"
 
@@ -24,6 +25,11 @@ public:
 	void Execute(lpClass clazz, lpMethod method);
 
 	void Execute(lpClass clazz, lpMethod method, lpVariant vars, int count);
+
+	lpThreadStack GetThreadStack() const
+	{
+		return stack;
+	}
 
 };
 

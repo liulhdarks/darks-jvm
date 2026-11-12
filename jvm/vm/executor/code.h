@@ -43,6 +43,15 @@
 #define lload_2 32 /*(0x20) */
 #define lload_3 33 /*(0x21) */
 
+#define fload 23 /*(0x17)*/
+
+#define dload 24 /*(0x18)*/
+
+#define dload_0 38 /*(0x26)*/
+#define dload_1 39 /*(0x27)*/
+#define dload_2 40 /*(0x28)*/
+#define dload_3 41 /*(0x29)*/
+
 #define fload_0 34 /*(0x22)*/ 
 #define fload_1 35 /*(0x23) */
 #define fload_2 36 /*(0x24) */
@@ -160,7 +169,7 @@
 #define f2l 140 /*(0x8c)*/
 #define f2d 141 /*(0x8d)*/
 #define d2i 142 /*(0x8e)*/
-#define d2l 143 /*(0x9f)*/
+#define d2l 143 /*(0x8f)*/
 #define d2f 144 /*(0x90)*/
 #define i2b 145 /*(0x91)*/
 #define i2c 146 /*(0x92)*/
@@ -186,6 +195,9 @@
 #define if_icmpgt 163 /*(0xa3) */
 #define if_icmple 164 /*(0xa4)*/
 
+#define if_acmpeq 165 /*(0xa5)*/
+#define if_acmpne 166 /*(0xa6)*/
+
 
 #define _goto 167 /*(0xa7)*/
 
@@ -208,6 +220,7 @@
 #define invokevirtual 182 /*(0xb6)*/
 #define invokespecial  183 /*(0xb7) */
 #define invokestatic 184 
+#define invokedynamic 186 /*(0xba)*/
 
 #define _new 187 /*(0xbb)*/
 
