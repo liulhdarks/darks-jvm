@@ -13,9 +13,16 @@ if(DEFINED REMOVE_FILE AND EXISTS "${REMOVE_FILE}")
     file(REMOVE "${REMOVE_FILE}")
 endif()
 
+# Optional list of KEY=VALUE environment overrides; the test binary is run
+# through "cmake -E env" so the harness stays portable.
+set(_command "${PROG}")
+if(DEFINED ENV_VARS)
+    set(_command "${CMAKE_COMMAND}" -E env ${ENV_VARS} "${PROG}")
+endif()
+
 if(DEFINED TIMEOUT)
     execute_process(
-        COMMAND "${PROG}" ${ARGS}
+        COMMAND ${_command} ${ARGS}
         RESULT_VARIABLE rc
         OUTPUT_VARIABLE out
         ERROR_VARIABLE err
@@ -23,7 +30,7 @@ if(DEFINED TIMEOUT)
     )
 else()
     execute_process(
-        COMMAND "${PROG}" ${ARGS}
+        COMMAND ${_command} ${ARGS}
         RESULT_VARIABLE rc
         OUTPUT_VARIABLE out
         ERROR_VARIABLE err

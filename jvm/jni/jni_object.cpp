@@ -86,6 +86,13 @@ lpClass JniFindClass(JNIEnv *env, const char *name)
 			return NULL;
 		}
 	}
+	catch (VMException *error)
+	{
+		// FindClass throws heap-allocated VMException objects for missing
+		// classes; JNI reports the failure by returning NULL.
+		delete error;
+		return NULL;
+	}
 	catch (...)
 	{
 		return NULL;

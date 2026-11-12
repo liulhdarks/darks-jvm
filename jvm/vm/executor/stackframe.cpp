@@ -2,6 +2,7 @@
 #include "stackframe.h"
 #include "vm/exceptions.h"
 #include "code.h"
+#include "jit.h"
 #include "vm/classfiles/constant.h"
 #include "context.h"
 #include "utils/DebugUtils.h"
@@ -123,6 +124,8 @@ StackFrame::StackFrame()
 	pending_sync_obj = NULL;
 	pending_sync_class = NULL;
 	pending_sync_held = false;
+	jit_checked = false;
+	jit_program = NULL;
 }
 
 StackFrame::StackFrame(lpThreadStack thread_stack, lpClass clazz, lpMethod method, lpClassLoader class_loader)
@@ -141,6 +144,8 @@ StackFrame::StackFrame(lpThreadStack thread_stack, lpClass clazz, lpMethod metho
 	pending_sync_class = NULL;
 	pending_sync_held = false;
 	static_method = method->isStatic();
+	jit_checked = false;
+	jit_program = NULL;
 }
 
 StackFrame::~StackFrame()
@@ -221,7 +226,20 @@ EventNotify StackFrame::Execute()
 	{
 		init();
 	}
+	if (!jit_checked)
+	{
+		jit_checked = true;
+		jit_program = darksjit::Acquire(method);
+	}
+	if (jit_program)
+	{
+		return ExecuteJit(jit_program);
+	}
+	return Interpret();
+}
 
+EventNotify StackFrame::Interpret()
+{
 	while (1)
 	{
 		EventNotify ret = ExecuteCode();
@@ -232,17 +250,12 @@ EventNotify StackFrame::Execute()
 	}
 }
 
-EventNotify StackFrame::ExecuteCode()
+EventNotify StackFrame::BeginInstruction()
 {
 	if (pc >= code_length)
 	{
 		return EN_EXCEPTION;
 	}
-	Slot s1, s2, s3;
-	int index = 0;
-	U2 u2 = 0;
-	LONG64 lValue,lValue2;
-	double dValue,dValue2;
 	if (thread_stack && thread_stack->injected_exception)
 	{
 		// A blocking call was interrupted (or a monitor grant carried an
@@ -284,6 +297,767 @@ EventNotify StackFrame::ExecuteCode()
 		op_stack->debug_method = method && method->fullName ? method->fullName : "?";
 		op_stack->debug_pc = pc;
 	}
+	return EN_NOOP;
+}
+
+EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
+{
+	while (1)
+	{
+		if (!program || pc < 0 || static_cast<U4>(pc) >= code_length)
+		{
+			return EN_EXCEPTION;
+		}
+		int insn_index = program->pc_index[pc];
+		if (insn_index < 0)
+		{
+			// Should not happen for compiled methods; fall back to the
+			// interpreter without losing the current pc.
+			return Interpret();
+		}
+		const darksjit::Insn &insn = program->insns[insn_index];
+		if (!insn.fast)
+		{
+			EventNotify delegated = ExecuteCode();
+			if (delegated != EN_NOOP)
+			{
+				return delegated;
+			}
+			continue;
+		}
+		EventNotify pre = BeginInstruction();
+		if (pre != EN_NOOP)
+		{
+			return pre;
+		}
+		pc = insn.next_pc;
+		Slot s1, s2, s3, s4;
+		LONG64 lValue, lValue2;
+		double dValue, dValue2;
+		switch (insn.op)
+		{
+		case nop:
+			break;
+
+		case aconst_null:
+			op_stack->push(0);
+			break;
+		case iconst_m1:
+		case iconst_0:
+		case iconst_1:
+		case iconst_2:
+		case iconst_3:
+		case iconst_4:
+		case iconst_5:
+			op_stack->push((int)(insn.op - iconst_0));
+			break;
+		case lconst_0:
+		case lconst_1:
+			op_stack->push(static_cast<LONG64>(insn.op - lconst_0));
+			break;
+		case fconst_0:
+		case fconst_1:
+		case fconst_2:
+			op_stack->push((float)(insn.op - fconst_0));
+			break;
+		case dconst_0:
+		case dconst_1:
+			op_stack->push((double)(insn.op - dconst_0));
+			break;
+		case bipush:
+			op_stack->push(insn.a);
+			break;
+		case sipush:
+			op_stack->push(static_cast<short>(insn.a));
+			break;
+		case ldc:
+		case ldc_w:
+			LoadConstant(insn.a, s1);
+			op_stack->push(s1);
+			break;
+		case ldc2_w:
+			LoadConstantW(static_cast<U2>(insn.a), s1, s2);
+			op_stack->push(s1);
+			op_stack->push(s2);
+			break;
+
+		case iload:
+		case iload_0:
+		case iload_1:
+		case iload_2:
+		case iload_3:
+		case fload:
+		case fload_0:
+		case fload_1:
+		case fload_2:
+		case fload_3:
+		case aload:
+		case aload_0:
+		case aload_1:
+		case aload_2:
+		case aload_3:
+			s1 = local_var_table->get(insn.a);
+			op_stack->push(s1);
+			break;
+		case lload:
+		case lload_0:
+		case lload_1:
+		case lload_2:
+		case lload_3:
+		case dload:
+		case dload_0:
+		case dload_1:
+		case dload_2:
+		case dload_3:
+			s1 = local_var_table->get(insn.a);
+			s2 = local_var_table->get(insn.a + 1);
+			op_stack->push(s1);
+			op_stack->push(s2);
+			break;
+
+		case istore:
+		case istore_0:
+		case istore_1:
+		case istore_2:
+		case istore_3:
+		case fstore:
+		case fstore_0:
+		case fstore_1:
+		case fstore_2:
+		case fstore_3:
+		case astore:
+		case astore_0:
+		case astore_1:
+		case astore_2:
+		case astore_3:
+			op_stack->pop(s1);
+			local_var_table->set(insn.a, s1);
+			break;
+		case lstore:
+		case lstore_0:
+		case lstore_1:
+		case lstore_2:
+		case lstore_3:
+		case dstore:
+		case dstore_0:
+		case dstore_1:
+		case dstore_2:
+		case dstore_3:
+			op_stack->pop(s1);
+			local_var_table->set(insn.a + 1, s1);
+			op_stack->pop(s1);
+			local_var_table->set(insn.a, s1);
+			break;
+		case iinc:
+			s1 = local_var_table->get(insn.a);
+			s1.iValue += insn.b;
+			local_var_table->set(insn.a, s1);
+			break;
+
+		case iaload:
+			LoadArray(DT_INT);
+			break;
+		case laload:
+			LoadArray(DT_LONG);
+			break;
+		case faload:
+			LoadArray(DT_FLOAT);
+			break;
+		case daload:
+			LoadArray(DT_DOUBLE);
+			break;
+		case aaload:
+			LoadArray(DT_REF);
+			break;
+		case baload:
+			LoadArray(DT_BYTE);
+			break;
+		case caload:
+			LoadArray(DT_CHAR);
+			break;
+		case saload:
+			LoadArray(DT_SHORT);
+			break;
+		case iastore:
+		case fastore:
+		case bastore:
+		case castore:
+		case sastore:
+		case aastore:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			SetArrayIndex(s2.iValue, s1);
+			break;
+		case lastore:
+			s1.lValue = popLong();
+			op_stack->pop(s2);
+			SetArrayIndex(s2.iValue, s1);
+			break;
+		case dastore:
+			s1.dValue = popDouble();
+			op_stack->pop(s2);
+			SetArrayIndex(s2.iValue, s1);
+			break;
+
+		case _pop:
+			op_stack->pop(s1);
+			break;
+		case _pop2:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			break;
+		case dup:
+			s1 = op_stack->top();
+			op_stack->push(s1);
+			break;
+		case dup_x1:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->push(s1);
+			op_stack->push(s2);
+			op_stack->push(s1);
+			break;
+		case dup_x2:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->pop(s3);
+			op_stack->push(s1);
+			op_stack->push(s3);
+			op_stack->push(s2);
+			op_stack->push(s1);
+			break;
+		case dup2:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->push(s2);
+			op_stack->push(s1);
+			op_stack->push(s2);
+			op_stack->push(s1);
+			break;
+		case dup2_x1:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->pop(s3);
+			op_stack->push(s2);
+			op_stack->push(s1);
+			op_stack->push(s3);
+			op_stack->push(s2);
+			op_stack->push(s1);
+			break;
+		case dup2_x2:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->pop(s3);
+			op_stack->pop(s4);
+			op_stack->push(s2);
+			op_stack->push(s1);
+			op_stack->push(s4);
+			op_stack->push(s3);
+			op_stack->push(s2);
+			op_stack->push(s1);
+			break;
+
+		case iadd:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->push(s1.iValue + s2.iValue);
+			break;
+		case ladd:
+			lValue = popLong() + popLong();
+			op_stack->push(lValue);
+			break;
+		case fadd:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->push(s1.fValue + s2.fValue);
+			break;
+		case dadd:
+			dValue = popDouble() + popDouble();
+			op_stack->push(dValue);
+			break;
+		case isub:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->push(s2.iValue - s1.iValue);
+			break;
+		case lsub:
+			lValue = popLong();
+			lValue2 = popLong();
+			op_stack->push(lValue2 - lValue);
+			break;
+		case fsub:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->push(s2.fValue - s1.fValue);
+			break;
+		case dsub:
+			dValue = popDouble();
+			dValue2 = popDouble();
+			op_stack->push(dValue2 - dValue);
+			break;
+		case imul:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->push(s2.iValue * s1.iValue);
+			break;
+		case lmul:
+			lValue = popLong() * popLong();
+			op_stack->push(lValue);
+			break;
+		case fmul:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->push(s2.fValue * s1.fValue);
+			break;
+		case dmul:
+			dValue = popDouble() * popDouble();
+			op_stack->push(dValue);
+			break;
+		case idiv:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			if (s1.iValue == 0)
+			{
+				VMContext::pending_exception = CreateJavaException(
+					"java/lang/ArithmeticException", "/ by zero");
+				return ExceptionEvent();
+			}
+			op_stack->push(s2.iValue / s1.iValue);
+			break;
+		case ldiv:
+			lValue = popLong();
+			lValue2 = popLong();
+			if (lValue == 0)
+			{
+				VMContext::pending_exception = CreateJavaException(
+					"java/lang/ArithmeticException", "/ by zero");
+				return ExceptionEvent();
+			}
+			op_stack->push(lValue2 / lValue);
+			break;
+		case fdiv:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->push(s2.fValue / s1.fValue);
+			break;
+		case ddiv:
+			dValue = popDouble() / popDouble();
+			op_stack->push(dValue);
+			break;
+		case irem:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			if (s1.iValue == 0)
+			{
+				VMContext::pending_exception = CreateJavaException(
+					"java/lang/ArithmeticException", "/ by zero");
+				return ExceptionEvent();
+			}
+			op_stack->push(s2.iValue % s1.iValue);
+			break;
+		case lrem:
+			lValue = popLong();
+			lValue2 = popLong();
+			if (lValue == 0)
+			{
+				VMContext::pending_exception = CreateJavaException(
+					"java/lang/ArithmeticException", "/ by zero");
+				return ExceptionEvent();
+			}
+			op_stack->push(lValue2 % lValue);
+			break;
+		case frem:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->push(fmodf(s2.fValue, s1.fValue));
+			break;
+		case drem:
+			dValue = popDouble();
+			dValue2 = popDouble();
+			op_stack->push(fmod(dValue2, dValue));
+			break;
+		case ineg:
+			op_stack->pop(s1);
+			s1.iValue = -s1.iValue;
+			op_stack->push(s1);
+			break;
+		case lneg:
+			lValue = popLong();
+			op_stack->push(-lValue);
+			break;
+		case fneg:
+			op_stack->pop(s1);
+			s1.fValue = -s1.fValue;
+			op_stack->push(s1);
+			break;
+		case dneg:
+			dValue = popDouble();
+			op_stack->push(-dValue);
+			break;
+		case ishl:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			s3.iValue = (int)((uint32_t)s2.iValue << (s1.iValue & 0x1f));
+			op_stack->push(s3);
+			break;
+		case lshl:
+			op_stack->pop(s1);
+			lValue = popLong();
+			lValue = (LONG64)((uint64_t)lValue << (s1.iValue & 0x3f));
+			op_stack->push(lValue);
+			break;
+		case ishr:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			s3.iValue = s2.iValue >> (s1.iValue & 0x1f);
+			op_stack->push(s3);
+			break;
+		case lshr:
+			op_stack->pop(s1);
+			lValue = popLong();
+			lValue = lValue >> (s1.iValue & 0x3f);
+			op_stack->push(lValue);
+			break;
+		case iushr:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			s3.iValue = (int)(((uint32_t)s2.iValue) >> (s1.iValue & 0x1f));
+			op_stack->push(s3);
+			break;
+		case lushr:
+			op_stack->pop(s1);
+			lValue = popLong();
+			lValue = (LONG64)(((uint64_t)lValue) >> (s1.iValue & 0x3f));
+			op_stack->push(lValue);
+			break;
+		case iand:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			s3.iValue = s2.iValue & s1.iValue;
+			op_stack->push(s3);
+			break;
+		case land:
+			lValue = popLong();
+			lValue2 = popLong();
+			op_stack->push(lValue & lValue2);
+			break;
+		case ior:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			s3.iValue = s2.iValue | s1.iValue;
+			op_stack->push(s3);
+			break;
+		case lor:
+			lValue = popLong();
+			lValue2 = popLong();
+			op_stack->push(lValue | lValue2);
+			break;
+		case ixor:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			s3.iValue = s2.iValue ^ s1.iValue;
+			op_stack->push(s3);
+			break;
+		case lxor:
+			lValue = popLong();
+			lValue2 = popLong();
+			op_stack->push(lValue ^ lValue2);
+			break;
+
+		case i2l:
+			op_stack->pop(s1);
+			op_stack->push((LONG64)s1.iValue);
+			break;
+		case i2f:
+			op_stack->pop(s1);
+			op_stack->push((float)s1.iValue);
+			break;
+		case i2d:
+			op_stack->pop(s1);
+			op_stack->push((double)s1.iValue);
+			break;
+		case l2i:
+			lValue = popLong();
+			op_stack->push((int)lValue);
+			break;
+		case l2f:
+			lValue = popLong();
+			op_stack->push((float)lValue);
+			break;
+		case l2d:
+			lValue = popLong();
+			op_stack->push((double)lValue);
+			break;
+		case f2i:
+			op_stack->pop(s1);
+			op_stack->push((int)s1.fValue);
+			break;
+		case f2l:
+			op_stack->pop(s1);
+			op_stack->push((LONG64)s1.fValue);
+			break;
+		case f2d:
+			op_stack->pop(s1);
+			op_stack->push((double)s1.fValue);
+			break;
+		case d2i:
+			dValue = popDouble();
+			op_stack->push((int)dValue);
+			break;
+		case d2l:
+			dValue = popDouble();
+			op_stack->push((LONG64)dValue);
+			break;
+		case d2f:
+			dValue = popDouble();
+			op_stack->push((float)dValue);
+			break;
+		case i2b:
+			op_stack->pop(s1);
+			s2.bValue = (signed char)s1.iValue;
+			op_stack->push(s2);
+			break;
+		case i2c:
+			op_stack->pop(s1);
+			s2.cValue = (uint16_t)s1.iValue;
+			op_stack->push(s2);
+			break;
+		case i2s:
+			op_stack->pop(s1);
+			s2.sValue = (short)s1.iValue;
+			op_stack->push(s2);
+			break;
+		case lcmp:
+			lValue2 = popLong();
+			lValue = popLong();
+			s1.iValue = (lValue > lValue2) ? 1 : ((lValue == lValue2) ? 0 : -1);
+			op_stack->push(s1);
+			break;
+		case fcmpl:
+			op_stack->pop(s2);
+			op_stack->pop(s1);
+			if (s1.fValue > s2.fValue) s3.iValue = 1;
+			else if (s1.fValue == s2.fValue) s3.iValue = 0;
+			else if (s1.fValue < s2.fValue) s3.iValue = -1;
+			else s3.iValue = -1;
+			op_stack->push(s3);
+			break;
+		case fcmpg:
+			op_stack->pop(s2);
+			op_stack->pop(s1);
+			if (s1.fValue > s2.fValue) s3.iValue = 1;
+			else if (s1.fValue == s2.fValue) s3.iValue = 0;
+			else if (s1.fValue < s2.fValue) s3.iValue = -1;
+			else s3.iValue = 1;
+			op_stack->push(s3);
+			break;
+		case dcmpl:
+			dValue2 = popDouble();
+			dValue = popDouble();
+			if (dValue > dValue2) s1.iValue = 1;
+			else if (dValue == dValue2) s1.iValue = 0;
+			else if (dValue < dValue2) s1.iValue = -1;
+			else s1.iValue = -1;
+			op_stack->push(s1);
+			break;
+		case dcmpg:
+			dValue2 = popDouble();
+			dValue = popDouble();
+			if (dValue > dValue2) s1.iValue = 1;
+			else if (dValue == dValue2) s1.iValue = 0;
+			else if (dValue < dValue2) s1.iValue = -1;
+			else s1.iValue = 1;
+			op_stack->push(s1);
+			break;
+
+		case ifeq:
+			op_stack->pop(s1);
+			if (s1.iValue == 0) pc = insn.target;
+			break;
+		case ifne:
+			op_stack->pop(s1);
+			if (s1.iValue != 0) pc = insn.target;
+			break;
+		case iflt:
+			op_stack->pop(s1);
+			if (s1.iValue < 0) pc = insn.target;
+			break;
+		case ifge:
+			op_stack->pop(s1);
+			if (s1.iValue >= 0) pc = insn.target;
+			break;
+		case ifgt:
+			op_stack->pop(s1);
+			if (s1.iValue > 0) pc = insn.target;
+			break;
+		case ifle:
+			op_stack->pop(s1);
+			if (s1.iValue <= 0) pc = insn.target;
+			break;
+		case if_icmpeq:
+			op_stack->pop(s2);
+			op_stack->pop(s1);
+			if (s1.iValue == s2.iValue) pc = insn.target;
+			break;
+		case if_icmpne:
+			op_stack->pop(s2);
+			op_stack->pop(s1);
+			if (s1.iValue != s2.iValue) pc = insn.target;
+			break;
+		case if_icmplt:
+			op_stack->pop(s2);
+			op_stack->pop(s1);
+			if (s1.iValue < s2.iValue) pc = insn.target;
+			break;
+		case if_icmpge:
+			op_stack->pop(s2);
+			op_stack->pop(s1);
+			if (s1.iValue >= s2.iValue) pc = insn.target;
+			break;
+		case if_icmpgt:
+			op_stack->pop(s2);
+			op_stack->pop(s1);
+			if (s1.iValue > s2.iValue) pc = insn.target;
+			break;
+		case if_icmple:
+			op_stack->pop(s2);
+			op_stack->pop(s1);
+			if (s1.iValue <= s2.iValue) pc = insn.target;
+			break;
+		case if_acmpeq:
+			op_stack->pop(s2);
+			op_stack->pop(s1);
+			if (s1.heapPtr == s2.heapPtr) pc = insn.target;
+			break;
+		case if_acmpne:
+			op_stack->pop(s2);
+			op_stack->pop(s1);
+			if (s1.heapPtr != s2.heapPtr) pc = insn.target;
+			break;
+		case ifnull:
+			op_stack->pop(s1);
+			if (!s1.heapPtr) pc = insn.target;
+			break;
+		case ifnonnull:
+			op_stack->pop(s1);
+			if (s1.heapPtr) pc = insn.target;
+			break;
+		case _goto:
+			pc = insn.target;
+			break;
+
+		case getstatic:
+			GetStatic(static_cast<U2>(insn.a));
+			break;
+		case putstatic:
+			PutStatic(static_cast<U2>(insn.a));
+			break;
+		case getfield:
+			GetField(static_cast<U2>(insn.a));
+			break;
+		case putfield:
+			PutField(static_cast<U2>(insn.a));
+			break;
+		case _new:
+			ExecuteNewObject(static_cast<U2>(insn.a));
+			break;
+		case newarray:
+			ExecuteNewArray(static_cast<U1>(insn.a));
+			break;
+		case anewarray:
+			ExecuteNewObjectArray(static_cast<U2>(insn.a));
+			break;
+		case arraylength:
+			ArrayLength();
+			break;
+
+		case invokespecial:
+			if (ExecuteSpecial(static_cast<int>(insn.a)))
+			{
+				return EN_KEEP;
+			}
+			return ExceptionEvent();
+		case invokeinterface:
+		case invokevirtual:
+			if (ExecuteVirtual(static_cast<int>(insn.a), NORMAL_METHOD))
+			{
+				return EN_KEEP;
+			}
+			return ExceptionEvent();
+		case invokestatic:
+			if (ExecuteStatic(static_cast<int>(insn.a)))
+			{
+				return EN_KEEP;
+			}
+			return ExceptionEvent();
+		case invokedynamic:
+			if (ExecuteInvokeDynamic(static_cast<U2>(insn.a)))
+			{
+				break;
+			}
+			return ExceptionEvent();
+
+		case ireturn:
+		case freturn:
+		case areturn:
+			op_stack->pop(s1);
+			if (prev_frame)
+			{
+				prev_frame->op_stack->push(s1);
+			}
+			else
+			{
+				thread_stack->return_value = s1;
+				thread_stack->return_wide = false;
+				thread_stack->has_return = true;
+			}
+			return EN_POP;
+		case lreturn:
+		case dreturn:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			if (prev_frame)
+			{
+				prev_frame->op_stack->push(s2);
+				prev_frame->op_stack->push(s1);
+			}
+			else
+			{
+				thread_stack->return_value = s2;
+				thread_stack->return_value_hi = s1;
+				thread_stack->return_wide = true;
+				thread_stack->has_return = true;
+			}
+			return EN_POP;
+		case _return:
+			if (!prev_frame)
+			{
+				thread_stack->has_return = true;
+				thread_stack->return_wide = false;
+			}
+			return EN_POP;
+
+		default:
+			// Should be unreachable because the decoder only marks known
+			// opcodes as fast.
+			pc = insn.pc;
+			return Interpret();
+		}
+	}
+}
+
+EventNotify StackFrame::ExecuteCode()
+{
+	EventNotify pre = BeginInstruction();
+	if (pre != EN_NOOP)
+	{
+		return pre;
+	}
+	Slot s1, s2, s3;
+	int index = 0;
+	U2 u2 = 0;
+	LONG64 lValue,lValue2;
+	double dValue,dValue2;
 	BYTE code = codes[pc++];
 	switch (code)
 	{

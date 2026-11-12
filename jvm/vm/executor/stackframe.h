@@ -19,6 +19,8 @@ class ObjectHeap;
 #define NORMAL_METHOD 2
 #define SPECIAL_METHOD 3
 
+namespace darksjit { struct Program; }
+
 class JVM_API StackFrame
 {
 
@@ -32,6 +34,8 @@ private:
 	LPBYTE codes;
 	U4 code_length;
 	bool static_method;
+	bool jit_checked;
+	const darksjit::Program *jit_program;
 	lpThreadStack thread_stack;
 	lpStackFrame prev_frame;
 public:
@@ -76,6 +80,14 @@ public:
 private:
 
 	EventNotify ExecuteCode();
+
+	// Prologue shared by the interpreter and the JIT loop (safepoints,
+	// coroutine events, last_pc bookkeeping).
+	EventNotify BeginInstruction();
+
+	EventNotify Interpret();
+
+	EventNotify ExecuteJit(const darksjit::Program *program);
 
 	U2 ReadU2();
 

@@ -72,6 +72,7 @@ set(DARKS_JVM_CORE_SOURCES
     jvm/vm/executor/descriptor.cpp
     jvm/vm/executor/executor.cpp
     jvm/vm/executor/javaexception.cpp
+    jvm/vm/executor/jit.cpp
     jvm/vm/executor/jclass.cpp
     jvm/vm/executor/jfield.cpp
     jvm/vm/executor/jmethod.cpp
