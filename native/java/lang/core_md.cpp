@@ -111,6 +111,13 @@ std::string JStringToUtf8(JNIEnv *env, jstring str)
 
 } // namespace
 
+// Reflection helpers live in a different translation unit but need the same
+// synthetic primitive mirrors as Integer.TYPE / int.class.
+lpClass DarksVM_GetPrimitiveClass(const char *name)
+{
+	return IsPrimitiveName(name) ? PrimitiveClass(name) : NULL;
+}
+
 // ---------------------------------------------------------------------------
 // java.lang.Object
 // ---------------------------------------------------------------------------

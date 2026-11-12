@@ -4,6 +4,8 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
+import java.lang.reflect.TypeVariable;
 
 public final class Class<T>
 {
@@ -25,6 +27,8 @@ public final class Class<T>
     public native boolean isArray();
 
     public native boolean isPrimitive();
+
+    public native Class getComponentType();
 
     public native Class getSuperclass();
 
@@ -63,6 +67,7 @@ public final class Class<T>
     public native Method getDeclaredMethod0(String name, Class[] parameterTypes);
 
     public Method getDeclaredMethod(String name, Class... parameterTypes)
+        throws NoSuchMethodException
     {
         return getDeclaredMethod0(name, parameterTypes);
     }
@@ -70,6 +75,7 @@ public final class Class<T>
     public native Method getMethod0(String name, Class[] parameterTypes);
 
     public Method getMethod(String name, Class... parameterTypes)
+        throws NoSuchMethodException
     {
         return getMethod0(name, parameterTypes);
     }
@@ -91,6 +97,7 @@ public final class Class<T>
     public native Field getDeclaredField0(String name);
 
     public Field getDeclaredField(String name)
+        throws NoSuchFieldException
     {
         return getDeclaredField0(name);
     }
@@ -98,6 +105,7 @@ public final class Class<T>
     public native Field getField0(String name);
 
     public Field getField(String name)
+        throws NoSuchFieldException
     {
         return getField0(name);
     }
@@ -114,6 +122,65 @@ public final class Class<T>
     public Constructor[] getConstructors()
     {
         return getConstructors0();
+    }
+
+    public Constructor<T> getDeclaredConstructor(Class... parameterTypes)
+        throws NoSuchMethodException
+    {
+        return findConstructor(getDeclaredConstructors(), parameterTypes);
+    }
+
+    public Constructor<T> getConstructor(Class... parameterTypes)
+        throws NoSuchMethodException
+    {
+        return findConstructor(getConstructors(), parameterTypes);
+    }
+
+    private static Constructor findConstructor(Constructor[] all,
+        Class[] parameterTypes)
+        throws NoSuchMethodException
+    {
+        int expected = parameterTypes == null ? 0 : parameterTypes.length;
+        for (int i = 0; i < all.length; i++)
+        {
+            Class[] actual = all[i].getParameterTypes();
+            if (actual.length != expected)
+            {
+                continue;
+            }
+            boolean match = true;
+            for (int j = 0; j < expected; j++)
+            {
+                if (actual[j] != parameterTypes[j])
+                {
+                    match = false;
+                    break;
+                }
+            }
+            if (match)
+            {
+                return all[i];
+            }
+        }
+        throw new NoSuchMethodException("constructor not found");
+    }
+
+    public Type getGenericSuperclass()
+    {
+        throw new UnsupportedOperationException(
+            "generic signatures are not supported");
+    }
+
+    public Type[] getGenericInterfaces()
+    {
+        throw new UnsupportedOperationException(
+            "generic signatures are not supported");
+    }
+
+    public TypeVariable<Class<T>>[] getTypeParameters()
+    {
+        throw new UnsupportedOperationException(
+            "generic signatures are not supported");
     }
 
     public native Annotation[] getDeclaredAnnotations0();

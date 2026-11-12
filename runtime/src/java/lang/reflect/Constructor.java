@@ -2,9 +2,9 @@ package java.lang.reflect;
 
 import java.lang.annotation.Annotation;
 
-public final class Constructor
+public final class Constructor<T> extends AccessibleObject
 {
-    private Class declaringClass;
+    private Class<T> declaringClass;
     private String descriptor;
     private int modifiers;
 
@@ -12,7 +12,7 @@ public final class Constructor
     {
     }
 
-    public Class getDeclaringClass()
+    public Class<T> getDeclaringClass()
     {
         return declaringClass;
     }
@@ -22,11 +22,34 @@ public final class Constructor
         return modifiers;
     }
 
+    public native Class[] getParameterTypes();
+
+    public native Class[] getExceptionTypes();
+
+    public Type[] getGenericParameterTypes()
+    {
+        throw new UnsupportedOperationException(
+            "generic signatures are not supported");
+    }
+
+    public Type[] getGenericExceptionTypes()
+    {
+        throw new UnsupportedOperationException(
+            "generic signatures are not supported");
+    }
+
+    public TypeVariable<Constructor<T>>[] getTypeParameters()
+    {
+        throw new UnsupportedOperationException(
+            "generic signatures are not supported");
+    }
+
     public native Object newInstance0(Object[] args);
 
-    public Object newInstance(Object... args)
+    public T newInstance(Object... args) throws InstantiationException,
+        IllegalAccessException, InvocationTargetException
     {
-        return newInstance0(args);
+        return (T)newInstance0(args);
     }
 
     public native Annotation[] getDeclaredAnnotations0();
@@ -36,14 +59,14 @@ public final class Constructor
         return getDeclaredAnnotations0();
     }
 
-    public <T extends Annotation> T getAnnotation(Class<T> annotationClass)
+    public <A extends Annotation> A getAnnotation(Class<A> annotationClass)
     {
         Annotation[] all = getDeclaredAnnotations0();
         for (int i = 0; i < all.length; i++)
         {
             if (annotationClass.isInstance(all[i]))
             {
-                return (T)all[i];
+                return (A)all[i];
             }
         }
         return null;

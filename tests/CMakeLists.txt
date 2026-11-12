@@ -35,6 +35,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/InterruptSleep.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/JoinTimeoutTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/GcThreads.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/ReflectionAdvanced.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
     add_custom_command(
@@ -96,6 +97,12 @@ if(JAVAC)
                     "-DARGS=-cp;${CLASSES_DIR};ReflectDemo" -DEXPECT_RC=0
                     "-DEXPECT_TEXT=refl=java.lang.Object:7:3:4:42:40:1:1:1:1:1"
                     "-DEXPECT_TEXT2=java11\ reflect:\ ok" -P "${CHECK}")
+
+        add_test(NAME reflect_advanced
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};ReflectionAdvanced" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=reflect-adv\ checks=.*\ failures=0"
+                    "-DEXPECT_TEXT2=reflection\ advanced:\ ok" -P "${CHECK}")
 
         # module-info.class (CONSTANT_Module / CONSTANT_Package) must parse,
         # and a class inside the module must still run from the classpath.

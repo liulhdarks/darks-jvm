@@ -2,7 +2,7 @@ package java.lang.reflect;
 
 import java.lang.annotation.Annotation;
 
-public final class Field
+public final class Field extends AccessibleObject
 {
     private Class declaringClass;
     private String name;
@@ -28,16 +28,24 @@ public final class Field
         return modifiers;
     }
 
+    public native Class getType();
+
+    public Type getGenericType()
+    {
+        throw new UnsupportedOperationException(
+            "generic signatures are not supported");
+    }
+
     public native Object get0(Object obj);
 
-    public Object get(Object obj)
+    public Object get(Object obj) throws IllegalAccessException
     {
         return get0(obj);
     }
 
     public native void set0(Object obj, Object value);
 
-    public void set(Object obj, Object value)
+    public void set(Object obj, Object value) throws IllegalAccessException
     {
         set0(obj, value);
     }

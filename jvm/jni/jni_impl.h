@@ -90,6 +90,9 @@ jint DarksVM_EnsureInitialized(lpClass clazz);
 // Creates a java.lang.Class mirror for a VM Class (cached).
 jobject JniClassMirror(jclass clazz);
 
+// Primitive Class mirrors used by reflection (int.class, Integer.TYPE, ...).
+lpClass DarksVM_GetPrimitiveClass(const char *name);
+
 // Result of a Java method invocation from JNI code.
 jvalue JniInvokeMethod(JNIEnv *env, jobject receiver, jclass clazz,
                        jmethodID method, const jvalue *args,

@@ -2,7 +2,7 @@ package java.lang.reflect;
 
 import java.lang.annotation.Annotation;
 
-public final class Method
+public final class Method extends AccessibleObject
 {
     private Class declaringClass;
     private String name;
@@ -28,9 +28,40 @@ public final class Method
         return modifiers;
     }
 
+    public native Class getReturnType();
+
+    public native Class[] getParameterTypes();
+
+    public native Class[] getExceptionTypes();
+
+    public Type getGenericReturnType()
+    {
+        throw new UnsupportedOperationException(
+            "generic signatures are not supported");
+    }
+
+    public Type[] getGenericParameterTypes()
+    {
+        throw new UnsupportedOperationException(
+            "generic signatures are not supported");
+    }
+
+    public Type[] getGenericExceptionTypes()
+    {
+        throw new UnsupportedOperationException(
+            "generic signatures are not supported");
+    }
+
+    public TypeVariable<Method>[] getTypeParameters()
+    {
+        throw new UnsupportedOperationException(
+            "generic signatures are not supported");
+    }
+
     public native Object invoke0(Object obj, Object[] args);
 
     public Object invoke(Object obj, Object... args)
+        throws IllegalAccessException, InvocationTargetException
     {
         return invoke0(obj, args);
     }

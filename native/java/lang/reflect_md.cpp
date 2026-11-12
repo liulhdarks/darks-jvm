@@ -156,6 +156,266 @@ jobject MakeObjectArray(JNIEnv *env, const char *array_class_name,
 	return result;
 }
 
+bool ReadAccessibleFlag(jobject member)
+{
+	lpObject object = JniResolveObject(member);
+	if (!object)
+	{
+		return false;
+	}
+	for (lpClass c = object->obj_class; c; c = c->super_class)
+	{
+		for (U2 i = 0; i < c->fieldCount; i++)
+		{
+			lpField f = c->fields ? c->fields[i] : NULL;
+			if (!f || !f->fieldName || (f->accFlag & ACF_STATIC) != 0)
+			{
+				continue;
+			}
+			if (strcmp(f->fieldName->GetName(), "accessible") == 0)
+			{
+				lpFieldValue fv = object->GetFieldValue(f);
+				return fv && fv->field_value.blValue != 0;
+			}
+		}
+	}
+	return false;
+}
+
+// Access checks are not caller-sensitive: a non-public member is usable only
+// after setAccessible(true). Public members are always accessible.
+bool MemberAccessAllowed(jobject member, int modifiers)
+{
+	if ((modifiers & ACF_PUBLIC) != 0)
+	{
+		return true;
+	}
+	return ReadAccessibleFlag(member);
+}
+
+void ThrowIllegalAccess(JNIEnv *env, const char *message)
+{
+	jclass error = reinterpret_cast<jclass>(
+		JniFindClass(env, "java/lang/IllegalAccessException"));
+	if (error)
+	{
+		env->ThrowNew(error, message ? message : "member is not accessible");
+	}
+}
+
+void ThrowNullPointer(JNIEnv *env, const char *message)
+{
+	jclass error = reinterpret_cast<jclass>(
+		JniFindClass(env, "java/lang/NullPointerException"));
+	if (error)
+	{
+		env->ThrowNew(error, message ? message : "null object");
+	}
+}
+
+jobject MirrorForDescriptor(JNIEnv *env, const char *desc, int length)
+{
+	if (!desc || length <= 0)
+	{
+		return NULL;
+	}
+	lpClass clazz = NULL;
+	if (desc[0] == 'L' && length >= 2 && desc[length - 1] == ';')
+	{
+		std::string name(desc + 1, desc + length - 1);
+		clazz = JniFindClass(env, name.c_str());
+	}
+	else if (desc[0] == '[')
+	{
+		std::string name(desc, desc + length);
+		clazz = JniFindClass(env, name.c_str());
+	}
+	else if (length == 1)
+	{
+		const char *primitive = NULL;
+		switch (desc[0])
+		{
+		case 'Z': primitive = "boolean"; break;
+		case 'B': primitive = "byte"; break;
+		case 'C': primitive = "char"; break;
+		case 'S': primitive = "short"; break;
+		case 'I': primitive = "int"; break;
+		case 'J': primitive = "long"; break;
+		case 'F': primitive = "float"; break;
+		case 'D': primitive = "double"; break;
+		case 'V': primitive = "void"; break;
+		default: break;
+		}
+		if (!primitive)
+		{
+			return NULL;
+		}
+		clazz = DarksVM_GetPrimitiveClass(primitive);
+	}
+	if (!clazz)
+	{
+		return NULL;
+	}
+	jobject mirror = JniClassMirror(reinterpret_cast<jclass>(clazz));
+	if (mirror)
+	{
+		JniAddLocalRef(env, mirror);
+	}
+	return mirror;
+}
+
+// Consumes one field/method type descriptor starting at *pos.
+jobject ParseDescriptorType(JNIEnv *env, const char *desc, int &pos, int length)
+{
+	if (!desc || pos < 0 || pos >= length)
+	{
+		return NULL;
+	}
+	char tag = desc[pos];
+	if (tag == 'L')
+	{
+		int end = pos + 1;
+		while (end < length && desc[end] != ';')
+		{
+			end++;
+		}
+		if (end >= length)
+		{
+			return NULL;
+		}
+		jobject result = MirrorForDescriptor(env, desc + pos, end - pos + 1);
+		pos = end + 1;
+		return result;
+	}
+	if (tag == '[')
+	{
+		int end = pos;
+		while (end < length && desc[end] == '[')
+		{
+			end++;
+		}
+		if (end >= length)
+		{
+			return NULL;
+		}
+		if (desc[end] == 'L')
+		{
+			while (end < length && desc[end] != ';')
+			{
+				end++;
+			}
+			if (end >= length)
+			{
+				return NULL;
+			}
+		}
+		end++;
+		jobject result = MirrorForDescriptor(env, desc + pos, end - pos);
+		pos = end;
+		return result;
+	}
+	jobject result = MirrorForDescriptor(env, desc + pos, 1);
+	pos += 1;
+	return result;
+}
+
+jobject ParameterTypesFromDescriptor(JNIEnv *env, const char *desc)
+{
+	std::vector<jobject> items;
+	if (desc && desc[0] == '(')
+	{
+		int length = static_cast<int>(strlen(desc));
+		int pos = 1;
+		while (pos < length && desc[pos] != ')')
+		{
+			jobject type = ParseDescriptorType(env, desc, pos, length);
+			if (!type)
+			{
+				break;
+			}
+			items.push_back(type);
+		}
+	}
+	return MakeObjectArray(env, "[Ljava/lang/Class;", items);
+}
+
+jobject ReturnTypeFromDescriptor(JNIEnv *env, const char *desc)
+{
+	if (!desc)
+	{
+		return NULL;
+	}
+	int length = static_cast<int>(strlen(desc));
+	int pos = 0;
+	while (pos < length && desc[pos] != ')')
+	{
+		pos++;
+	}
+	if (pos < length)
+	{
+		pos++;
+	}
+	return ParseDescriptorType(env, desc, pos, length);
+}
+
+jobject ClassArrayFromExceptionAttribute(JNIEnv *env, lpMethod method)
+{
+	std::vector<jobject> items;
+	if (method && method->exception_attr && method->exception_attr->exception_table)
+	{
+		for (U2 i = 0; i < method->exception_attr->exception_count; i++)
+		{
+			lpClassConstant constant = method->exception_attr->exception_table[i];
+			if (!constant || !constant->GetName())
+			{
+				continue;
+			}
+			lpClass clazz = JniFindClass(env, constant->GetName());
+			if (!clazz)
+			{
+				continue;
+			}
+			jobject mirror = JniClassMirror(reinterpret_cast<jclass>(clazz));
+			if (mirror)
+			{
+				JniAddLocalRef(env, mirror);
+				items.push_back(mirror);
+			}
+		}
+	}
+	return MakeObjectArray(env, "[Ljava/lang/Class;", items);
+}
+
+// Converts an exception raised by a reflected call into
+// InvocationTargetException, matching the JDK contract.
+jobject WrapInvocationTarget(JNIEnv *env, LPOBJECT_REF target)
+{
+	if (!target)
+	{
+		return NULL;
+	}
+	GCRootScope root(VMContext::object_heap, &target);
+	VMContext::pending_exception = NULL;
+	lpClass wrapper_class = JniFindClass(env,
+		"java/lang/reflect/InvocationTargetException");
+	if (!wrapper_class)
+	{
+		VMContext::pending_exception = target;
+		return NULL;
+	}
+	LPOBJECT_REF wrapper = NULL;
+	if (!VMContext::object_heap->NewObject(wrapper_class, wrapper))
+	{
+		VMContext::pending_exception = target;
+		return NULL;
+	}
+	jobject wrapper_obj = JniObject(wrapper);
+	JniAddLocalRef(env, wrapper_obj);
+	JniSetObjectFieldByName(wrapper_obj, "target", JniObject(target));
+	VMContext::pending_exception = wrapper;
+	return NULL;
+}
+
 std::string InternalName(jobject mirror)
 {
 	lpClass clazz = MirrorClass(mirror);
@@ -695,6 +955,28 @@ bool UnboxValue(jobject boxed, DATA_TYPE type, Variant &out)
 		return false;
 	}
 	lpObject object = JniResolveObject(boxed);
+	if (!object || !object->obj_class || !object->obj_class->thisClass)
+	{
+		return false;
+	}
+	const char *wrapper = NULL;
+	switch (type)
+	{
+	case DT_BOOL: wrapper = "java/lang/Boolean"; break;
+	case DT_BYTE: wrapper = "java/lang/Byte"; break;
+	case DT_CHAR: wrapper = "java/lang/Character"; break;
+	case DT_SHORT: wrapper = "java/lang/Short"; break;
+	case DT_INT: wrapper = "java/lang/Integer"; break;
+	case DT_LONG: wrapper = "java/lang/Long"; break;
+	case DT_FLOAT: wrapper = "java/lang/Float"; break;
+	case DT_DOUBLE: wrapper = "java/lang/Double"; break;
+	default: return false;
+	}
+	const char *actual = object->obj_class->thisClass->GetName();
+	if (!actual || strcmp(actual, wrapper) != 0)
+	{
+		return false;
+	}
 	lpFieldValue fv = FindNamedField(object, "value");
 	if (!fv)
 	{
@@ -1301,6 +1583,16 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_invoke0(JNIEnv *env,
 		}
 		return NULL;
 	}
+	if (!MemberAccessAllowed(thiz, target->accFlag))
+	{
+		ThrowIllegalAccess(env, "method is not accessible");
+		return NULL;
+	}
+	if (!target->isStatic() && !receiver)
+	{
+		ThrowNullPointer(env, "null receiver for non-static method");
+		return NULL;
+	}
 	std::vector<TypeDesc> types;
 	TypeDesc result_desc;
 	parse_method_desc_type(target->methodDesc->GetName(), types, result_desc);
@@ -1317,11 +1609,11 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_invoke0(JNIEnv *env,
 		return NULL;
 	}
 	jvalue result = JniInvokeMethod(env, receiver,
-		reinterpret_cast<jclass>(declaring_mirror), reinterpret_cast<jmethodID>(target),
+		reinterpret_cast<jclass>(declaring), reinterpret_cast<jmethodID>(target),
 		values.empty() ? NULL : &values[0], target->isStatic(), false);
 	if (VMContext::pending_exception)
 	{
-		return NULL;
+		return WrapInvocationTarget(env, VMContext::pending_exception);
 	}
 	return VariantToObject(env, result_desc.data_type,
 		JValueToVariant(result, result_desc.data_type));
@@ -1365,6 +1657,11 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Field_get0(JNIEnv *env,
 		}
 		return NULL;
 	}
+	if (!MemberAccessAllowed(thiz, field->accFlag))
+	{
+		ThrowIllegalAccess(env, "field is not accessible");
+		return NULL;
+	}
 	Variant value;
 	if ((field->accFlag & ACF_STATIC) != 0)
 	{
@@ -1378,15 +1675,15 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Field_get0(JNIEnv *env,
 	}
 	else
 	{
+		if (!obj)
+		{
+			ThrowNullPointer(env, "null object");
+			return NULL;
+		}
 		lpFieldValue fv = JniInstanceFieldValue(obj, reinterpret_cast<jfieldID>(field));
 		if (!fv)
 		{
-			jclass error = reinterpret_cast<jclass>(
-				JniFindClass(env, "java/lang/NullPointerException"));
-			if (error)
-			{
-				env->ThrowNew(error, "null object");
-			}
+			ThrowNullPointer(env, "null object");
 			return NULL;
 		}
 		value = fv->field_value;
@@ -1410,6 +1707,17 @@ JNIEXPORT void JNICALL Java_java_lang_reflect_Field_set0(JNIEnv *env,
 	}
 	if (!field)
 	{
+		jclass error = reinterpret_cast<jclass>(
+			JniFindClass(env, "java/lang/NoSuchFieldException"));
+		if (error)
+		{
+			env->ThrowNew(error, "field not found");
+		}
+		return;
+	}
+	if (!MemberAccessAllowed(thiz, field->accFlag))
+	{
+		ThrowIllegalAccess(env, "field is not accessible");
 		return;
 	}
 	TypeDesc type;
@@ -1421,6 +1729,17 @@ JNIEXPORT void JNICALL Java_java_lang_reflect_Field_set0(JNIEnv *env,
 	}
 	else if (!UnboxValue(new_value, type.data_type, value))
 	{
+		jclass error = reinterpret_cast<jclass>(
+			JniFindClass(env, "java/lang/IllegalArgumentException"));
+		if (error)
+		{
+			env->ThrowNew(error, "value type mismatch");
+		}
+		return;
+	}
+	if ((field->accFlag & ACF_STATIC) == 0 && !obj)
+	{
+		ThrowNullPointer(env, "null object");
 		return;
 	}
 	lpFieldValue fv = NULL;
@@ -1469,6 +1788,21 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_newInstance0(JNIEnv
 	{
 		return NULL;
 	}
+	if (!MemberAccessAllowed(thiz, init->accFlag))
+	{
+		ThrowIllegalAccess(env, "constructor is not accessible");
+		return NULL;
+	}
+	if ((declaring->accFlag & 0x0400) != 0 || declaring->isInterface())
+	{
+		jclass error = reinterpret_cast<jclass>(
+			JniFindClass(env, "java/lang/InstantiationException"));
+		if (error)
+		{
+			env->ThrowNew(error, "cannot instantiate an abstract class");
+		}
+		return NULL;
+	}
 	LPOBJECT_REF ref = NULL;
 	if (!VMContext::object_heap->NewObject(declaring, ref))
 	{
@@ -1491,13 +1825,12 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_newInstance0(JNIEnv
 		}
 		return NULL;
 	}
-	JniInvokeMethod(env, object, reinterpret_cast<jclass>(
-		JniClassMirror(reinterpret_cast<jclass>(declaring))),
+	JniInvokeMethod(env, object, reinterpret_cast<jclass>(declaring),
 		reinterpret_cast<jmethodID>(init), values.empty() ? NULL : &values[0],
 		false, true);
 	if (VMContext::pending_exception)
 	{
-		return NULL;
+		return WrapInvocationTarget(env, VMContext::pending_exception);
 	}
 	return object;
 }
@@ -1510,6 +1843,90 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_getDeclaredAnnotati
 	std::string desc = ObjectFieldString(env, ctor_obj, "descriptor");
 	lpMethod init = FindMethodByDescriptor(declaring, "<init>", desc.c_str(), true);
 	return AnnotationsToArray(env, declaring, init ? init->rt_visible_attr : NULL);
+}
+
+// ---------------------------------------------------------------------------
+// Class component type and member type descriptors
+// ---------------------------------------------------------------------------
+
+JNIEXPORT jobject JNICALL Java_java_lang_Class_getComponentType(JNIEnv *env,
+	jobject thiz)
+{
+	lpClass clazz = MirrorClass(thiz);
+	if (!clazz || !clazz->thisClass || !clazz->thisClass->GetName())
+	{
+		return NULL;
+	}
+	const char *name = clazz->thisClass->GetName();
+	if (name[0] != '[')
+	{
+		return NULL;
+	}
+	return MirrorForDescriptor(env, name + 1,
+		static_cast<int>(strlen(name + 1)));
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Field_getType(JNIEnv *env,
+	jobject thiz)
+{
+	std::string desc = ObjectFieldString(env, JniResolveObject(thiz),
+		"descriptor");
+	if (desc.empty())
+	{
+		return NULL;
+	}
+	return MirrorForDescriptor(env, desc.c_str(),
+		static_cast<int>(desc.size()));
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getReturnType(JNIEnv *env,
+	jobject thiz)
+{
+	std::string desc = ObjectFieldString(env, JniResolveObject(thiz),
+		"descriptor");
+	return ReturnTypeFromDescriptor(env, desc.c_str());
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getParameterTypes(JNIEnv *env,
+	jobject thiz)
+{
+	std::string desc = ObjectFieldString(env, JniResolveObject(thiz),
+		"descriptor");
+	return ParameterTypesFromDescriptor(env, desc.c_str());
+}
+
+static lpMethod ResolveMemberMethod(JNIEnv *env, jobject member)
+{
+	lpObject object = JniResolveObject(member);
+	lpClass declaring = MirrorClass(ObjectFieldRef(object, "declaringClass"));
+	std::string name = ObjectFieldString(env, object, "name");
+	std::string desc = ObjectFieldString(env, object, "descriptor");
+	return FindMethodByDescriptor(declaring, name.c_str(), desc.c_str(), false);
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getExceptionTypes(JNIEnv *env,
+	jobject thiz)
+{
+	return ClassArrayFromExceptionAttribute(env,
+		ResolveMemberMethod(env, thiz));
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_getParameterTypes(JNIEnv *env,
+	jobject thiz)
+{
+	std::string desc = ObjectFieldString(env, JniResolveObject(thiz),
+		"descriptor");
+	return ParameterTypesFromDescriptor(env, desc.c_str());
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_getExceptionTypes(JNIEnv *env,
+	jobject thiz)
+{
+	lpObject object = JniResolveObject(thiz);
+	lpClass declaring = MirrorClass(ObjectFieldRef(object, "declaringClass"));
+	std::string desc = ObjectFieldString(env, object, "descriptor");
+	lpMethod init = FindMethodByDescriptor(declaring, "<init>", desc.c_str(), true);
+	return ClassArrayFromExceptionAttribute(env, init);
 }
 
 } // extern "C"
