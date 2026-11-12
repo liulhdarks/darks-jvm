@@ -1,48 +1,89 @@
 #include "stdafx.h"
 #include "CommonUtils.h"
+#include "platform/platform.h"
 
+#include <string>
+#include <vector>
 
-string &CommonUtils::ReplaceStr(string &str, LPSTR src, LPSTR dest)
+string &CommonUtils::ReplaceStr(string &str, LPCSTR src, LPCSTR dest)
 {
+	if (!src || !*src)
+	{
+		return str;
+	}
+	string source(src);
+	string target(dest ? dest : "");
 	string::size_type pos = 0;
-	while ( (pos = str.find(src, pos)) != string::npos ) {
-		str.replace( pos, strlen(src), dest);
-		pos++;
+	while ((pos = str.find(source, pos)) != string::npos)
+	{
+		str.replace(pos, source.size(), target);
+		pos += target.size();
 	}
 	return str;
 }
 
 char* CommonUtils::SubString(const char *str, int start, int count)
 {
-	int len = strlen(str);
-	if (count == 0)
+	if (!str)
+	{
+		return NULL;
+	}
+	int len = static_cast<int>(strlen(str));
+	if (start < 0 || start > len)
+	{
+		start = len;
+	}
+	if (count <= 0)
 	{
 		count = len - start;
 	}
-	LPSTR dst = new char[count];
-	int end = start + count;
-	int index = 0;
-	for (int i = start; i < end; i++)
+	if (start + count > len)
 	{
-		dst[index++] = str[i];
+		count = len - start;
 	}
+	char *dst = new char[count + 1];
+	if (count > 0)
+	{
+		memcpy(dst, str + start, count);
+	}
+	dst[count] = '\0';
 	return dst;
 }
 
 unsigned short* CommonUtils::Utf8ToUnicode(LPCSTR utf8, int &length)
 {
-	length = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);  
-	unsigned short *wszGBK = new unsigned short[length + 1];  
-	memset(wszGBK, 0, length * 2 + 2);  
-	MultiByteToWideChar(CP_UTF8, 0, utf8, -1, (LPWSTR)wszGBK, length);  
-	return wszGBK;
+	length = 0;
+	if (!utf8)
+	{
+		return NULL;
+	}
+	std::vector<uint16_t> units = dk::Utf8ToUtf16(utf8);
+	length = static_cast<int>(units.size());
+	unsigned short *result = new unsigned short[units.size() + 1];
+	for (size_t i = 0; i < units.size(); i++)
+	{
+		result[i] = units[i];
+	}
+	result[units.size()] = 0;
+	return result;
 }
 
 char* CommonUtils::UnicodeToGBK(unsigned short* unicodes, int &length)
 {
-	length = WideCharToMultiByte(CP_ACP, 0, (LPCWSTR)unicodes, -1, NULL, 0, NULL, NULL);  
-	char *szGBK = new char[length + 1];  
-	memset(szGBK, 0, length + 1);  
-	WideCharToMultiByte(CP_ACP,0, (LPCWSTR)unicodes, -1, szGBK, length, NULL, NULL);  
-	return szGBK;
+	length = 0;
+	if (!unicodes)
+	{
+		return NULL;
+	}
+	size_t count = 0;
+	while (unicodes[count] != 0)
+	{
+		count++;
+	}
+	std::vector<uint16_t> units(unicodes, unicodes + count);
+	std::string utf8 = dk::Utf16ToUtf8(units);
+	length = static_cast<int>(utf8.size());
+	char *result = new char[utf8.size() + 1];
+	memcpy(result, utf8.c_str(), utf8.size() + 1);
+	return result;
 }

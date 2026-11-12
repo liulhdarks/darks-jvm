@@ -18,7 +18,7 @@ U2 BytesInputStream::ReadU2()
 	}
 	U1 u1 = bytes[cursor++];
 	U1 u2 = bytes[cursor++];
-	return (u1 << 8) + (u2 << 0);
+	return static_cast<U2>((static_cast<U2>(u1) << 8) | static_cast<U2>(u2));
 }
 
 U4 BytesInputStream::ReadU4()
@@ -61,14 +61,14 @@ U8 BytesInputStream::ReadU8()
 	U1 u6 = bytes[cursor++];
 	U1 u7 = bytes[cursor++];
 	U1 u8 = bytes[cursor++];
-	return (((long)u1 << 56) +
-		((long)(u2 & 255) << 48) +
-		((long)(u3 & 255) << 40) +
-		((long)(u4 & 255) << 32) +
-		((long)(u5 & 255) << 24) +
-		((u6 & 255) << 16) +
-		((u7 & 255) <<  8) +
-		((u8 & 255) <<  0));
+	return ((static_cast<U8>(u1) << 56) |
+		(static_cast<U8>(u2) << 48) |
+		(static_cast<U8>(u3) << 40) |
+		(static_cast<U8>(u4) << 32) |
+		(static_cast<U8>(u5) << 24) |
+		(static_cast<U8>(u6) << 16) |
+		(static_cast<U8>(u7) <<  8) |
+		(static_cast<U8>(u8) <<  0));
 }
 
 bool BytesInputStream::ReadBytes(int length, LPBYTE &result, bool reverse)

@@ -23,12 +23,12 @@ JArrayStack<T>::JArrayStack(int min_size, int max_size)
 template<class T>
 bool JArrayStack<T>::push(T node)
 {
-	if (count + 1 >= cur_size)
+	if (count + 1 >= this->cur_size)
 	{
-		if (cur_size < max_size)
+		if (this->cur_size < max_size)
 		{
-			cur_size = max_size;
-			nodes = (T*)realloc(nodes, cur_size * sizeof(T));
+			this->cur_size = max_size;
+			nodes = (T*)realloc(nodes, this->cur_size * sizeof(T));
 		}
 		else
 		{
@@ -36,6 +36,7 @@ bool JArrayStack<T>::push(T node)
 		}
 	}
 	nodes[count++] = node;
+	return true;
 }
 
 template<class T>

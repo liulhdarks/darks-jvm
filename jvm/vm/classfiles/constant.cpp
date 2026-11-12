@@ -3,22 +3,22 @@
 #include "utils/DebugUtils.h"
 #include "vm/executor/context.h"
 
+#include <string>
+
 void Utf8Constant::Parse(BytesInputStream *bis)
 {
 	length = bis->ReadU2();
-	if (length < 0)
-	{
-		throw new BytesException("byte length is less than 0");
-	}
 	bis->ReadString(length, bytes);
-	name = bytes;
+	// NOTE: deliberately do not alias "name" to "bytes"; both destructors would
+	// free the same allocation (double free in the original implementation).
+	name = NULL;
 }
 
 void IntegerConstant::Parse(BytesInputStream *bis)
 {
 	bytes = bis->ReadU4();
 	name = new CHAR[64];
-	sprintf(name, "%d", bytes);
+	sprintf(name, "%d", static_cast<int>(bytes));
 }
 
 void FloatConstant::Parse(BytesInputStream *bis)
@@ -34,8 +34,9 @@ void LongConstant::Parse(BytesInputStream *bis)
 	bis->ReadBytes(4, bytes2, true);
 	bis->ReadBytes(4, bytes1, true);
 	WByteValue wv(bytes1, bytes2);
-	name = new CHAR[128];
-	sprintf(name, "%ld", wv.lValue);
+	std::string text = std::to_string(wv.lValue);
+	name = new CHAR[text.size() + 1];
+	memcpy(name, text.c_str(), text.size() + 1);
 }
 
 void DoubleConstant::Parse(BytesInputStream *bis)
@@ -44,49 +45,47 @@ void DoubleConstant::Parse(BytesInputStream *bis)
 	bis->ReadBytes(4, bytes1, true);
 	WByteValue wv(bytes1, bytes2);
 	name = new CHAR[128];
-	sprintf(name, "%lf", wv.dValue);
+	sprintf(name, "%f", wv.dValue);
 }
 
 void ClassConstant::Parse(BytesInputStream *bis)
 {
 	index = bis->ReadU2();
-	if (index <= 0)
+	if (index == 0)
 	{
-		throw new BytesException("Index is less than 0");
+		throw new BytesException((LPSTR)"Index is less than 1");
 	}
 }
 
-void ClassConstant::ToString(LPSTR &result)
+std::string ClassConstant::ToString()
 {
 	if (!utf8)
 	{
-		result = NULL;
-		return;
+		return std::string();
 	}
-	CHAR tmp[1024];
-	sprintf(tmp, "#%d\t//%s", index, utf8->GetName());
-	result = tmp;
+	char tmp[1024];
+	snprintf(tmp, sizeof(tmp), "#%d\t//%s", static_cast<int>(index), utf8->GetName() ? utf8->GetName() : "");
+	return std::string(tmp);
 }
 
 void StringConstant::Parse(BytesInputStream *bis)
 {
 	index = bis->ReadU2();
-	if (index <= 0)
+	if (index == 0)
 	{
-		throw new BytesException("Index is less than 0");
+		throw new BytesException((LPSTR)"Index is less than 1");
 	}
 }
 
-void StringConstant::ToString(LPSTR &result)
+std::string StringConstant::ToString()
 {
 	if (!utf8)
 	{
-		result = NULL;
-		return;
+		return std::string();
 	}
-	CHAR tmp[1024];
-	sprintf(tmp, "#%d\t//%s", index, utf8->GetName());
-	result = tmp;
+	char tmp[1024];
+	snprintf(tmp, sizeof(tmp), "#%d\t//%s", static_cast<int>(index), utf8->GetName() ? utf8->GetName() : "");
+	return std::string(tmp);
 }
 
 LPOBJECT_REF StringConstant::GetString()
@@ -104,54 +103,56 @@ LPOBJECT_REF StringConstant::GetString()
 void NameTypeConstant::Parse(BytesInputStream *bis)
 {
 	nameIndex = bis->ReadU2();
-	if (nameIndex <= 0)
+	if (nameIndex == 0)
 	{
-		throw new BytesException("Name string index is less than 0");
+		throw new BytesException((LPSTR)"Name string index is less than 1");
 	}
 	descIndex = bis->ReadU2();
-	if (descIndex <= 0)
+	if (descIndex == 0)
 	{
-		throw new BytesException("Desc string index is less than 0");
+		throw new BytesException((LPSTR)"Desc string index is less than 1");
 	}
 }
 
-void NameTypeConstant::ToString(LPSTR &result)
+std::string NameTypeConstant::ToString()
 {
 	if (!nameUtf8 || !descIndex)
 	{
-		result = NULL;
-		return;
+		return std::string();
 	}
-	CHAR tmp[1024];
-	sprintf(tmp, "#%d:%d\t//%s", nameIndex, descIndex, this->name);
-	result =  tmp;
+	char tmp[1024];
+	snprintf(tmp, sizeof(tmp), "#%d:%d\t//%s:%s", static_cast<int>(nameIndex),
+		static_cast<int>(descIndex),
+		nameUtf8->GetName() ? nameUtf8->GetName() : "",
+		descUtf8 && descUtf8->GetName() ? descUtf8->GetName() : "");
+	return std::string(tmp);
 }
 
 void FieldRefConstant::Parse(BytesInputStream *bis)
 {
 	classIndex = bis->ReadU2();
-	if (classIndex <= 0)
+	if (classIndex == 0)
 	{
-		throw new BytesException("Class index is less than 0");
+		throw new BytesException((LPSTR)"Class index is less than 1");
 	}
 	typeIndex = bis->ReadU2();
-	if (classIndex <= 0)
+	if (typeIndex == 0)
 	{
-		throw new BytesException("NameType index is less than 0");
+		throw new BytesException((LPSTR)"NameType index is less than 1");
 	}
 }
 
-void FieldRefConstant::ToString(LPSTR &result)
+std::string FieldRefConstant::ToString()
 {
-	if (!clazz && !nameType)
+	if (!clazz || !nameType)
 	{
-		result = NULL;
-		return;
+		return std::string();
 	}
-	CHAR tmp[1024];
-	sprintf(tmp, "#%d.%d\t//%s.%s", classIndex, typeIndex
-		, clazz->GetName(), nameType->GetName());
-	result = tmp;
+	char tmp[1024];
+	snprintf(tmp, sizeof(tmp), "#%d.%d\t//%s.%s", classIndex, typeIndex,
+		clazz->GetName() ? clazz->GetName() : "",
+		nameType->GetName() ? nameType->GetName() : "");
+	return std::string(tmp);
 }
 
 bool ConstantPool::BuildConstant(U1 tag, lpConstant &constant)
@@ -202,12 +203,26 @@ bool ConstantPool::BuildConstant(U1 tag, lpConstant &constant)
 
 void ConstantPool::ReBuild()
 {
-//	int size = constants.size();
-	for (int i = 0; i < count; i++)
+	// Resolve plain constants first: a Fieldref/Methodref may appear before
+	// the Class/NameAndType entries it points at, and its "simple_name" needs
+	// those entries to be ready.
+	for (int pass = 0; pass < 2; pass++)
 	{
-		if (constants[i])
+		for (int i = 0; i < count; i++)
 		{
-			ReBuild(constants[i]);
+			lpConstant constant = constants[i];
+			if (!constant)
+			{
+				continue;
+			}
+			bool reference = constant->tag == FIELDREF_CONSTANT ||
+				constant->tag == METHODREF_CONSTANT ||
+				constant->tag == INTERFACE_CONSTANT;
+			if ((pass == 0) == reference)
+			{
+				continue;
+			}
+			ReBuild(constant);
 		}
 	}
 }
@@ -224,20 +239,26 @@ void ConstantPool::ReBuild(Constant* constant)
 		{
 			ClassConstant *ct = (ClassConstant*) constant;
 			ct->utf8 = (Utf8Constant*)this->GetConstant(ct->index);
-			int len = strlen(ct->utf8->bytes);
-			ct->name = new CHAR[len + 1];
-			strcpy(ct->name, ct->utf8->bytes);
-			ct->name[len] = '\0';
+			if (!ct->utf8 || !ct->utf8->bytes)
+			{
+				break;
+			}
+			std::string text(ct->utf8->bytes, ct->utf8->length);
+			ct->name = new CHAR[text.size() + 1];
+			memcpy(ct->name, text.c_str(), text.size() + 1);
 			break;
 		}
 	case STRING_CONSTANT:
 		{
 			StringConstant *ct = (StringConstant*) constant;
 			ct->utf8 = (Utf8Constant*)this->GetConstant(ct->index);
-			int len = strlen(ct->utf8->bytes);
-			ct->name = new CHAR[len + 1];
-			strcpy(ct->name, ct->utf8->bytes);
-			ct->name[len] = '\0';
+			if (!ct->utf8 || !ct->utf8->bytes)
+			{
+				break;
+			}
+			std::string text(ct->utf8->bytes, ct->utf8->length);
+			ct->name = new CHAR[text.size() + 1];
+			memcpy(ct->name, text.c_str(), text.size() + 1);
 			break;
 		}
 	case NAMEANDTYPE_CONSTANT:
@@ -245,8 +266,14 @@ void ConstantPool::ReBuild(Constant* constant)
 			NameTypeConstant *ct = (NameTypeConstant*) constant;
 			ct->nameUtf8 = (Utf8Constant*)this->GetConstant(ct->nameIndex);
 			ct->descUtf8 = (Utf8Constant*)this->GetConstant(ct->descIndex);
-			ct->name = new CHAR[512];
-			sprintf(ct->name, "%s:%s", ct->nameUtf8->bytes, ct->descUtf8->bytes);
+			if (!ct->nameUtf8 || !ct->descUtf8)
+			{
+				break;
+			}
+			std::string text = std::string(ct->nameUtf8->bytes, ct->nameUtf8->length) + ":" +
+				std::string(ct->descUtf8->bytes, ct->descUtf8->length);
+			ct->name = new CHAR[text.size() + 1];
+			memcpy(ct->name, text.c_str(), text.size() + 1);
 			break;
 		}
 	case INTERFACE_CONSTANT:
@@ -256,17 +283,24 @@ void ConstantPool::ReBuild(Constant* constant)
 			FieldRefConstant *ct = (FieldRefConstant*) constant;
 			ct->clazz = (ClassConstant*)this->GetConstant(ct->classIndex);
 			ct->nameType = (NameTypeConstant*)this->GetConstant(ct->typeIndex);
-
+			if (!ct->clazz || !ct->clazz->utf8 || !ct->nameType)
+			{
+				break;
+			}
 			NameTypeConstant *nt = ct->nameType;
-			nt->nameUtf8 = (Utf8Constant*)this->GetConstant(nt->nameIndex);
-			nt->descUtf8 = (Utf8Constant*)this->GetConstant(nt->descIndex);
+			if (!nt->nameUtf8 || !nt->descUtf8)
+			{
+				break;
+			}
+			std::string class_name(ct->clazz->utf8->bytes, ct->clazz->utf8->length);
+			std::string member = std::string(nt->nameUtf8->bytes, nt->nameUtf8->length) + ":" +
+				std::string(nt->descUtf8->bytes, nt->descUtf8->length);
+			std::string full = class_name + "." + member;
+			ct->name = new CHAR[full.size() + 1];
+			memcpy(ct->name, full.c_str(), full.size() + 1);
 
-			Utf8Constant* classUtf8 = (Utf8Constant*)this->GetConstant(ct->clazz->index);
-			ct->name = new CHAR[512];
-			sprintf(ct->name, "%s.%s:%s", classUtf8->bytes, nt->nameUtf8->bytes, nt->descUtf8->bytes);
-
-			ct->simple_name = new CHAR[256];
-			sprintf(ct->simple_name, "%s:%s", nt->nameUtf8->bytes, nt->descUtf8->bytes);
+			ct->simple_name = new CHAR[member.size() + 1];
+			memcpy(ct->simple_name, member.c_str(), member.size() + 1);
 			break;
 		}
 	default:
@@ -280,7 +314,6 @@ void ConstantPool::Destroy()
 	{
 		return;
 	}
-	//int size = constants.size();
 	for (int i = 0; i < count; i++)
 	{
 		if (constants[i])
@@ -291,11 +324,12 @@ void ConstantPool::Destroy()
 	}
 	delete[] constants;
 	constants = NULL;
+	count = 0;
+	capacity = 0;
 }
 
 void ConstantPool::Debug()
 {
-	//int size = constants.size();
 	for (int i = 0; i < count; i++)
 	{
 		lpConstant ct = constants[i];
@@ -303,8 +337,7 @@ void ConstantPool::Debug()
 		{
 			continue;
 		}
-		LPSTR log = NULL;
-		ct->ToString(log);
-		printf("#%d = %s\t\t%s\n", i + 1, ct->flag, log);
+		std::string log = ct->ToString();
+		printf("#%d = %s\t\t%s\n", i + 1, ct->flag ? ct->flag : "", log.c_str());
 	}
 }

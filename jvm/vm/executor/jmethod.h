@@ -47,7 +47,7 @@ public:
 		return (accFlag & ACM_FINAL) != 0;
 	}
 
-	LPSTR GetJniName(int bytesize);
+	LPSTR GetJniName();
 };
 
 typedef Method *lpMethod;

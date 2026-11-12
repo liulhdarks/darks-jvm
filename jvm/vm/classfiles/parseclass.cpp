@@ -16,49 +16,85 @@ bool read_methods_info(BytesInputStream *bis, lpClass &clazz);
 bool read_method_info(BytesInputStream *bis, lpClass &clazz, lpMethod &method);
 bool read_attributes_info(BytesInputStream *bis, lpClass &clazz);
 
+namespace {
+
+// Reads an attribute header (name_index + length) and leaves the cursor at the
+// attribute payload. Unknown attributes are skipped instead of aborting the
+// class parse (the original implementation threw for every unknown attribute).
+struct AttributeHeader
+{
+	U2 name_index;
+	U4 length;
+	int payload_pos;
+};
+
+AttributeHeader read_attribute_header(BytesInputStream *bis)
+{
+	AttributeHeader h;
+	h.name_index = bis->ReadU2();
+	int length_pos = bis->Tell();
+	h.length = static_cast<U4>(bis->ReadInt());
+	h.payload_pos = bis->Tell();
+	return h;
+}
+
+} // namespace
+
 bool parse_class_bytes(LPBYTE bytes, int length, lpClass &clazz)
 {
 	BytesInputStream *bis = new BytesInputStream(bytes, length);
 	if (!bis)
 	{
-		cout<<"Fail to create bytes input stream."<<endl;
+		DebugUtils::print("Fail to create bytes input stream.");
 		return false;
 	}
 
 	clazz = new Class();
 	if (!read_file_header(bis, clazz))
 	{
-		cout<<"Fail to read file header."<<endl;
+		DebugUtils::print("Fail to read file header.");
+		bis->Close();
+		delete bis;
 		return false;
 	}
 
 	if (!read_constant_pool(bis, clazz))
 	{
-		cout<<"Fail to read constant pool."<<endl;
+		DebugUtils::print("Fail to read constant pool.");
+		bis->Close();
+		delete bis;
 		return false;
 	}
 
 	if (!read_class_header(bis, clazz))
 	{
-		cout<<"Fail to read class header."<<endl;
+		DebugUtils::print("Fail to read class header.");
+		bis->Close();
+		delete bis;
 		return false;
 	}
 
 	if (!read_fields_info(bis, clazz))
 	{
-		cout<<"Fail to read fields."<<endl;
+		DebugUtils::print("Fail to read fields.");
+		bis->Close();
+		delete bis;
 		return false;
 	}
 
 	if (!read_methods_info(bis, clazz))
 	{
-		cout<<"Fail to read methods."<<endl;
+		DebugUtils::print("Fail to read methods.");
+		bis->Close();
+		delete bis;
 		return false;
 	}
 
 	if (!read_attributes_info(bis, clazz))
 	{
-		cout<<"Fail to read class attributes."<<endl;
+		DebugUtils::print("Fail to read class attributes.");
+		bis->Close();
+		delete bis;
 		return false;
 	}
 
@@ -74,22 +110,20 @@ bool parse_class_bytes(LPBYTE bytes, int length, lpClass &clazz)
 bool read_file_header(BytesInputStream *bis, lpClass &clazz)
 {
 	U4 magic = bis->ReadU4();
-	//DebugUtils::trace("Magic: %x\n", magic);
 	if (magic != 0xCAFEBABE)
 	{
-		OutputDebugString("Magic number is invalid.");
+		DebugUtils::print("Magic number is invalid.");
 		return false;
 	}
-	U2 minor = bis->ReadU2();
-	U2 major = bis->ReadU2();
-	//DebugUtils::trace("Minor: %u\nmajor: %u\n", minor, major);
+	bis->ReadU2(); // minor
+	bis->ReadU2(); // major
 	return true;
 }
 
 bool read_constant_pool(BytesInputStream *bis, lpClass &clazz)
 {
 	U2 count = bis->ReadU2();
-	if (count <= 0)
+	if (count == 0)
 	{
 		DebugUtils::trace("Constants count is zero.\n");
 		return false;
@@ -114,15 +148,17 @@ bool read_constant_pool(BytesInputStream *bis, lpClass &clazz)
 				clazz->const_pool->AddConstant(ct);
 				break;
 			}
-			
 		}
 		else
 		{
-			DebugUtils::trace("Fail to parse constant tag %u\n", tag);
+			// Unsupported constant pool tags cannot be skipped safely because
+			// their payload size is tag dependent. Fail loudly rather than
+			// silently corrupting every following index.
+			DebugUtils::trace("Unsupported constant tag %u\n", static_cast<unsigned>(tag));
+			return false;
 		}
 	}
 	clazz->const_pool->ReBuild();
-	//clazz->const_pool->Debug();
 	return true;
 }
 
@@ -138,19 +174,26 @@ bool read_class_header(BytesInputStream *bis, lpClass &clazz)
 	{
 		clazz->interfaces = new lpClassConstant[ifCount];
 	}
-	lpClassConstant ct = NULL;
 	for (U2 i = 0 ; i < ifCount; i++)
 	{
 		U2 ifIndex = bis->ReadU2();
 		clazz->interfaces[i] = (lpClassConstant) clazz->const_pool->GetConstant(ifIndex);
 	}
 	clazz->thisClass = (lpClassConstant) clazz->const_pool->GetConstant(classIndex);
+	if (!clazz->thisClass || !clazz->thisClass->GetName())
+	{
+		DebugUtils::print("Class name constant is invalid.");
+		return false;
+	}
 	DebugUtils::print(2, "class ", clazz->thisClass->GetName());
 
 	if (superIndex > 0)
 	{
 		clazz->superClass = (lpClassConstant) clazz->const_pool->GetConstant(superIndex);
-		DebugUtils::print(2, "\textends ", clazz->superClass->GetName());
+		if (clazz->superClass)
+		{
+			DebugUtils::print(2, "\textends ", clazz->superClass->GetName());
+		}
 	}
 	return true;
 }
@@ -183,22 +226,26 @@ bool read_field_info(BytesInputStream *bis, lpClass &clazz, lpField &field)
 	field->fieldName = (lpUtf8Constant) clazz->const_pool->GetConstant(nameIndex);
 	field->fieldDesc = (lpUtf8Constant) clazz->const_pool->GetConstant(descIndex);
 	field->attrCount = bis->ReadU2();
-	if (field->attrCount > 0)
+	for (int i = 0; i < field->attrCount; i++)
 	{
-		for (int i = 0; i < field->attrCount; i++)
+		AttributeHeader h = read_attribute_header(bis);
+		lpUtf8Constant uc = (lpUtf8Constant) clazz->const_pool->GetConstant(h.name_index);
+		const char *name = uc ? uc->GetName() : NULL;
+		if (name && strcmp(name, ATTR_CONSTANTVAL) == 0)
 		{
-			U2 attrIndex = bis->ReadU2();
-			lpUtf8Constant uc = (lpUtf8Constant) clazz->const_pool->GetConstant(attrIndex);
-			if (strcmp(uc->bytes, ATTR_CONSTANTVAL) == 0)
-			{
-				field->constValue = new JConstantValue();
-				field->constValue->Parse(bis, clazz->const_pool);
-				field->constValue->attr_name = uc;
-			}
-			else if (!field->ParseAttribute(uc, bis, clazz->const_pool))
-			{
-				throw VMException("Can not find field attibute.");
-			}
+			bis->SetCursor(h.payload_pos - 4);
+			field->constValue = new JConstantValue();
+			field->constValue->Parse(bis, clazz->const_pool);
+			field->constValue->attr_name = uc;
+		}
+		else if (name && field->ParseAttribute(uc, bis, clazz->const_pool))
+		{
+			// Parsed by the common attribute handler.
+		}
+		else
+		{
+			// Unknown attribute: skip its payload and keep going.
+			bis->SetCursor(h.payload_pos + static_cast<int>(h.length));
 		}
 	}
 	return true;
@@ -233,32 +280,39 @@ bool read_method_info(BytesInputStream *bis, lpClass &clazz, lpMethod &method)
 	method->methodName = (lpUtf8Constant) clazz->const_pool->GetConstant(nameIndex);
 	method->methodDesc = (lpUtf8Constant) clazz->const_pool->GetConstant(descIndex);
 	method->attrCount = bis->ReadU2();
-	if (method->attrCount > 0)
+	for (int i = 0; i < method->attrCount; i++)
 	{
-		for (int i = 0; i < method->attrCount; i++)
+		AttributeHeader h = read_attribute_header(bis);
+		lpUtf8Constant uc = (lpUtf8Constant) clazz->const_pool->GetConstant(h.name_index);
+		const char *name = uc ? uc->GetName() : NULL;
+		if (name && strcmp(name, ATTR_CODE) == 0)
 		{
-			U2 attrIndex = bis->ReadU2();
-			lpUtf8Constant uc = (lpUtf8Constant) clazz->const_pool->GetConstant(attrIndex);
-			if (strcmp(uc->bytes, ATTR_CODE) == 0)
-			{
-				method->code_attr = new JCodeAttribute();
-				method->code_attr->Parse(bis, clazz->const_pool);
-				method->code_attr->attr_name = uc;
-			}
-			else if (strcmp(uc->bytes, ATTR_EXCEPTION) == 0)
-			{
-				method->exception_attr = new JException();
-				method->exception_attr->Parse(bis, clazz->const_pool);
-				method->exception_attr->attr_name = uc;
-			}
-			else if (!method->ParseAttribute(uc, bis, clazz->const_pool))
-			{
-				throw VMException("Can not find method attibute.");
-			}
+			bis->SetCursor(h.payload_pos - 4);
+			method->code_attr = new JCodeAttribute();
+			method->code_attr->Parse(bis, clazz->const_pool);
+			method->code_attr->attr_name = uc;
+		}
+		else if (name && strcmp(name, ATTR_EXCEPTION) == 0)
+		{
+			bis->SetCursor(h.payload_pos - 4);
+			method->exception_attr = new JException();
+			method->exception_attr->Parse(bis, clazz->const_pool);
+			method->exception_attr->attr_name = uc;
+		}
+		else if (name && method->ParseAttribute(uc, bis, clazz->const_pool))
+		{
+		}
+		else
+		{
+			bis->SetCursor(h.payload_pos + static_cast<int>(h.length));
 		}
 	}
+	if (!method->methodName || !method->methodDesc)
+	{
+		return false;
+	}
 	method->fullName = new char[512];
-	sprintf(method->fullName, "%s:%s", method->methodName->bytes, method->methodDesc->bytes);
+	snprintf(method->fullName, 512, "%s:%s", method->methodName->bytes, method->methodDesc->bytes);
 	if (strcmp(method->fullName, MAIN_METHOD) == 0)
 	{
 		clazz->mainMethod = method;
@@ -273,29 +327,35 @@ bool read_method_info(BytesInputStream *bis, lpClass &clazz, lpMethod &method)
 bool read_attributes_info(BytesInputStream *bis, lpClass &clazz)
 {
 	U2 attr_count = bis->ReadU2();
-	if (attr_count <= 0)
+	if (attr_count == 0)
 	{
 		return true;
 	}
 	for (int i = 0; i < attr_count; i++)
 	{
-		U2 attrIndex = bis->ReadU2();
-		lpUtf8Constant uc = (lpUtf8Constant) clazz->const_pool->GetConstant(attrIndex);
-		if (strcmp(uc->bytes, ATTR_AOURCEFILE) == 0)
+		AttributeHeader h = read_attribute_header(bis);
+		lpUtf8Constant uc = (lpUtf8Constant) clazz->const_pool->GetConstant(h.name_index);
+		const char *name = uc ? uc->GetName() : NULL;
+		if (name && strcmp(name, ATTR_AOURCEFILE) == 0)
 		{
+			bis->SetCursor(h.payload_pos - 4);
 			clazz->source_file = new JSourceFile();
 			clazz->source_file->Parse(bis, clazz->const_pool);
 			clazz->source_file->attr_name = uc;
 		}
-		else if (strcmp(uc->bytes, ATTR_INNERCLASSES) == 0)
+		else if (name && strcmp(name, ATTR_INNERCLASSES) == 0)
 		{
+			bis->SetCursor(h.payload_pos - 4);
 			clazz->inner_classes = new JInnerClasses();
 			clazz->inner_classes->Parse(bis, clazz->const_pool);
 			clazz->inner_classes->attr_name = uc;
 		}
-		else if (!clazz->ParseAttribute(uc, bis, clazz->const_pool))
+		else if (name && clazz->ParseAttribute(uc, bis, clazz->const_pool))
 		{
-			throw VMException("Can not find class attibute.");
+		}
+		else
+		{
+			bis->SetCursor(h.payload_pos + static_cast<int>(h.length));
 		}
 	}
 	return true;

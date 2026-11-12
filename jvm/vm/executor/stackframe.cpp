@@ -9,6 +9,11 @@
 #include "threadstack.h"
 #include "methodarea.h"
 
+#include <ffi.h>
+
+#include <string>
+#include <vector>
+
 StackFrame::StackFrame()
 {
 	inited = false;
@@ -40,12 +45,12 @@ StackFrame::~StackFrame()
 {
 	if (op_stack)
 	{
-		delete[] op_stack;
+		delete op_stack;
 		op_stack = NULL;
 	}
 	if (local_var_table)
 	{
-		delete[] local_var_table;
+		delete local_var_table;
 		local_var_table = NULL;
 	}
 }
@@ -145,7 +150,8 @@ EventNotify StackFrame::ExecuteCode()
 		break;
 
 	case bipush:// 16 /*(0x10)*/
-		op_stack->push((U1) codes[pc]);
+		// The operand is a signed byte.
+		op_stack->push((int)(signed char)codes[pc]);
 		pc++;
 		break;
 	case sipush:// 17 /*(0x11)*/
@@ -155,6 +161,11 @@ EventNotify StackFrame::ExecuteCode()
 
 	case ldc: //Push item from constant pool 			
 		LoadConstant(codes[pc++], s1);
+		op_stack->push(s1);
+		break;
+
+	case ldc_w: // Push item from constant pool (wide index)
+		LoadConstant(ReadU2(), s1);
 		op_stack->push(s1);
 		break;
 
@@ -358,40 +369,54 @@ EventNotify StackFrame::ExecuteCode()
 		op_stack->push(s1);
 		break;
 	case dup_x1:// 90 /*(0x5a)*/
-		s1 = op_stack->top();
+		op_stack->pop(s1);          // value1
+		op_stack->pop(s2);          // value2
 		op_stack->push(s1);
+		op_stack->push(s2);
 		op_stack->push(s1);
 		break;
 	case dup_x2:// 91 /*(0x5b)*/
-		s1 = op_stack->top();
+		op_stack->pop(s1);          // value1
+		op_stack->pop(s2);          // value2
+		op_stack->pop(s3);          // value3
 		op_stack->push(s1);
-		op_stack->push(s1);
+		op_stack->push(s3);
+		op_stack->push(s2);
 		op_stack->push(s1);
 		break;
 
 	case dup2:
-		s1 = op_stack->top();
-		op_stack->top(1, s2);
+		op_stack->pop(s1);          // value1
+		op_stack->pop(s2);          // value2
+		op_stack->push(s2);
+		op_stack->push(s1);
 		op_stack->push(s2);
 		op_stack->push(s1);
 		break;
 	case dup2_x1:
-		s1 = op_stack->top();
-		op_stack->top(1, s2);
+		op_stack->pop(s1);          // value1
+		op_stack->pop(s2);          // value2
+		op_stack->pop(s3);          // value3
 		op_stack->push(s2);
 		op_stack->push(s1);
+		op_stack->push(s3);
 		op_stack->push(s2);
 		op_stack->push(s1);
 		break;
 	case dup2_x2:
-		s1 = op_stack->top();
-		op_stack->top(1, s2);
-		op_stack->push(s2);
-		op_stack->push(s1);
-		op_stack->push(s2);
-		op_stack->push(s1);
-		op_stack->push(s2);
-		op_stack->push(s1);
+		{
+			Slot s4;
+			op_stack->pop(s1);      // value1
+			op_stack->pop(s2);      // value2
+			op_stack->pop(s3);      // value3
+			op_stack->pop(s4);      // value4
+			op_stack->push(s2);
+			op_stack->push(s1);
+			op_stack->push(s4);
+			op_stack->push(s3);
+			op_stack->push(s2);
+			op_stack->push(s1);
+		}
 		break;
 		
 		//Type Conversion
@@ -487,8 +512,9 @@ EventNotify StackFrame::ExecuteCode()
 		op_stack->push(fmodf(s2.fValue, s1.fValue));	
 		break;
 	case drem:
-		dValue = fmodl(popDouble(), popDouble());
-		op_stack->push(dValue);
+		dValue = popDouble();
+		dValue2 = popDouble();
+		op_stack->push(fmod(dValue2, dValue));
 		break;
 	case ineg:
 		op_stack->pop(s1);
@@ -511,37 +537,37 @@ EventNotify StackFrame::ExecuteCode()
 	case ishl:
 		op_stack->pop(s1);
 		op_stack->pop(s2);
-		s3.iValue =s2.iValue << s1.iValue;
+		s3.iValue = (int)((uint32_t)s2.iValue << (s1.iValue & 0x1f));
 		op_stack->push(s3);
 		break;
 	case lshl:
 		op_stack->pop(s1);
 		lValue = popLong();
-		lValue = lValue << s1.iValue;
+		lValue = (LONG64)((uint64_t)lValue << (s1.iValue & 0x3f));
 		op_stack->push(lValue);
 		break;
 	case ishr:
 		op_stack->pop(s1);
 		op_stack->pop(s2);
-		s3.iValue = s2.iValue >> s1.iValue;
+		s3.iValue = s2.iValue >> (s1.iValue & 0x1f);
 		op_stack->push(s3);
 		break;
 	case lshr:
 		op_stack->pop(s1);
 		lValue = popLong();
-		lValue = lValue >> s1.iValue;
+		lValue = lValue >> (s1.iValue & 0x3f);
 		op_stack->push(lValue);
 		break;
 	case iushr:
 		op_stack->pop(s1);
 		op_stack->pop(s2);
-		s3.iValue = ((unsigned int)s2.iValue) >> s1.iValue;
+		s3.iValue = (int)(((uint32_t)s2.iValue) >> (s1.iValue & 0x1f));
 		op_stack->push(s3);
 		break;
 	case lushr:
 		op_stack->pop(s1);
 		lValue = popLong();
-		lValue = ((unsigned __int64)lValue) >> s1.iValue;
+		lValue = (LONG64)(((uint64_t)lValue) >> (s1.iValue & 0x3f));
 		op_stack->push(lValue);
 		break;
 	case iand:
@@ -585,7 +611,7 @@ EventNotify StackFrame::ExecuteCode()
 	case iinc:// 132 /*(0x84)*/ Increment local variable by constant
 		index = codes[pc++];
 		s1 = local_var_table->get(index);
-		s1.iValue += (CHAR)(codes[pc++] & 0xff);
+		s1.iValue += (int)(signed char)codes[pc++];
 		local_var_table->set(index, s1);
 		break;
 	case i2l://133
@@ -643,13 +669,56 @@ EventNotify StackFrame::ExecuteCode()
 		break;
 	case i2c:
 		op_stack->pop(s1);
-		s2.cValue = (wchar_t) s1.iValue;
+		s2.cValue = (uint16_t) s1.iValue;
 		op_stack->push(s2);
 		break;
 	case i2s:
 		op_stack->pop(s1);
 		s2.sValue = (short) s1.iValue;
 		op_stack->push(s2);
+		break;
+
+	case lcmp://148
+		lValue2 = popLong();
+		lValue = popLong();
+		s1.iValue = (lValue > lValue2) ? 1 : ((lValue == lValue2) ? 0 : -1);
+		op_stack->push(s1);
+		break;
+	case fcmpl://149
+		op_stack->pop(s2);
+		op_stack->pop(s1);
+		if (s1.fValue > s2.fValue) s3.iValue = 1;
+		else if (s1.fValue == s2.fValue) s3.iValue = 0;
+		else if (s1.fValue < s2.fValue) s3.iValue = -1;
+		else s3.iValue = -1; // NaN
+		op_stack->push(s3);
+		break;
+	case fcmpg://150
+		op_stack->pop(s2);
+		op_stack->pop(s1);
+		if (s1.fValue > s2.fValue) s3.iValue = 1;
+		else if (s1.fValue == s2.fValue) s3.iValue = 0;
+		else if (s1.fValue < s2.fValue) s3.iValue = -1;
+		else s3.iValue = 1; // NaN
+		op_stack->push(s3);
+		break;
+	case dcmpl://151
+		dValue2 = popDouble();
+		dValue = popDouble();
+		if (dValue > dValue2) s1.iValue = 1;
+		else if (dValue == dValue2) s1.iValue = 0;
+		else if (dValue < dValue2) s1.iValue = -1;
+		else s1.iValue = -1; // NaN
+		op_stack->push(s1);
+		break;
+	case dcmpg://152
+		dValue2 = popDouble();
+		dValue = popDouble();
+		if (dValue > dValue2) s1.iValue = 1;
+		else if (dValue == dValue2) s1.iValue = 0;
+		else if (dValue < dValue2) s1.iValue = -1;
+		else s1.iValue = 1; // NaN
+		op_stack->push(s1);
 		break;
 		////////////////////// Logic ///////////////////
 
@@ -832,6 +901,7 @@ EventNotify StackFrame::ExecuteCode()
 		}
 		break;
 
+	case invokeinterface: //185
 	case invokevirtual: //182
 		index = ReadU2();
 		if (ExecuteVirtual(index, NORMAL_METHOD))
@@ -1132,10 +1202,60 @@ bool StackFrame::ExecuteNormalMethod(lpClass clazz, lpMethod method, vector<Type
 
 bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<TypeDesc> &type_desc, TypeDesc &result_desc)
 {
-	int count = type_desc.size();
-	Slot s1, s2;
-	int bytesize = 8;
-	for (int i = count - 1; i >=0; i--)
+	int count = static_cast<int>(type_desc.size());
+	const char *jni_name = method->GetJniName();
+	if (!jni_name)
+	{
+		throw new VMExecutorException("Native method has no JNI name.");
+	}
+
+	NATIVE_FUNC native_func = NULL;
+	if (!VMContext::native_libs->GetNativeFunction(jni_name, native_func) || !native_func)
+	{
+		throw new VMExecutorException((LPSTR)(std::string("Cannot find native method in library: ") + jni_name).c_str());
+	}
+
+	// libffi needs one storage cell per C argument. The JNIEnv pointer and the
+	// receiver (jobject or jclass) come first, followed by the Java arguments.
+	struct NativeValue
+	{
+		union
+		{
+			ffi_arg a;
+			int32_t i;
+			int64_t l;
+			float f;
+			double d;
+			void *p;
+		};
+		NativeValue() { a = 0; }
+	};
+
+	vector<ffi_type*> arg_types;
+	vector<void*> arg_values;
+	vector<NativeValue> values;
+	arg_types.reserve(static_cast<size_t>(count) + 2);
+	arg_values.reserve(static_cast<size_t>(count) + 2);
+	// Reserve up front so that pointers stored in arg_values stay valid.
+	values.resize(static_cast<size_t>(count) + 2);
+
+	arg_types.push_back(&ffi_type_pointer);          // JNIEnv*
+	arg_values.push_back(&values[0].p);
+	values[0].p = jni_env;
+
+	arg_types.push_back(&ffi_type_pointer);      // receiver (jclass/jobject)
+	arg_values.push_back(&values[1].p);
+	if (method->isStatic())
+	{
+		values[1].p = (void*)clazz;
+	}
+
+	// Pop the Java arguments in reverse order, filling the value cells from
+	// the end towards the front.
+	size_t base = arg_values.size();
+	arg_values.resize(base + count);
+	arg_types.resize(base + count);
+	for (int i = count - 1; i >= 0; i--)
 	{
 		TypeDesc desc = type_desc[i];
 		DATA_TYPE data_type = desc.data_type;
@@ -1143,182 +1263,195 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 		{
 			data_type = DT_ARRAY;
 		}
+		NativeValue &value = values[base + i];
+		ffi_type *type = &ffi_type_sint32;
 		switch (data_type)
 		{
 		case DT_BOOL:
 			{
-				bytesize += 1;
-				op_stack->pop(s1);
-				jboolean v = s1.blValue;
-				_asm
-				{
-					mov eax,dword ptr [v]
-					push eax
-				}
+				Slot slot;
+				op_stack->pop(slot);
+				value.i = slot.blValue ? 1 : 0;
+				type = &ffi_type_sint32;
 				break;
 			}
 		case DT_BYTE:
 			{
-				bytesize += 1;
-				op_stack->pop(s1);
-				jbyte v = s1.bValue;
-				_asm
-				{
-					mov eax,dword ptr [v]
-					push eax
-				}
+				Slot slot;
+				op_stack->pop(slot);
+				value.i = static_cast<int32_t>(slot.bValue);
+				type = &ffi_type_sint32;
 				break;
 			}
 		case DT_CHAR:
 			{
-				bytesize += 2;
-				op_stack->pop(s1);
-				jchar v = s1.cValue;
-				_asm
-				{
-					mov eax,dword ptr [v]
-					push eax
-				}
-				break;
-			}
-		case DT_FLOAT:
-			{
-				bytesize += 4;
-				op_stack->pop(s1);
-				jfloat v = s1.fValue;
-				_asm
-				{
-					mov eax,dword ptr [v]
-					push eax
-				}
+				Slot slot;
+				op_stack->pop(slot);
+				value.i = static_cast<int32_t>(slot.cValue);
+				type = &ffi_type_sint32;
 				break;
 			}
 		case DT_SHORT:
 			{
-				bytesize += 2;
-				op_stack->pop(s1);
-				jshort v = s1.sValue;
-				_asm
-				{
-					mov eax,dword ptr [v]
-					push eax
-				}
+				Slot slot;
+				op_stack->pop(slot);
+				value.i = static_cast<int32_t>(slot.sValue);
+				type = &ffi_type_sint32;
 				break;
 			}
 		case DT_INT:
 			{
-				bytesize += 4;
-				op_stack->pop(s1);
-				jint v = s1.iValue;
-				_asm
-				{
-					mov eax,dword ptr [v]
-					push eax
-				}
+				Slot slot;
+				op_stack->pop(slot);
+				value.i = slot.iValue;
+				type = &ffi_type_sint32;
+				break;
+			}
+		case DT_FLOAT:
+			{
+				Slot slot;
+				op_stack->pop(slot);
+				value.f = slot.fValue;
+				type = &ffi_type_float;
+				break;
+			}
+		case DT_LONG:
+			{
+				value.l = popLong();
+				type = &ffi_type_sint64;
+				break;
+			}
+		case DT_DOUBLE:
+			{
+				value.d = popDouble();
+				type = &ffi_type_double;
 				break;
 			}
 		case DT_ARRAY:
 		case DT_REF:
 			{
-				bytesize += 4;
-				op_stack->pop(s1);
-				LPOBJECT_REF v = s1.heapPtr;
-				_asm
-				{
-					mov eax,v
-					push eax
-				}
-				break;
-			}
-		case DT_LONG:
-		case DT_DOUBLE:
-			{
-				bytesize += 8;
-				op_stack->pop(s1);
-				op_stack->pop(s2);
-				int l = s1.iValue;
-				int h = s2.iValue;
-				_asm
-				{
-					mov eax,dword ptr [l]
-					mov edx,dword ptr [h]
-					push edx
-					push eax
-				}
+				Slot slot;
+				op_stack->pop(slot);
+				value.p = (void*)slot.heapPtr;
+				type = &ffi_type_pointer;
 				break;
 			}
 		default:
-			break;
+			throw new VMExecutorException("Unsupported native argument type.");
 		}
+		arg_types[base + i] = type;
+		arg_values[base + i] = &value;
 	}
 
-	NATIVE_FUNC native_func = NULL;
-	if (!VMContext::native_libs->GetNativeFunction(method->GetJniName(bytesize), native_func))
+	// The receiver sits below all arguments on the operand stack, so it is
+	// popped only after every Java argument has been consumed.
+	if (!method->isStatic())
 	{
-		throw VMExecutorException("Cannot find native method in library.");
+		Slot this_slot;
+		op_stack->pop(this_slot);
+		values[1].p = (void*)this_slot.heapPtr;
 	}
 
-	long jni_env_addr = (long) jni_env;
-	if (method->isStatic())
-	{
-		_asm
-		{
-			mov eax,clazz
-			push eax
-		}
-	}
-	else
-	{
-		op_stack->pop(s1);
-		LPOBJECT_REF obj_ref = s1.heapPtr;
-		_asm
-		{
-			mov eax,obj_ref
-			push eax
-		}
-	}
-
-	int high_val = 0;
-	int low_val = 0;
-	_asm
-	{
-		mov eax,jni_env_addr
-		push eax
-		call native_func
-		mov low_val,eax
-		mov high_val,edx
-	}
-
-	DATA_TYPE data_type = result_desc.data_type;
+	DATA_TYPE result_type = result_desc.data_type;
 	if (result_desc.check_array)
 	{
-		data_type = DT_ARRAY;
+		result_type = DT_ARRAY;
 	}
-	switch (data_type)
+
+	ffi_type *result_ffi_type = &ffi_type_void;
+	switch (result_type)
 	{
 	case DT_BOOL:
 	case DT_BYTE:
 	case DT_CHAR:
-	case DT_FLOAT:
 	case DT_SHORT:
 	case DT_INT:
-	case DT_ARRAY:
-	case DT_REF:
-		s1.iValue = low_val;
-		op_stack->push(s1);
+		result_ffi_type = &ffi_type_sint32;
 		break;
-	case DT_DOUBLE:
+	case DT_FLOAT:
+		result_ffi_type = &ffi_type_float;
 		break;
 	case DT_LONG:
+		result_ffi_type = &ffi_type_sint64;
+		break;
+	case DT_DOUBLE:
+		result_ffi_type = &ffi_type_double;
+		break;
+	case DT_ARRAY:
+	case DT_REF:
+		result_ffi_type = &ffi_type_pointer;
+		break;
+	case DT_VOID:
+	default:
+		result_ffi_type = &ffi_type_void;
+		break;
+	}
+
+	ffi_cif cif;
+	if (ffi_prep_cif(&cif, FFI_DEFAULT_ABI, static_cast<unsigned int>(arg_types.size()),
+	                 result_ffi_type, arg_types.data()) != FFI_OK)
+	{
+		throw new VMExecutorException("Failed to prepare libffi call interface.");
+	}
+
+	NativeValue ret;
+	ffi_call(&cif, (void (*)(void))native_func, &ret, arg_values.data());
+
+	switch (result_type)
+	{
+	case DT_BOOL:
 		{
-			LONG64 lowValue = (low_val & 0xFFFFFFFF);
-			LONG64 highValue = (high_val & 0xFFFFFFFF);
-			LONG64 lValue = (highValue << 0x20) | lowValue;
-			op_stack->push(lValue);
+			Slot slot;
+			slot.iValue = (ret.a != 0) ? 1 : 0;
+			op_stack->push(slot);
+			break;
+		}
+	case DT_BYTE:
+		{
+			Slot slot;
+			slot.iValue = static_cast<signed char>(ret.a);
+			op_stack->push(slot);
+			break;
+		}
+	case DT_CHAR:
+		{
+			Slot slot;
+			slot.cValue = static_cast<uint16_t>(ret.a);
+			op_stack->push(slot);
+			break;
+		}
+	case DT_SHORT:
+		{
+			Slot slot;
+			slot.sValue = static_cast<int16_t>(ret.a);
+			op_stack->push(slot);
+			break;
+		}
+	case DT_INT:
+		{
+			Slot slot;
+			slot.iValue = static_cast<int32_t>(ret.a);
+			op_stack->push(slot);
+			break;
+		}
+	case DT_FLOAT:
+		op_stack->push(ret.f);
+		break;
+	case DT_LONG:
+		op_stack->push(static_cast<LONG64>(ret.l));
+		break;
+	case DT_DOUBLE:
+		op_stack->push(ret.d);
+		break;
+	case DT_ARRAY:
+	case DT_REF:
+		{
+			Slot slot;
+			slot.heapPtr = (LPOBJECT_REF)ret.p;
+			op_stack->push(slot);
 			break;
 		}
 	case DT_VOID:
-		break;
 	default:
 		break;
 	}
@@ -1419,20 +1552,26 @@ bool StackFrame::StackToLocal(lpStackFrame frame, vector<TypeDesc> &type_desc, b
 
 bool StackFrame::ExecuteNewArray(U1 index)
 {
-	lpClass clazz = new Class(CT_ARRAY);
-	clazz->thisClass = new ClassConstant();
-	clazz->thisClass->name = new CHAR[3];
-	clazz->thisClass->name[0] = '[';
-	if (index == 0x0A)
+	char atype = 0;
+	switch (index)
 	{
-		clazz->thisClass->name[1] = 'I';
+	case 4:  atype = 'Z'; break; // boolean
+	case 5:  atype = 'C'; break; // char
+	case 6:  atype = 'F'; break; // float
+	case 7:  atype = 'D'; break; // double
+	case 8:  atype = 'B'; break; // byte
+	case 9:  atype = 'S'; break; // short
+	case 10: atype = 'I'; break; // int
+	case 11: atype = 'J'; break; // long
+	default:
+		throw new VMExecutorException("Invalid newarray type.");
 	}
-	else if (index == 0x05)
+	char name[3] = { '[', atype, '\0' };
+	lpClass clazz = NULL;
+	if (!class_loader->FindClass(name, clazz))
 	{
-		clazz->thisClass->name[1] = 'C';
+		return false;
 	}
-	clazz->thisClass->name[2] = '\0';
-	class_loader->StoreClass(clazz);
 	Slot slot;
 	op_stack->pop(slot);
 	LPOBJECT_REF obj_ref = NULL;
@@ -1481,7 +1620,10 @@ bool StackFrame::ExecuteNewMultiArray(U2 index, int count)
 		return false;
 	}
 	lpClass clazz = NULL;
-	class_loader->FindClass(cc->utf8->bytes, clazz);
+	if (!class_loader->FindClass(cc->utf8->bytes, clazz))
+	{
+		return false;
+	}
 
 	Slot slot;
 	LPINT32 nums = new INT32[count];
@@ -1491,7 +1633,9 @@ bool StackFrame::ExecuteNewMultiArray(U2 index, int count)
 		nums[i] = slot.iValue;
 	}
 	LPOBJECT_REF obj_ref = NULL;
-	if (!VMContext::object_heap->NewMultiArrayObject(nums, count, clazz, obj_ref))
+	bool ok = VMContext::object_heap->NewMultiArrayObject(nums, count, clazz, obj_ref);
+	delete[] nums;
+	if (!ok)
 	{
 		return false;
 	}
@@ -1517,7 +1661,7 @@ void StackFrame::SetArrayIndex(int index, Slot &slot)
 	{
 		throw new VMExecutorException("Array object is not inited.");
 	}
-	if (index >= obj->array_length)
+	if (index < 0 || index >= obj->array_length)
 	{
 		throw new VMExecutorException("Array index out of memory.");
 	}
@@ -1543,7 +1687,7 @@ void StackFrame::LoadArray(DATA_TYPE data_type)
 	{
 		throw new VMExecutorException("Array object is not inited.");
 	}
-	if (slot.iValue >= obj->array_length)
+	if (slot.iValue < 0 || slot.iValue >= obj->array_length)
 	{
 		throw new VMExecutorException("Array index out of memory.");
 	}
@@ -1600,7 +1744,18 @@ void StackFrame::LoadArray(DATA_TYPE data_type)
 			break;
 		}
 	}
-	op_stack->push(ret);
+	if (data_type == DT_LONG)
+	{
+		op_stack->push(ret.lValue);
+	}
+	else if (data_type == DT_DOUBLE)
+	{
+		op_stack->push(ret.dValue);
+	}
+	else
+	{
+		op_stack->push(ret);
+	}
 }
 
 void StackFrame::ArrayLength()
@@ -1818,10 +1973,26 @@ void StackFrame::PutField(U2 index)
 
 void StackFrame::TableSwitch()
 {
+	// The offsets following the opcode are 4-byte aligned relative to the
+	// beginning of the method code, so skip the padding bytes first.
+	int pad = (4 - (pc % 4)) % 4;
+	pc += pad;
 	int default_offset = ReadInt();
 	int low = ReadInt();
 	int high = ReadInt();
-	int n = high - low + 1;
+	if (high < low)
+	{
+		Slot slot;
+		op_stack->pop(slot);
+		pc = last_pc + default_offset;
+		return;
+	}
+	LONG64 n64 = (LONG64)high - (LONG64)low + 1;
+	if (n64 <= 0 || n64 > (LONG64)code_length)
+	{
+		throw new VMExecutorException("Invalid tableswitch size.");
+	}
+	int n = (int)n64;
 	int *table = new int[n];
 	for (int i = 0; i < n; i++)
 	{
@@ -1829,14 +2000,14 @@ void StackFrame::TableSwitch()
 	}
 	Slot slot;
 	op_stack->pop(slot);
-	int val = slot.iValue;               
-	if (val < low || val > high) 
-	{ 
-		pc = last_pc + default_offset;             
-	} 
-	else 
-	{                      
-		pc = last_pc + table[val - low];   
+	int val = slot.iValue;
+	if (val < low || val > high)
+	{
+		pc = last_pc + default_offset;
+	}
+	else
+	{
+		pc = last_pc + table[val - low];
 	}
 
 	delete[] table;
@@ -1845,12 +2016,19 @@ void StackFrame::TableSwitch()
 
 void StackFrame::LookupSwitch()
 {
-	Slot slot;
-	op_stack->pop(slot);
-	int val = slot.iValue;        
-	int reserved = ReadShort();
+	// Same 4-byte alignment rule as tableswitch (the "match" entries follow
+	// an int default and an int count).
+	int pad = (4 - (pc % 4)) % 4;
+	pc += pad;
 	int default_offset = ReadInt();
 	int n = ReadInt();
+	if (n < 0 || (LONG64)n * 8 > (LONG64)code_length)
+	{
+		throw new VMExecutorException("Invalid lookupswitch size.");
+	}
+	Slot slot;
+	op_stack->pop(slot);
+	int val = slot.iValue;
 	bool matched = false;
 	int new_pc = pc;
 	for (int i = 0; i < n; i++)

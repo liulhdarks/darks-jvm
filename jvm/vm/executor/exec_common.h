@@ -5,7 +5,7 @@
 typedef union Variant
 {
 	unsigned char blValue;
-	wchar_t cValue;
+	uint16_t cValue;
 	signed char bValue;
 	short sValue;
 	int iValue;

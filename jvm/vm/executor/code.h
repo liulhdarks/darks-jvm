@@ -23,6 +23,7 @@
 #define dconst_1 15 /*(0xf)*/
 
 #define ldc 18 /* (0x12) */
+#define ldc_w 19 /* (0x13) */
 
 #define ldc2_w 20 /*(0x14)*/
 
@@ -164,6 +165,11 @@
 #define i2b 145 /*(0x91)*/
 #define i2c 146 /*(0x92)*/
 #define i2s 147 /*(0x93)*/
+#define lcmp 148 /*(0x94)*/
+#define fcmpl 149 /*(0x95)*/
+#define fcmpg 150 /*(0x96)*/
+#define dcmpl 151 /*(0x97)*/
+#define dcmpg 152 /*(0x98)*/
 
 #define ifeq 153 /*(0x99) */
 #define ifne 154 /*(0x9a) */
@@ -198,6 +204,7 @@
 #define getfield 180 /*(0xb4)*/
 #define putfield 181 /*(0xb5)*/
 
+#define invokeinterface 185
 #define invokevirtual 182 /*(0xb6)*/
 #define invokespecial  183 /*(0xb7) */
 #define invokestatic 184 

@@ -2,38 +2,49 @@
 
 #include "common.h"
 
+#include <string>
+
+// Owns its message. The original implementation stored the caller's pointer
+// and called "delete" on it, which crashed for string literals and double-freed
+// dynamically built messages.
 class VMException
 {
 
 private:
-	LPSTR cause;
+	std::string cause;
 
 	int errCode;
 
 public:
 	VMException()
 	{
-		cause = NULL;
+		errCode = 0;
 	}
 
 	VMException(LPSTR cause)
 	{
-		this->cause = cause;
+		this->cause = cause ? cause : "";
+		errCode = 0;
 	}
 
 	VMException(LPSTR cause, int errCode)
 	{
-		this->cause = cause;
+		this->cause = cause ? cause : "";
 		this->errCode = errCode;
 	}
 
-	~VMException()
+	virtual ~VMException()
 	{
-		if (cause)
-		{
-			delete cause;
-			cause = NULL;
-		}
+	}
+
+	LPCSTR what() const
+	{
+		return cause.c_str();
+	}
+
+	int code() const
+	{
+		return errCode;
 	}
 };
 

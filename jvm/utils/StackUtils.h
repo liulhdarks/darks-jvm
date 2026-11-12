@@ -42,7 +42,7 @@ private:
 	void init()
 	{
 		count = 0;
-		nodes = (T*)malloc(cur_size * sizeof(T));
+		nodes = (T*)malloc(this->cur_size * sizeof(T));
 		if (!nodes)
 		{
 			throw new VMException("Fail to initialize stack memory");

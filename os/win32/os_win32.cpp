@@ -1,22 +1,26 @@
+﻿#if defined(_WIN32)
+
 #include "stdafx.h"
 #include "os_win32.h"
 
-__int64 OS::GetCurrentTimeMillis()
+LONG64 OS::GetCurrentTimeMillis()
 {
 	__timeb64 t;
 	_ftime64(&t);
-	__int64 v = t.time;
-	__int64 ret = ((v & 0xFFFFFFFF) * 1000) | t.millitm;
+	// Milliseconds since the epoch: seconds * 1000 + milliseconds.
+	// The original used bitwise OR and truncated to 32 bits.
+	LONG64 v = static_cast<LONG64>(t.time);
+	LONG64 ret = v * 1000 + static_cast<LONG64>(t.millitm);
 	return ret;
 }
 
-long OS::LoadNativeLibrary(const char* libs_name)
+void* OS::LoadNativeLibrary(const char* libs_name)
 {
-	HMODULE handle = LoadLibrary(libs_name);
-	return (long)handle;
+	HMODULE handle = LoadLibraryA(libs_name);
+	return (void*)handle;
 }
 
-void OS::ReleaseNativeLibrary(long handle)
+void OS::ReleaseNativeLibrary(void* handle)
 {
 	HMODULE mod = (HMODULE) handle;
 	if (mod)
@@ -33,7 +37,7 @@ char* OS::MapLibraryName(const char* libs_name)
 	return real_name;
 }
 
-void* OS::GetNativeFunction(long handle, const char* func_name)
+void* OS::GetNativeFunction(void* handle, const char* func_name)
 {
 	HMODULE mod = (HMODULE) handle;
 	if (mod)
@@ -43,3 +47,5 @@ void* OS::GetNativeFunction(long handle, const char* func_name)
 	}
 	return NULL;
 }
+
+#endif // _WIN32

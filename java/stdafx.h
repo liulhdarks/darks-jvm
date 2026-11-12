@@ -1,25 +1,12 @@
-// stdafx.h : 标准系统包含文件的包含文件，
-// 或是经常使用但不常更改的
-// 特定于项目的包含文件
-//
-
+// stdafx.h : portable precompiled-header replacement for the CLI.
 #pragma once
 
-#pragma warning(disable:4251)
-#pragma warning(disable:4996)
+#include "common.h"
 
-#include "targetver.h"
-
-#include <stdio.h>
-#include <tchar.h>
-
-
-#include <string>
-#include <math.h>
-#include <vector>
-#include <map>
-#include <stdlib.h>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
-using namespace std;
-
-// TODO: 在此处引用程序需要的其他头文件
+#include <map>
+#include <string>
+#include <vector>
