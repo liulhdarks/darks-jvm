@@ -37,6 +37,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/GcThreads.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/ReflectionAdvanced.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/JitWorkload.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/CollectionsAdvanced.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
     add_custom_command(
@@ -108,6 +109,12 @@ if(JAVAC)
         # The same workload runs with the lightweight JIT disabled, enabled
         # with a one-invocation threshold, and with a high threshold (pure
         # interpreter path). All three must produce identical output.
+        add_test(NAME collections_advanced
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};CollectionsAdvanced" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=collections\ checks=.*\ failures=0"
+                    "-DEXPECT_TEXT2=collections\ advanced:\ ok" -P "${CHECK}")
+
         add_test(NAME jit_off
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
                     "-DARGS=-cp;${CLASSES_DIR};JitWorkload" -DEXPECT_RC=0

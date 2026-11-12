@@ -13,4 +13,8 @@ public interface List<E> extends Collection<E>
     int indexOf(Object value);
 
     boolean addAll(Collection<? extends E> values);
+
+    boolean addAll(int index, Collection<? extends E> values);
+
+    int lastIndexOf(Object value);
 }

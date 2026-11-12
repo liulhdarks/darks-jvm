@@ -368,7 +368,7 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 			op_stack->push(insn.a);
 			break;
 		case sipush:
-			op_stack->push(static_cast<short>(insn.a));
+			op_stack->push(insn.a);
 			break;
 		case ldc:
 		case ldc_w:
@@ -1101,7 +1101,7 @@ EventNotify StackFrame::ExecuteCode()
 		break;
 	case sipush:// 17 /*(0x11)*/
 		u2 = ReadU2();
-		op_stack->push((short) (u2 & 0xFFFF));
+		op_stack->push((int)(short)(u2 & 0xFFFF));
 		break;
 
 	case ldc: //Push item from constant pool 			

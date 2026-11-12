@@ -12,9 +12,28 @@ public interface Map<K, V>
 
     boolean containsKey(Object key);
 
+    boolean containsValue(Object value);
+
     V remove(Object key);
 
     void clear();
 
     Set<K> keySet();
+
+    Collection<V> values();
+
+    Set<Map.Entry<K, V>> entrySet();
+
+    public interface Entry<K, V>
+    {
+        K getKey();
+
+        V getValue();
+
+        V setValue(V value);
+
+        boolean equals(Object other);
+
+        int hashCode();
+    }
 }

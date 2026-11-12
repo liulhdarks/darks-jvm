@@ -34,6 +34,21 @@ public final class Integer implements Comparable<Integer>
         return (double)value;
     }
 
+    public float floatValue()
+    {
+        return (float)value;
+    }
+
+    public byte byteValue()
+    {
+        return (byte)value;
+    }
+
+    public short shortValue()
+    {
+        return (short)value;
+    }
+
     public static int parseInt(String s)
     {
         return (int)parseLong(s);
@@ -132,6 +147,11 @@ public final class Integer implements Comparable<Integer>
     }
 
     public int hashCode()
+    {
+        return value;
+    }
+
+    public static int hashCode(int value)
     {
         return value;
     }

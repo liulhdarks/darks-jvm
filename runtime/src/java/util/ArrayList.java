@@ -84,6 +84,24 @@ public class ArrayList<E> implements List<E>
         return changed;
     }
 
+    public boolean addAll(int index, Collection<? extends E> values)
+    {
+        if (index < 0 || index > count)
+        {
+            throw new IndexOutOfBoundsException("index " + index);
+        }
+        Iterator<? extends E> it = values.iterator();
+        int position = index;
+        boolean changed = false;
+        while (it.hasNext())
+        {
+            add(position, it.next());
+            position++;
+            changed = true;
+        }
+        return changed;
+    }
+
     public E get(int index)
     {
         checkIndex(index);
@@ -129,6 +147,18 @@ public class ArrayList<E> implements List<E>
     public int indexOf(Object value)
     {
         for (int i = 0; i < count; i++)
+        {
+            if (value == null ? elements[i] == null : value.equals(elements[i]))
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public int lastIndexOf(Object value)
+    {
+        for (int i = count - 1; i >= 0; i--)
         {
             if (value == null ? elements[i] == null : value.equals(elements[i]))
             {
@@ -188,6 +218,7 @@ public class ArrayList<E> implements List<E>
     private class Itr implements Iterator<E>
     {
         private int cursor;
+        private int last = -1;
 
         public boolean hasNext()
         {
@@ -200,12 +231,19 @@ public class ArrayList<E> implements List<E>
             {
                 throw new NoSuchElementException();
             }
+            last = cursor;
             return (E)elements[cursor++];
         }
 
         public void remove()
         {
-            throw new UnsupportedOperationException();
+            if (last < 0)
+            {
+                throw new IllegalStateException();
+            }
+            ArrayList.this.remove(last);
+            cursor = last;
+            last = -1;
         }
     }
 }

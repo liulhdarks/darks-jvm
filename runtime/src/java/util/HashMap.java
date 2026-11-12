@@ -184,6 +184,30 @@ public class HashMap<K, V> implements Map<K, V>
         count = 0;
     }
 
+    public boolean containsValue(Object value)
+    {
+        for (int i = 0; i < keys.length; i++)
+        {
+            if (!used[i])
+            {
+                continue;
+            }
+            Object v = values[i];
+            if (value == null)
+            {
+                if (v == null)
+                {
+                    return true;
+                }
+            }
+            else if (value.equals(v))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public Set<K> keySet()
     {
         HashSet<K> result = new HashSet<K>();
@@ -195,6 +219,80 @@ public class HashMap<K, V> implements Map<K, V>
             }
         }
         return result;
+    }
+
+    public Collection<V> values()
+    {
+        ArrayList<V> result = new ArrayList<V>(count > 0 ? count : 1);
+        for (int i = 0; i < keys.length; i++)
+        {
+            if (used[i])
+            {
+                result.add((V)values[i]);
+            }
+        }
+        return result;
+    }
+
+    public Set<Map.Entry<K, V>> entrySet()
+    {
+        HashSet<Map.Entry<K, V>> result = new HashSet<Map.Entry<K, V>>(count * 2 + 1);
+        for (int i = 0; i < keys.length; i++)
+        {
+            if (used[i])
+            {
+                result.add(new EntryImpl((K)keys[i]));
+            }
+        }
+        return result;
+    }
+
+    private final class EntryImpl implements Map.Entry<K, V>
+    {
+        private final K key;
+
+        EntryImpl(K key)
+        {
+            this.key = key;
+        }
+
+        public K getKey()
+        {
+            return key;
+        }
+
+        public V getValue()
+        {
+            return HashMap.this.get(key);
+        }
+
+        public V setValue(V value)
+        {
+            return HashMap.this.put(key, value);
+        }
+
+        public boolean equals(Object other)
+        {
+            if (!(other instanceof Map.Entry))
+            {
+                return false;
+            }
+            Map.Entry entry = (Map.Entry)other;
+            Object otherKey = entry.getKey();
+            Object otherValue = entry.getValue();
+            if (!(key == null ? otherKey == null : key.equals(otherKey)))
+            {
+                return false;
+            }
+            V mine = getValue();
+            return mine == null ? otherValue == null : mine.equals(otherValue);
+        }
+
+        public int hashCode()
+        {
+            V value = getValue();
+            return Objects.hashCode(key) ^ Objects.hashCode(value);
+        }
     }
 
     public String toString()

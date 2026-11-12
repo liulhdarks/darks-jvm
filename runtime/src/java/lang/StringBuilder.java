@@ -123,6 +123,40 @@ public class StringBuilder
         return append(String.valueOf(o));
     }
 
+    public StringBuilder append(float v)
+    {
+        return append(new Float(v).toString());
+    }
+
+    public StringBuilder append(char[] chars, int offset, int length)
+    {
+        if (chars == null)
+        {
+            return append("null");
+        }
+        if (offset < 0 || length < 0 || offset + length > chars.length)
+        {
+            throw new StringIndexOutOfBoundsException(offset);
+        }
+        int i = 0;
+        while (i < length)
+        {
+            append(chars[offset + i]);
+            i = i + 1;
+        }
+        return this;
+    }
+
+    public int capacity()
+    {
+        return value.length;
+    }
+
+    public void ensureCapacity(int minimum)
+    {
+        ensure(minimum);
+    }
+
     public char charAt(int index)
     {
         if (index < 0 || index >= count)
@@ -203,6 +237,16 @@ public class StringBuilder
         return insert(offset, Long.toString(v));
     }
 
+    public StringBuilder insert(int offset, double v)
+    {
+        return insert(offset, Double.toString(v));
+    }
+
+    public StringBuilder insert(int offset, boolean v)
+    {
+        return insert(offset, String.valueOf(v));
+    }
+
     public StringBuilder deleteCharAt(int index)
     {
         if (index < 0 || index >= count)
@@ -238,6 +282,49 @@ public class StringBuilder
         }
         count = count - remove;
         return this;
+    }
+
+    public StringBuilder replace(int start, int end, String replacement)
+    {
+        if (start < 0 || start > count || start > end)
+        {
+            throw new StringIndexOutOfBoundsException(start);
+        }
+        if (end > count)
+        {
+            end = count;
+        }
+        delete(start, end);
+        insert(start, replacement == null ? "null" : replacement);
+        return this;
+    }
+
+    public int indexOf(String text)
+    {
+        if (text == null)
+        {
+            return -1;
+        }
+        int n = text.length();
+        if (n == 0)
+        {
+            return 0;
+        }
+        int i = 0;
+        while (i + n <= count)
+        {
+            int j = 0;
+            while (j < n && value[i + j] == text.charAt(j))
+            {
+                j = j + 1;
+            }
+            if (j == n)
+            {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
     }
 
     public StringBuilder reverse()
