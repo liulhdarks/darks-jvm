@@ -23,12 +23,34 @@ lpMethod MethodArea::GetMethod(LPSTR method_name)
 
 void MethodArea::AddStaticField(LPSTR field_full_name, lpFieldValue fv)
 {
-	static_field_map[string(field_full_name)] = fv;
+	// putstatic may run many times; release the value it replaces so the
+	// static area does not leak one FieldValue per assignment.
+	string key(field_full_name);
+	map<string, lpFieldValue>::iterator it = static_field_map.find(key);
+	if (it != static_field_map.end() && it->second && it->second != fv)
+	{
+		delete it->second;
+	}
+	static_field_map[key] = fv;
 }
 
 lpFieldValue MethodArea::GetStaticField(LPSTR field_full_name)
 {
 	return static_field_map[string(field_full_name)];
+}
+
+void MethodArea::ClearStaticFields()
+{
+	map<string, lpFieldValue>::iterator it = static_field_map.begin();
+	for (; it != static_field_map.end(); ++it)
+	{
+		if (it->second)
+		{
+			delete it->second;
+			it->second = NULL;
+		}
+	}
+	static_field_map.clear();
 }
 
 lpMethod MethodArea::GetMethod(lpClass clazz, LPSTR method_name)

@@ -199,6 +199,9 @@ static int run_class(const string &class_name, int argc, char **argv)
 			throw new VMException("Failed to load String array class.");
 		}
 		LPOBJECT_REF args_ref = NULL;
+		// The array only lives in this C++ local until main() is entered; keep
+		// it alive while the argument strings are allocated.
+		GCRootScope args_root(VMContext::object_heap, &args_ref);
 		if (!VMContext::object_heap->NewObjectArrayObject(argc, string_array_class, args_ref))
 		{
 			throw new VMException("Failed to allocate the argument array.");

@@ -1,11 +1,17 @@
 #include "stdafx.h"
 #include "threadstack.h"
 #include "exec_common.h"
+#include "objectheap.h"
 
 #define LOOP_TRUE 1
 
 ThreadStack::~ThreadStack()
 {
+	if (VMContext::object_heap)
+	{
+		VMContext::object_heap->UnregisterThreadStack(this);
+	}
+
 	lpStackFrame top_frame = NULL;
 	while (!frames.empty())
 	{
@@ -19,6 +25,25 @@ ThreadStack::~ThreadStack()
 	{
 		delete jni_env;
 		jni_env = NULL;
+	}
+}
+
+void ThreadStack::MarkRoots(ObjectHeap *heap)
+{
+	if (!heap)
+	{
+		return;
+	}
+	// std::stack has no iterators; copy the (small) pointer container.
+	std::stack<lpStackFrame> copy = frames;
+	while (!copy.empty())
+	{
+		lpStackFrame frame = copy.top();
+		copy.pop();
+		if (frame)
+		{
+			frame->MarkRoots(heap);
+		}
 	}
 }
 

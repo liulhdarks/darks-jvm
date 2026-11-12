@@ -84,6 +84,32 @@ void StackFrame::init(lpVariant vars, int count)
 	DebugUtils::print("");
 }
 
+void StackFrame::MarkRoots(ObjectHeap *heap)
+{
+	if (!heap)
+	{
+		return;
+	}
+	if (local_var_table)
+	{
+		Slot *slots = local_var_table->data();
+		int count = local_var_table->capacity();
+		for (int i = 0; i < count; i++)
+		{
+			heap->MarkObjectRef(slots[i].heapPtr);
+		}
+	}
+	if (op_stack)
+	{
+		Slot *slots = op_stack->data();
+		int count = op_stack->size();
+		for (int i = 0; i < count; i++)
+		{
+			heap->MarkObjectRef(slots[i].heapPtr);
+		}
+	}
+}
+
 EventNotify StackFrame::Execute()
 {
 	if (!inited)
@@ -1350,6 +1376,29 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 		Slot this_slot;
 		op_stack->pop(this_slot);
 		values[1].p = (void*)this_slot.heapPtr;
+	}
+
+	// JNI references created inside the native function are invisible to the
+	// collector, so automatic collection is deferred for the whole call.
+	GCNativeScope native_scope(VMContext::object_heap);
+	// In addition, pin the receiver and the reference arguments (defensive: they
+	// are already popped off the operand stack).
+	GCRootSet native_roots(VMContext::object_heap);
+	for (int i = 0; i < count; i++)
+	{
+		DATA_TYPE arg_type = type_desc[i].data_type;
+		if (type_desc[i].check_array)
+		{
+			arg_type = DT_ARRAY;
+		}
+		if (arg_type == DT_REF || arg_type == DT_ARRAY)
+		{
+			native_roots.Add(reinterpret_cast<LPOBJECT_REF*>(&values[base + static_cast<size_t>(i)].p));
+		}
+	}
+	if (!method->isStatic())
+	{
+		native_roots.Add(reinterpret_cast<LPOBJECT_REF*>(&values[1].p));
 	}
 
 	DATA_TYPE result_type = result_desc.data_type;

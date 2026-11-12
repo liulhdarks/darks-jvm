@@ -39,6 +39,18 @@ public:
 		}
 		return slots[index];
 	}
+
+	// Raw slot access for the conservative GC root scan. Every slot is
+	// zero-initialised by the Slot constructor before it is used.
+	Slot *data()
+	{
+		return slots;
+	}
+
+	int capacity()
+	{
+		return init_size;
+	}
 };
 
 typedef LocalVarTable *lpLocalVarTable;

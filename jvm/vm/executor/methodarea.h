@@ -25,4 +25,8 @@ public:
 	static void AddStaticField(LPSTR field_full_name, lpFieldValue fv);
 
 	static lpFieldValue GetStaticField(LPSTR field_full_name);
+
+	// Releases every stored static FieldValue (used by the GC tests so
+	// that ASan sees no new leaks).
+	static void ClearStaticFields();
 };

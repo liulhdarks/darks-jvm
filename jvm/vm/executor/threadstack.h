@@ -24,6 +24,10 @@ public:
 		class_loader = VMContext::bootstrap_classloader;
 		jni_env = new JNIEnv();
 		jni_env->functions = &jni_native_interface;
+		if (VMContext::object_heap)
+		{
+			VMContext::object_heap->RegisterThreadStack(this);
+		}
 	}
 
 	~ThreadStack();
@@ -35,4 +39,7 @@ public:
 	void AddFrame(lpClass clazz, lpMethod method, lpStackFrame &frame);
 
 	EventNotify start();
+
+	// Marks references held by every frame on this stack.
+	void MarkRoots(ObjectHeap *heap);
 };

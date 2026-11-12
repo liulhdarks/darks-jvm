@@ -10,6 +10,8 @@
 #include "descriptor.h"
 #include "jni/jni.h"
 
+class ObjectHeap;
+
 #define STATIC_METHOD 1
 #define NORMAL_METHOD 2
 #define SPECIAL_METHOD 3
@@ -44,6 +46,10 @@ public:
 	EventNotify Execute();
 
 	void init(lpVariant vars = NULL, int count = 0);
+
+	// Conservative root scan: every local variable and live operand stack slot
+	// may hold an LPOBJECT_REF.
+	void MarkRoots(ObjectHeap *heap);
 
 private:
 

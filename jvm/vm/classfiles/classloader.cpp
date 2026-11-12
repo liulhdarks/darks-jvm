@@ -155,6 +155,11 @@ bool ClassLoader::DefineArrayClass(LPCSTR classname, lpClass &jclass)
 	size_t len = strlen(classname);
 	jclass->thisClass->name = new CHAR[len + 1];
 	memcpy(jclass->thisClass->name, classname, len + 1);
+	// The constant pool owns the class-name constant (for parsed classes the
+	// equivalent constant lives in the pool as well), so add it there instead
+	// of leaking it when the Class is destroyed.
+	jclass->const_pool->init(1);
+	jclass->const_pool->AddConstant(jclass->thisClass);
 	classMap[string(jclass->thisClass->GetName())] = jclass;
 	return true;
 }
