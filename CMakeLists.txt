@@ -115,6 +115,14 @@ if(NOT WIN32)
     target_link_libraries(darksvm PUBLIC ${CMAKE_DL_LIBS})
 endif()
 
+if(WIN32)
+    # jvm/common.h selects dllexport/dllimport based on JVM_EXPORTS.  The
+    # checked-in Visual Studio project used to define it; CMake names its
+    # automatic export macro after the target (darksvm_EXPORTS), so define the
+    # macro the headers actually check.
+    target_compile_definitions(darksvm PRIVATE JVM_EXPORTS)
+endif()
+
 if(MSVC)
     target_compile_definitions(darksvm PUBLIC _CRT_SECURE_NO_WARNINGS)
 else()
