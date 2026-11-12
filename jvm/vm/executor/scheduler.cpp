@@ -898,13 +898,11 @@ bool Scheduler::SleepCurrent(ThreadStack *ts, int64_t millis)
 		}
 		return false;
 	}
-	bool interrupted = false;
 	{
 		std::lock_guard<std::recursive_mutex> lk(impl->m);
 		if (co->interrupt_flag)
 		{
 			co->interrupt_flag = false;
-			interrupted = true;
 		}
 		else
 		{
