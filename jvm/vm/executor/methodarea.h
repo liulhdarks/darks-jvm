@@ -14,6 +14,9 @@ public:
 	//class_full_name@method_name:method_params
 	static map<string, lpMethod> methods_map;
 
+	// Legacy name-keyed static storage.  Production static fields now live
+	// in Class::static_slots (field access never touches this map); this is
+	// retained only as a GC unit-test hook for rooting a raw reference.
 	static map<string, lpFieldValue> static_field_map;
 	
 	static void AddMethod(lpClass clazz, lpMethod &method);

@@ -49,11 +49,16 @@ lpFieldValue FindNamedField(lpObject object, const char *name)
 std::string ObjectFieldString(JNIEnv *env, lpObject object, const char *name)
 {
 	lpFieldValue fv = FindNamedField(object, name);
-	if (!fv || !fv->field_value.heapPtr)
+	Variant value;
+	if (fv)
+	{
+		value = fv->LoadValue();
+	}
+	if (!value.heapPtr)
 	{
 		return std::string();
 	}
-	jobject str = JniObject(fv->field_value.heapPtr);
+	jobject str = JniObject(value.heapPtr);
 	const char *chars = env->GetStringUTFChars(reinterpret_cast<jstring>(str), NULL);
 	if (!chars)
 	{
@@ -67,7 +72,12 @@ std::string ObjectFieldString(JNIEnv *env, lpObject object, const char *name)
 jobject ObjectFieldRef(lpObject object, const char *name)
 {
 	lpFieldValue fv = FindNamedField(object, name);
-	return (fv && fv->field_value.heapPtr) ? JniObject(fv->field_value.heapPtr) : NULL;
+	Variant value;
+	if (fv)
+	{
+		value = fv->LoadValue();
+	}
+	return value.heapPtr ? JniObject(value.heapPtr) : NULL;
 }
 
 jobject NewHeapObject(JNIEnv *env, lpClass clazz)
@@ -175,7 +185,7 @@ bool ReadAccessibleFlag(jobject member)
 			if (strcmp(f->fieldName->GetName(), "accessible") == 0)
 			{
 				lpFieldValue fv = object->GetFieldValue(f);
-				return fv && fv->field_value.blValue != 0;
+				return fv && fv->LoadValue().blValue != 0;
 			}
 		}
 	}
@@ -623,7 +633,7 @@ jobject ReadAnnotation(JNIEnv *env, ConstantPool *pool, ByteReader &r)
 			break;
 		}
 		lpFieldValue fv = new FieldValue();
-		fv->field_value = value;
+		fv->StoreValue(value);
 		object->AdoptFieldValue("ann:" + element_name, fv);
 	}
 	// Elements absent from the annotation bytes take their declared default
@@ -650,7 +660,7 @@ jobject ReadAnnotation(JNIEnv *env, ConstantPool *pool, ByteReader &r)
 		if (default_ok)
 		{
 			lpFieldValue fv = new FieldValue();
-			fv->field_value = value;
+			fv->StoreValue(value);
 			object->AdoptFieldValue("ann:" + element_name, fv);
 		}
 	}
@@ -776,7 +786,7 @@ bool ReadElementValue(JNIEnv *env, ConstantPool *pool, ByteReader &r, Variant &o
 				lpField field = JniFindField(enum_class, constant.c_str(),
 				                             field_desc.c_str(), true);
 				lpFieldValue fv = JniStaticFieldValue(enum_class, field, false);
-				out.heapPtr = fv ? fv->field_value.heapPtr : NULL;
+				out.heapPtr = fv ? fv->LoadValue().heapPtr : NULL;
 			}
 			else
 			{
@@ -943,7 +953,7 @@ jobject BoxValue(JNIEnv *env, DATA_TYPE type, const Variant &value)
 	lpFieldValue fv = FindNamedField(object, "value");
 	if (fv)
 	{
-		fv->field_value = value;
+		fv->StoreValue(value);
 	}
 	return boxed;
 }
@@ -982,16 +992,17 @@ bool UnboxValue(jobject boxed, DATA_TYPE type, Variant &out)
 	{
 		return false;
 	}
+	Variant boxed_value = fv->LoadValue();
 	switch (type)
 	{
-	case DT_BOOL:  out.blValue = fv->field_value.blValue; break;
-	case DT_BYTE:  out.bValue = fv->field_value.bValue; break;
-	case DT_CHAR:  out.cValue = fv->field_value.cValue; break;
-	case DT_SHORT: out.sValue = fv->field_value.sValue; break;
-	case DT_INT:   out.iValue = fv->field_value.iValue; break;
-	case DT_LONG:  out.lValue = fv->field_value.lValue; break;
-	case DT_FLOAT: out.fValue = fv->field_value.fValue; break;
-	case DT_DOUBLE: out.dValue = fv->field_value.dValue; break;
+	case DT_BOOL:  out.blValue = boxed_value.blValue; break;
+	case DT_BYTE:  out.bValue = boxed_value.bValue; break;
+	case DT_CHAR:  out.cValue = boxed_value.cValue; break;
+	case DT_SHORT: out.sValue = boxed_value.sValue; break;
+	case DT_INT:   out.iValue = boxed_value.iValue; break;
+	case DT_LONG:  out.lValue = boxed_value.lValue; break;
+	case DT_FLOAT: out.fValue = boxed_value.fValue; break;
+	case DT_DOUBLE: out.dValue = boxed_value.dValue; break;
 	default: return false;
 	}
 	return true;
@@ -1671,7 +1682,7 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Field_get0(JNIEnv *env,
 		{
 			return NULL;
 		}
-		value = fv->field_value;
+		value = fv->LoadValue();
 	}
 	else
 	{
@@ -1686,7 +1697,7 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Field_get0(JNIEnv *env,
 			ThrowNullPointer(env, "null object");
 			return NULL;
 		}
-		value = fv->field_value;
+		value = fv->LoadValue();
 	}
 	TypeDesc type;
 	parse_desc_type(desc.c_str(), type, static_cast<int>(desc.size()));
@@ -1754,7 +1765,7 @@ JNIEXPORT void JNICALL Java_java_lang_reflect_Field_set0(JNIEnv *env,
 	}
 	if (fv)
 	{
-		fv->field_value = value;
+		fv->StoreValue(value);
 	}
 }
 

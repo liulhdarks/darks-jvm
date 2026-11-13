@@ -3,6 +3,7 @@
 #include "exec_common.h"
 #include "jclass.h"
 #include "descriptor.h"
+#include <cstddef>
 #include <string>
 #include <vector>
 using namespace std;
@@ -128,3 +129,14 @@ public:
 private:
 	lpFieldValue GetFieldValueSlow(lpField field);
 };
+
+// Interpreter frames hold LPOBJECT_REF, which points at JObject::index.
+// Objects never move and JObject is standard-layout, so the enclosing
+// object can be recovered without touching the heap index (and without
+// the heap lock).  The caller must keep the reference GC-reachable until
+// the access completes.
+inline JObject *JObjectFromReference(LPOBJECT_REF ref)
+{
+	return ref ? reinterpret_cast<JObject *>(
+		reinterpret_cast<char *>(ref) - offsetof(JObject, index)) : NULL;
+}

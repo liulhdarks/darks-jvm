@@ -23,6 +23,12 @@ public:
 	// static or its layout has not been computed yet.
 	int slot;
 
+	// Index into Class::static_slots for static fields.  Only fields
+	// declared by the class own a slot; inherited statics keep the slot
+	// assigned by their declaring class.  -1 means not a static field or
+	// the class layout has not been built yet.
+	int static_slot;
+
 public:
 	Field();
 
@@ -45,4 +51,10 @@ public:
 	FieldValue(lpField field);
 
 	void initialize();
+
+	// Atomic 64-bit view of the value.  All Java field values fit in the
+	// 8-byte Variant, so a single load/store never tears (long/double) and
+	// the compiler cannot reorder a volatile access past the call.
+	Variant LoadValue() const;
+	void StoreValue(const Variant &value);
 };

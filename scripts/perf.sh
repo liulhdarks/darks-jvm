@@ -8,8 +8,8 @@
 # against BUILD_DIR/bin/darks-jvm.  The median of each metric is written to
 # $OUT_DIR/<label>.tsv (default OUT_DIR=<repo>/perf-results).
 #
-# Environment knobs: N_MEM (300000), N_FIELD (2000000), N_CALL (500000),
-# N_ALLOC (300000), REPS (3).
+# Environment knobs: N_MEM (300000), N_FIELD (2000000), N_STATIC (2000000),
+# N_CALL (500000), N_ALLOC (300000), REPS (3).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,6 +21,7 @@ PC="${BUILD_DIR}/perf-classes"
 OUT_DIR="${OUT_DIR:-${ROOT_DIR}/perf-results}"
 N_MEM="${N_MEM:-300000}"
 N_FIELD="${N_FIELD:-2000000}"
+N_STATIC="${N_STATIC:-2000000}"
 N_CALL="${N_CALL:-500000}"
 N_ALLOC="${N_ALLOC:-300000}"
 REPS="${REPS:-3}"
@@ -52,6 +53,8 @@ for rep in $(seq 1 "${REPS}"); do
     run_once mem_long "${rep}" DARKS_JVM_GC=0 -- PerfMemoryLong "${N_MEM}"
     run_once fields_jit0 "${rep}" DARKS_JVM_GC=0 DARKS_JVM_JIT=0 -- PerfFields "${N_FIELD}"
     run_once fields_jit1 "${rep}" DARKS_JVM_GC=0 DARKS_JVM_JIT=1 -- PerfFields "${N_FIELD}"
+    run_once static_jit0 "${rep}" DARKS_JVM_GC=0 DARKS_JVM_JIT=0 -- PerfStatic "${N_STATIC}"
+    run_once static_jit1 "${rep}" DARKS_JVM_GC=0 DARKS_JVM_JIT=1 -- PerfStatic "${N_STATIC}"
     run_once virtual "${rep}" DARKS_JVM_GC=0 -- PerfVirtual "${N_CALL}"
     run_once alloc "${rep}" DARKS_JVM_GC=0 -- PerfAlloc "${N_ALLOC}"
 done
@@ -91,6 +94,13 @@ for rep in range(1, reps + 1):
         ns = metric(bench, "write_ns", rep)
         bucket.setdefault("write_mops", []).append(ops / ns * 1000.0)
 
+    for bench in ("static_jit0", "static_jit1"):
+        bucket = derived.setdefault(bench, {})
+        for key in ("read", "write", "vol_read", "vol_write"):
+            ops = metric(bench, key + "_ops", rep)
+            ns = metric(bench, key + "_ns", rep)
+            bucket.setdefault(key + "_mops", []).append(ops / ns * 1000.0)
+
     calls = metric("virtual", "calls", rep)
     ns = metric("virtual", "call_ns", rep)
     derived.setdefault("virtual", {}).setdefault("call_mops", []).append(calls / ns * 1000.0)
@@ -108,6 +118,10 @@ order = [
     ("mem_long", "rss_delta_kb"), ("mem_long", "bytes_per_object"),
     ("fields_jit0", "read_mops"), ("fields_jit0", "write_mops"),
     ("fields_jit1", "read_mops"), ("fields_jit1", "write_mops"),
+    ("static_jit0", "read_mops"), ("static_jit0", "write_mops"),
+    ("static_jit0", "vol_read_mops"), ("static_jit0", "vol_write_mops"),
+    ("static_jit1", "read_mops"), ("static_jit1", "write_mops"),
+    ("static_jit1", "vol_read_mops"), ("static_jit1", "vol_write_mops"),
     ("virtual", "call_mops"),
     ("alloc", "alloc_kops_per_s"), ("alloc", "gc_live_ms"), ("alloc", "gc_dead_ms"),
 ]

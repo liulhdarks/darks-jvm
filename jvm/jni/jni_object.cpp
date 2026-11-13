@@ -48,14 +48,6 @@ lpClass DeclaringClass(lpClass clazz, lpField field)
 	return clazz;
 }
 
-std::string StaticFieldKey(lpClass clazz, lpField field)
-{
-	lpClass declaring = DeclaringClass(clazz, field);
-	const char *class_name = (declaring && declaring->thisClass &&
-		declaring->thisClass->GetName()) ? declaring->thisClass->GetName() : "";
-	return std::string(class_name) + "." + field->GetSimpleName();
-}
-
 jvalue DefaultValue(DATA_TYPE type)
 {
 	jvalue value;
@@ -174,15 +166,37 @@ lpFieldValue JniStaticFieldValue(lpClass clazz, lpField field, bool create)
 	{
 		return NULL;
 	}
-	std::string key = StaticFieldKey(clazz, field);
-	lpFieldValue value = MethodArea::GetStaticField(const_cast<char *>(key.c_str()));
-	if (!value && create)
+	// Static storage belongs to the class that declares the field, so a
+	// subclass access and a superclass access share the same slot.
+	lpClass declaring = DeclaringClass(clazz, field);
+	if (!declaring)
 	{
-		value = new FieldValue(field);
-		value->initialize();
-		MethodArea::AddStaticField(const_cast<char *>(key.c_str()), value);
+		declaring = clazz;
 	}
-	return value;
+	if (!declaring)
+	{
+		return NULL;
+	}
+	if (!declaring->static_layout_ready.load(std::memory_order_acquire))
+	{
+		if (!create)
+		{
+			return NULL;
+		}
+		declaring->EnsureStaticLayout();
+	}
+	int slot = field->static_slot;
+	if (slot < 0)
+	{
+		// Defensive fallback for a Field whose layout was built by another
+		// Class object (should not happen).
+		slot = declaring->FindStaticSlot(std::string(field->GetSimpleName()));
+	}
+	if (slot < 0 || slot >= declaring->static_field_total || !declaring->static_slots)
+	{
+		return NULL;
+	}
+	return &declaring->static_slots[slot];
 }
 
 lpFieldValue JniInstanceFieldValue(jobject obj, jfieldID field)
@@ -1000,7 +1014,8 @@ extern "C" JNIEXPORT TYPE JNICALL NAME(JNIEnv *env, jobject obj, jfieldID fid) \
 	(void)env; \
 	lpFieldValue fv = JniInstanceFieldValue(obj, fid); \
 	if (!fv) return 0; \
-	return static_cast<TYPE>(fv->field_value.MEMBER); \
+	Variant v = fv->LoadValue(); \
+	return static_cast<TYPE>(v.MEMBER); \
 }
 
 #define JNI_SET_FIELD(NAME, TYPE, MEMBER) \
@@ -1009,7 +1024,9 @@ extern "C" JNIEXPORT void JNICALL NAME(JNIEnv *env, jobject obj, jfieldID fid, T
 	(void)env; \
 	lpFieldValue fv = JniInstanceFieldValue(obj, fid); \
 	if (!fv) return; \
-	fv->field_value.MEMBER = value; \
+	Variant v; \
+	v.MEMBER = value; \
+	fv->StoreValue(v); \
 }
 
 JNI_GET_FIELD(JNI_GetBooleanField, jboolean, blValue)
@@ -1037,7 +1054,8 @@ extern "C" JNIEXPORT jobject JNICALL JNI_GetObjectField(JNIEnv *env, jobject obj
 	{
 		return NULL;
 	}
-	jobject ref = JniObject(fv->field_value.heapPtr);
+	Variant v = fv->LoadValue();
+	jobject ref = JniObject(v.heapPtr);
 	JniAddLocalRef(env, ref);
 	return ref;
 }
@@ -1051,7 +1069,9 @@ extern "C" JNIEXPORT void JNICALL JNI_SetObjectField(JNIEnv *env, jobject obj,
 	{
 		return;
 	}
-	fv->field_value.heapPtr = JniRef(value);
+	Variant v;
+	v.heapPtr = JniRef(value);
+	fv->StoreValue(v);
 }
 
 #define JNI_GET_STATIC_FIELD(NAME, TYPE, MEMBER) \
@@ -1061,7 +1081,8 @@ extern "C" JNIEXPORT TYPE JNICALL NAME(JNIEnv *env, jclass clazz, jfieldID fid) 
 	lpFieldValue fv = JniStaticFieldValue(JniResolveClass(clazz), \
 		JniResolveField(fid), true); \
 	if (!fv) return 0; \
-	return static_cast<TYPE>(fv->field_value.MEMBER); \
+	Variant v = fv->LoadValue(); \
+	return static_cast<TYPE>(v.MEMBER); \
 }
 
 #define JNI_SET_STATIC_FIELD(NAME, TYPE, MEMBER) \
@@ -1071,7 +1092,9 @@ extern "C" JNIEXPORT void JNICALL NAME(JNIEnv *env, jclass clazz, jfieldID fid, 
 	lpFieldValue fv = JniStaticFieldValue(JniResolveClass(clazz), \
 		JniResolveField(fid), true); \
 	if (!fv) return; \
-	fv->field_value.MEMBER = value; \
+	Variant v; \
+	v.MEMBER = value; \
+	fv->StoreValue(v); \
 }
 
 JNI_GET_STATIC_FIELD(JNI_GetStaticBooleanField, jboolean, blValue)
@@ -1099,7 +1122,8 @@ extern "C" JNIEXPORT jobject JNICALL JNI_GetStaticObjectField(JNIEnv *env, jclas
 	{
 		return NULL;
 	}
-	jobject ref = JniObject(fv->field_value.heapPtr);
+	Variant v = fv->LoadValue();
+	jobject ref = JniObject(v.heapPtr);
 	JniAddLocalRef(env, ref);
 	return ref;
 }
@@ -1113,7 +1137,9 @@ extern "C" JNIEXPORT void JNICALL JNI_SetStaticObjectField(JNIEnv *env, jclass c
 	{
 		return;
 	}
-	fv->field_value.heapPtr = JniRef(value);
+	Variant v;
+	v.heapPtr = JniRef(value);
+	fv->StoreValue(v);
 }
 
 // ---------------------------------------------------------------------------
@@ -1188,7 +1214,7 @@ bool SetFieldValue(lpObject object, const char *name, Variant &value)
 				{
 					return false;
 				}
-				fv->field_value = value;
+				fv->StoreValue(value);
 				return true;
 			}
 		}
@@ -1241,7 +1267,7 @@ jlong JniGetLongFieldByName(jobject obj, const char *name)
 			if (strcmp(f->fieldName->GetName(), name) == 0)
 			{
 				lpFieldValue fv = object->GetFieldValue(f);
-				return fv ? fv->field_value.lValue : 0;
+				return fv ? fv->LoadValue().lValue : 0;
 			}
 		}
 	}

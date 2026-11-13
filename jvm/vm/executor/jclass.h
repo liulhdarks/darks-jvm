@@ -6,6 +6,7 @@
 #include "vm/classfiles/constant.h"
 #include "vm/executor/attributes.h"
 #include "vm/classfiles/classloader.h"
+#include <atomic>
 #include <map>
 using namespace std;
 
@@ -64,6 +65,17 @@ public:
 	std::map<std::string, int> instance_slot_index;
 	std::map<std::string, int> instance_name_index;
 
+	// Static fields declared by this class live in one contiguous array.
+	// The name -> slot maps are filled once by EnsureStaticLayout() and are
+	// read-only afterwards, so lookups take no VM lock.  Only fields whose
+	// declaring class is this class occupy a slot: static storage is not
+	// inherited, a subclass access resolves to the declaring class's Field.
+	lpFieldValue static_slots;
+	int static_field_total;
+	std::atomic<bool> static_layout_ready;
+	std::map<std::string, int> static_slot_index;
+	std::map<std::string, int> static_name_index;
+
 public:
 	Class();
 
@@ -87,6 +99,14 @@ public:
 	// such instance field.  Both require EnsureInstanceLayout() to have run.
 	int FindInstanceSlot(const std::string &key) const;
 	int FindInstanceSlotByName(const char *name) const;
+
+	// Builds the class's static slot array and publishes it (release store).
+	// Idempotent and safe under concurrent first access; only the layout
+	// construction takes VMLock, field reads/writes never do.
+	int EnsureStaticLayout();
+
+	int FindStaticSlot(const std::string &key) const;
+	int FindStaticSlotByName(const char *name) const;
 
 	void StoreField(LPSTR field_name, lpField field)
 	{

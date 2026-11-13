@@ -1,6 +1,12 @@
 #include "stdafx.h"
 #include "jfield.h"
 
+#include <cstdint>
+#include <cstring>
+#if defined(_MSC_VER)
+#include <atomic>
+#endif
+
 Field::Field()
 {
 	fieldName = NULL;
@@ -10,6 +16,7 @@ Field::Field()
 	accFlag = 0;
 	simple_name = NULL;
 	slot = -1;
+	static_slot = -1;
 }
 
 Field::~Field()
@@ -108,4 +115,52 @@ void FieldValue::initialize()
 	default:
 		break;
 	}
+}
+
+namespace {
+
+inline uint64_t AtomicLoad64(const void *src, bool seq_cst)
+{
+#if defined(_MSC_VER)
+	const std::atomic<uint64_t> *p =
+		reinterpret_cast<const std::atomic<uint64_t> *>(src);
+	return p->load(seq_cst ? std::memory_order_seq_cst
+	                      : std::memory_order_relaxed);
+#else
+	return __atomic_load_n(reinterpret_cast<const uint64_t *>(src),
+	                       seq_cst ? __ATOMIC_SEQ_CST : __ATOMIC_RELAXED);
+#endif
+}
+
+inline void AtomicStore64(void *dst, uint64_t value, bool seq_cst)
+{
+#if defined(_MSC_VER)
+	std::atomic<uint64_t> *p = reinterpret_cast<std::atomic<uint64_t> *>(dst);
+	p->store(value, seq_cst ? std::memory_order_seq_cst
+	                        : std::memory_order_relaxed);
+#else
+	__atomic_store_n(reinterpret_cast<uint64_t *>(dst), value,
+	                 seq_cst ? __ATOMIC_SEQ_CST : __ATOMIC_RELAXED);
+#endif
+}
+
+} // namespace
+
+Variant FieldValue::LoadValue() const
+{
+	static_assert(sizeof(Variant) == sizeof(uint64_t),
+	              "field values must fit one atomic 64-bit word");
+	bool seq_cst = field != NULL && (field->accFlag & ACF_VOLATILE) != 0;
+	uint64_t bits = AtomicLoad64(&field_value, seq_cst);
+	Variant out;
+	memcpy(&out, &bits, sizeof(out));
+	return out;
+}
+
+void FieldValue::StoreValue(const Variant &value)
+{
+	bool seq_cst = field != NULL && (field->accFlag & ACF_VOLATILE) != 0;
+	uint64_t bits = 0;
+	memcpy(&bits, &value, sizeof(bits));
+	AtomicStore64(&field_value, bits, seq_cst);
 }

@@ -80,7 +80,9 @@ LPOBJECT_REF CreateJavaException(const char *class_name, const char *message)
 						obj->GetFieldValueByName(std::string("detailMessage:Ljava/lang/String;"));
 					if (message_value)
 					{
-						message_value->field_value.heapPtr = msg_ref;
+						Variant value;
+						value.heapPtr = msg_ref;
+						message_value->StoreValue(value);
 					}
 				}
 			}
@@ -158,13 +160,18 @@ bool JavaStringToUtf8(LPOBJECT_REF ref, std::string &out)
 		return false;
 	}
 	lpFieldValue fv = str->GetFieldValueByName(std::string("value:[C"));
-	if (!fv || !fv->field_value.heapPtr)
+	Variant value;
+	if (fv)
+	{
+		value = fv->LoadValue();
+	}
+	if (!value.heapPtr)
 	{
 		out.clear();
 		return true; // empty string
 	}
 	lpObject chars = NULL;
-	if (!VMContext::object_heap->GetObject(fv->field_value.heapPtr, chars) || !chars ||
+	if (!VMContext::object_heap->GetObject(value.heapPtr, chars) || !chars ||
 	    !chars->array_var)
 	{
 		return false;
@@ -199,9 +206,14 @@ void PrintUncaughtException(LPOBJECT_REF exception)
 	{
 		lpFieldValue message_value =
 			obj->GetFieldValueByName(std::string("detailMessage:Ljava/lang/String;"));
-		if (message_value && message_value->field_value.heapPtr)
+		Variant message_bits;
+		if (message_value)
 		{
-			has_message = JavaStringToUtf8(message_value->field_value.heapPtr, message);
+			message_bits = message_value->LoadValue();
+		}
+		if (message_bits.heapPtr)
+		{
+			has_message = JavaStringToUtf8(message_bits.heapPtr, message);
 		}
 	}
 

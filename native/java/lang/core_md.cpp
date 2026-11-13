@@ -326,9 +326,14 @@ JNIEXPORT jobject JNICALL Java_java_lang_Enum_valueOf(JNIEnv *env, jclass enum_c
 	if (field)
 	{
 		lpFieldValue value = JniStaticFieldValue(clazz, field, false);
-		if (value && value->field_value.heapPtr)
+		Variant mirror;
+		if (value)
 		{
-			result = JniObject(value->field_value.heapPtr);
+			mirror = value->LoadValue();
+		}
+		if (mirror.heapPtr)
+		{
+			result = JniObject(mirror.heapPtr);
 			JniAddLocalRef(env, result);
 		}
 	}

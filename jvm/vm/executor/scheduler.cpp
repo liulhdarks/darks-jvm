@@ -111,7 +111,7 @@ bool GetBoolField(LPOBJECT_REF ref, const char *name, bool &out)
 	{
 		return false;
 	}
-	out = fv->field_value.iValue != 0;
+	out = fv->LoadValue().iValue != 0;
 	return true;
 }
 
@@ -128,7 +128,7 @@ bool SetInstanceField(LPOBJECT_REF ref, const char *name, const Variant &value)
 	{
 		return false;
 	}
-	fv->field_value = value;
+	fv->StoreValue(value);
 	return true;
 }
 

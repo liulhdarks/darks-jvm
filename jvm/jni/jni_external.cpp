@@ -30,7 +30,7 @@ jobject GetJniObject(LPOBJECT_REF obj_ref)
 
 jobject GetJniObject(lpFieldValue fv)
 {
-	return GetJniObject(fv->field_value.heapPtr);
+	return GetJniObject(fv->LoadValue().heapPtr);
 }
 
 

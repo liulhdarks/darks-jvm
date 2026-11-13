@@ -262,6 +262,7 @@ void ObjectHeap::MarkThreadStackRoots()
 
 void ObjectHeap::MarkStaticRoots()
 {
+	// Legacy name-keyed storage, still used by the GC tests.
 	std::map<string, lpFieldValue>::iterator it = MethodArea::static_field_map.begin();
 	for (; it != MethodArea::static_field_map.end(); ++it)
 	{
@@ -269,6 +270,28 @@ void ObjectHeap::MarkStaticRoots()
 		if (fv)
 		{
 			MarkObjectRef(fv->field_value.heapPtr);
+		}
+	}
+	// Class metadata static slots.  Collection is stop-the-world, so the
+	// layout cannot be published or modified while this scan runs.
+	if (!VMContext::bootstrap_classloader)
+	{
+		return;
+	}
+	const std::map<string, lpClass> &classes =
+		VMContext::bootstrap_classloader->GetClasses();
+	for (std::map<string, lpClass>::const_iterator ci = classes.begin();
+	     ci != classes.end(); ++ci)
+	{
+		lpClass clazz = ci->second;
+		if (!clazz ||
+		    !clazz->static_layout_ready.load(std::memory_order_acquire))
+		{
+			continue;
+		}
+		for (int slot = 0; slot < clazz->static_field_total; slot++)
+		{
+			MarkObjectRef(clazz->static_slots[slot].field_value.heapPtr);
 		}
 	}
 }

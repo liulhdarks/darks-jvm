@@ -31,12 +31,17 @@ lpObject StringCharsObject(LPOBJECT_REF string_ref)
 		return NULL;
 	}
 	lpFieldValue fv = string_obj->GetFieldValue(it->second);
-	if (!fv || !fv->field_value.heapPtr)
+	if (!fv)
+	{
+		return NULL;
+	}
+	Variant value = fv->LoadValue();
+	if (!value.heapPtr)
 	{
 		return NULL;
 	}
 	lpObject chars = NULL;
-	if (!VMContext::object_heap->GetObject(fv->field_value.heapPtr, chars))
+	if (!VMContext::object_heap->GetObject(value.heapPtr, chars))
 	{
 		return NULL;
 	}

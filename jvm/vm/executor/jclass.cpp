@@ -2,6 +2,7 @@
 #include "jclass.h"
 #include "executor.h"
 #include "methodarea.h"
+#include "vmmutex.h"
 #include "utils/DebugUtils.h"
 
 Class::Class()
@@ -30,6 +31,9 @@ Class::Class()
 	instance_field_base = 0;
 	instance_field_total = 0;
 	instance_layout_ready = false;
+	static_slots = NULL;
+	static_field_total = 0;
+	static_layout_ready.store(false, std::memory_order_relaxed);
 }
 
 Class::Class(ClassType class_type)
@@ -58,6 +62,9 @@ Class::Class(ClassType class_type)
 	instance_field_base = 0;
 	instance_field_total = 0;
 	instance_layout_ready = false;
+	static_slots = NULL;
+	static_field_total = 0;
+	static_layout_ready.store(false, std::memory_order_relaxed);
 }
 
 Class::~Class()
@@ -65,6 +72,11 @@ Class::~Class()
 	if (thisClass && thisClass->GetName())
 	{
 		DebugUtils::trace("~Class %s\n", thisClass->GetName());
+	}
+	if (static_slots)
+	{
+		delete[] static_slots;
+		static_slots = NULL;
 	}
 	if (fields)
 	{
@@ -215,6 +227,73 @@ int Class::FindInstanceSlotByName(const char *name) const
 	}
 	std::map<std::string, int>::const_iterator it = instance_name_index.find(std::string(name));
 	return it == instance_name_index.end() ? -1 : it->second;
+}
+
+int Class::EnsureStaticLayout()
+{
+	if (static_layout_ready.load(std::memory_order_acquire))
+	{
+		return static_field_total;
+	}
+	VMLock lk;
+	if (static_layout_ready.load(std::memory_order_acquire))
+	{
+		return static_field_total;
+	}
+	int total = 0;
+	for (U2 i = 0; i < fieldCount; i++)
+	{
+		lpField field = fields ? fields[i] : NULL;
+		if (field && (field->accFlag & ACF_STATIC) != 0)
+		{
+			total++;
+		}
+	}
+	static_slot_index.clear();
+	static_name_index.clear();
+	FieldValue *slots = total > 0 ? new FieldValue[total] : NULL;
+	int slot = 0;
+	for (U2 i = 0; i < fieldCount; i++)
+	{
+		lpField field = fields ? fields[i] : NULL;
+		if (!field || (field->accFlag & ACF_STATIC) == 0)
+		{
+			continue;
+		}
+		field->static_slot = slot;
+		slots[slot].field = field;
+		// Applies the ConstantValue attribute, matching the old lazy
+		// FieldValue creation on the first access.
+		slots[slot].initialize();
+		static_slot_index[std::string(field->GetSimpleName())] = slot;
+		if (field->fieldName && field->fieldName->GetName())
+		{
+			static_name_index[std::string(field->fieldName->GetName())] = slot;
+		}
+		slot++;
+	}
+	static_slots = slots;
+	static_field_total = total;
+	// Publish the array only after every FieldValue and Field::static_slot
+	// has been written; readers use an acquire load before indexing.
+	static_layout_ready.store(true, std::memory_order_release);
+	return static_field_total;
+}
+
+int Class::FindStaticSlot(const std::string &key) const
+{
+	std::map<std::string, int>::const_iterator it = static_slot_index.find(key);
+	return it == static_slot_index.end() ? -1 : it->second;
+}
+
+int Class::FindStaticSlotByName(const char *name) const
+{
+	if (!name)
+	{
+		return -1;
+	}
+	std::map<std::string, int>::const_iterator it = static_name_index.find(std::string(name));
+	return it == static_name_index.end() ? -1 : it->second;
 }
 
 bool Class::FindMethod(LPSTR method_name, lpMethod& method)

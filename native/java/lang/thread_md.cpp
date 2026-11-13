@@ -37,7 +37,7 @@ void SetRawField(LPOBJECT_REF ref, const char *name, const Variant &value)
 	lpFieldValue fv = obj->GetFieldValueByNamePrefix(std::string(name));
 	if (fv)
 	{
-		fv->field_value = value;
+		fv->StoreValue(value);
 	}
 }
 

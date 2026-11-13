@@ -94,7 +94,7 @@ lpClass FindSyntheticLambdaClass(const std::string &iface_name,
 void StoreSlotField(lpObject obj, const std::string &name, const Slot &slot)
 {
 	lpFieldValue fv = new FieldValue();
-	fv->field_value = slot;
+	fv->StoreValue(slot);
 	obj->AdoptFieldValue(name, fv);
 }
 
@@ -105,7 +105,7 @@ bool LoadSlotField(lpObject obj, const std::string &name, Slot &slot)
 	{
 		return false;
 	}
-	slot = fv->field_value;
+	slot = fv->LoadValue();
 	return true;
 }
 
@@ -2846,12 +2846,17 @@ bool StackFrame::AppendStringRefUnits(LPOBJECT_REF ref, std::vector<uint16_t> &o
 	}
 	const std::string key("value:[C");
 	lpFieldValue value = str->GetFieldValueByName(key);
-	if (!value || !value->field_value.heapPtr)
+	Variant string_value;
+	if (value)
+	{
+		string_value = value->LoadValue();
+	}
+	if (!string_value.heapPtr)
 	{
 		return true; // empty string
 	}
 	lpObject chars = NULL;
-	if (!VMContext::object_heap->GetObject(value->field_value.heapPtr, chars) ||
+	if (!VMContext::object_heap->GetObject(string_value.heapPtr, chars) ||
 	    !chars || !chars->array_var)
 	{
 		return false;
@@ -3449,7 +3454,7 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 					op_stack->pop(dropped);
 				}
 				op_stack->pop(ann_recv);
-				Variant ann_value = ann_value_field->field_value;
+				Variant ann_value = ann_value_field->LoadValue();
 				switch (result_desc.data_type)
 				{
 				case DT_VOID:
@@ -3598,7 +3603,7 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		lpFieldValue lambda_field = obj->GetFieldValueByName("$lambda:id");
 		if (lambda_field)
 		{
-			lambda_id = lambda_field->field_value.iValue;
+			lambda_id = lambda_field->LoadValue().iValue;
 		}
 		if (lambda_id > 0)
 		{
@@ -3866,13 +3871,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 			break;
 		}
 		op_stack->pop(dropped); // receiver
-		lpObject obj = NULL;
-		if (!VMContext::object_heap->GetObject(obj_ref, obj) || !obj)
-		{
-			VMContext::pending_exception = CreateJavaException(
-				"java/lang/NullPointerException", "invalid object reference");
-			return false;
-		}
+		lpObject obj = JObjectFromReference(obj_ref);
 		lpFieldValue fv = obj->GetFieldValue(field);
 		if (!fv)
 		{
@@ -3880,7 +3879,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 				"java/lang/NoSuchFieldError", "field storage is missing");
 			return false;
 		}
-		fv->field_value = value;
+		fv->StoreValue(value);
 		return true;
 	}
 
@@ -3922,13 +3921,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 	}
 	if (kind == IK_GETTER)
 	{
-		lpObject obj = NULL;
-		if (!VMContext::object_heap->GetObject(obj_ref, obj) || !obj)
-		{
-			VMContext::pending_exception = CreateJavaException(
-				"java/lang/NullPointerException", "invalid object reference");
-			return false;
-		}
+		lpObject obj = JObjectFromReference(obj_ref);
 		lpFieldValue fv = obj->GetFieldValue(field);
 		if (!fv)
 		{
@@ -3936,16 +3929,17 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 				"java/lang/NoSuchFieldError", "field storage is missing");
 			return false;
 		}
+		Variant field_value = fv->LoadValue();
 		switch (field_type.data_type)
 		{
 		case DT_LONG:
-			op_stack->push(fv->field_value.lValue);
+			op_stack->push(field_value.lValue);
 			break;
 		case DT_DOUBLE:
-			op_stack->push(fv->field_value.dValue);
+			op_stack->push(field_value.dValue);
 			break;
 		default:
-			op_stack->push(fv->field_value);
+			op_stack->push(field_value);
 			break;
 		}
 		return true;
@@ -4377,7 +4371,7 @@ bool UnboxWrapper(LPOBJECT_REF ref, DATA_TYPE target, Slot &value, bool &wide)
 	{
 		return false;
 	}
-	Slot stored = field_value->field_value;
+	Slot stored = field_value->LoadValue();
 	if (target == DT_LONG || target == DT_DOUBLE)
 	{
 		WByteValue bv;
@@ -5266,7 +5260,6 @@ bool StackFrame::ArrayLength()
 
 bool StackFrame::PutStatic(U2 index)
 {
-	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
@@ -5274,11 +5267,17 @@ bool StackFrame::PutStatic(U2 index)
 			"java/lang/NoSuchFieldError", "invalid field constant index");
 		return false;
 	}
-	lpField field = NULL;
-	lpFieldValue fv = NULL;
-	if (!ResolveStaticField(class_loader, frc, field, fv))
+	// Cached resolutions are published with release/acquire; a hit costs one
+	// atomic load and needs no VM lock.  The miss path may load classes and
+	// allocate (which can collect), so it happens before the value is popped.
+	lpField field = frc->resolved_field.load(std::memory_order_acquire);
+	lpFieldValue fv = frc->resolved_static_value.load(std::memory_order_acquire);
+	if (!field || !fv)
 	{
-		return false;
+		if (!ResolveStaticField(class_loader, frc, field, fv))
+		{
+			return false;
+		}
 	}
 	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
 		? frc->nameType->descUtf8->GetName() : NULL;
@@ -5287,30 +5286,29 @@ bool StackFrame::PutStatic(U2 index)
 	{
 		return false;
 	}
-	// An array descriptor such as [J keeps its element type in data_type; the
-	// field itself is always a single reference slot.
 	if (type_desc.check_array)
 	{
 		type_desc.data_type = DT_ARRAY;
 	}
+	Variant value;
 	switch (type_desc.data_type)
 	{
 	case DT_LONG:
-		fv->field_value.lValue = popLong();
+		value.lValue = popLong();
 		break;
 	case DT_DOUBLE:
-		fv->field_value.dValue = popDouble();
+		value.dValue = popDouble();
 		break;
 	default:
-		op_stack->pop(fv->field_value);
+		op_stack->pop(value);
 		break;
 	}
+	fv->StoreValue(value);
 	return true;
 }
 
 bool StackFrame::GetStatic(U2 index)
 {
-	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
@@ -5318,11 +5316,14 @@ bool StackFrame::GetStatic(U2 index)
 			"java/lang/NoSuchFieldError", "invalid field constant index");
 		return false;
 	}
-	lpField field = NULL;
-	lpFieldValue fv = NULL;
-	if (!ResolveStaticField(class_loader, frc, field, fv))
+	lpField field = frc->resolved_field.load(std::memory_order_acquire);
+	lpFieldValue fv = frc->resolved_static_value.load(std::memory_order_acquire);
+	if (!field || !fv)
 	{
-		return false;
+		if (!ResolveStaticField(class_loader, frc, field, fv))
+		{
+			return false;
+		}
 	}
 	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
 		? frc->nameType->descUtf8->GetName() : NULL;
@@ -5335,16 +5336,17 @@ bool StackFrame::GetStatic(U2 index)
 	{
 		type_desc.data_type = DT_ARRAY;
 	}
+	Variant value = fv->LoadValue();
 	switch (type_desc.data_type)
 	{
 	case DT_LONG:
-		op_stack->push(fv->field_value.lValue);
+		op_stack->push(value.lValue);
 		break;
 	case DT_DOUBLE:
-		op_stack->push(fv->field_value.dValue);
+		op_stack->push(value.dValue);
 		break;
 	default:
-		op_stack->push(fv->field_value);
+		op_stack->push(value);
 		break;
 	}
 	return true;
@@ -5352,7 +5354,6 @@ bool StackFrame::GetStatic(U2 index)
 
 bool StackFrame::GetField(U2 index)
 {
-	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
@@ -5362,11 +5363,15 @@ bool StackFrame::GetField(U2 index)
 	}
 	// Resolve before popping the receiver: resolution can load classes and
 	// therefore collect, and the receiver must stay rooted on the operand
-	// stack until the field is known.
-	lpField field = NULL;
-	if (!ResolveInstanceField(class_loader, frc, field))
+	// stack until the field is known.  A cached resolution is a plain atomic
+	// load with no VM lock.
+	lpField field = frc->resolved_field.load(std::memory_order_acquire);
+	if (!field)
 	{
-		return false;
+		if (!ResolveInstanceField(class_loader, frc, field))
+		{
+			return false;
+		}
 	}
 	Slot slot_obj;
 	op_stack->pop(slot_obj);
@@ -5377,13 +5382,11 @@ bool StackFrame::GetField(U2 index)
 			"java/lang/NullPointerException", "null object reference");
 		return false;
 	}
-	lpObject obj = NULL;
-	if (!VMContext::object_heap->GetObject(obj_ref, obj) || !obj)
-	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/NullPointerException", "invalid object reference");
-		return false;
-	}
+	// The object cannot be collected between the pop and the access: the
+	// collector only proceeds once every worker acknowledges a safepoint,
+	// and this path executes no safepoint check.  Objects never move, so the
+	// stable &obj->index lets us skip the locked heap index lookup.
+	lpObject obj = JObjectFromReference(obj_ref);
 	lpFieldValue fv = obj->GetFieldValue(field);
 	if (!fv)
 	{
@@ -5402,6 +5405,7 @@ bool StackFrame::GetField(U2 index)
 	{
 		type_desc.data_type = DT_ARRAY;
 	}
+	Variant value = fv->LoadValue();
 	switch (type_desc.data_type)
 	{
 	case DT_BOOL:
@@ -5412,13 +5416,13 @@ bool StackFrame::GetField(U2 index)
 	case DT_INT:
 	case DT_ARRAY:
 	case DT_REF:
-		op_stack->push(fv->field_value);
+		op_stack->push(value);
 		break;
 	case DT_LONG:
-		op_stack->push(fv->field_value.lValue);
+		op_stack->push(value.lValue);
 		break;
 	case DT_DOUBLE:
-		op_stack->push(fv->field_value.dValue);
+		op_stack->push(value.dValue);
 		break;
 	default:
 		break;
@@ -5428,7 +5432,6 @@ bool StackFrame::GetField(U2 index)
 
 bool StackFrame::PutField(U2 index)
 {
-	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
@@ -5436,10 +5439,13 @@ bool StackFrame::PutField(U2 index)
 			"java/lang/NoSuchFieldError", "invalid field constant index");
 		return false;
 	}
-	lpField field = NULL;
-	if (!ResolveInstanceField(class_loader, frc, field))
+	lpField field = frc->resolved_field.load(std::memory_order_acquire);
+	if (!field)
 	{
-		return false;
+		if (!ResolveInstanceField(class_loader, frc, field))
+		{
+			return false;
+		}
 	}
 	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
 		? frc->nameType->descUtf8->GetName() : NULL;
@@ -5453,7 +5459,7 @@ bool StackFrame::PutField(U2 index)
 		type_desc.data_type = DT_ARRAY;
 	}
 
-	Slot slot_val;
+	Variant value;
 	switch (type_desc.data_type)
 	{
 	case DT_BOOL:
@@ -5464,13 +5470,13 @@ bool StackFrame::PutField(U2 index)
 	case DT_INT:
 	case DT_ARRAY:
 	case DT_REF:
-		op_stack->pop(slot_val);
+		op_stack->pop(value);
 		break;
 	case DT_LONG:
-		slot_val.lValue = popLong();
+		value.lValue = popLong();
 		break;
 	case DT_DOUBLE:
-		slot_val.dValue = popDouble();
+		value.dValue = popDouble();
 		break;
 	default:
 		break;
@@ -5485,13 +5491,7 @@ bool StackFrame::PutField(U2 index)
 			"java/lang/NullPointerException", "null object reference");
 		return false;
 	}
-	lpObject obj = NULL;
-	if (!VMContext::object_heap->GetObject(obj_ref, obj) || !obj)
-	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/NullPointerException", "invalid object reference");
-		return false;
-	}
+	lpObject obj = JObjectFromReference(obj_ref);
 	lpFieldValue fv = obj->GetFieldValue(field);
 	if (!fv)
 	{
@@ -5499,7 +5499,7 @@ bool StackFrame::PutField(U2 index)
 			"java/lang/NoSuchFieldError", "field storage is missing");
 		return false;
 	}
-	fv->field_value = slot_val;
+	fv->StoreValue(value);
 	return true;
 }
 
