@@ -1026,6 +1026,11 @@ bool Scheduler::WaitCurrent(ThreadStack *ts, LPOBJECT_REF obj, int64_t millis)
 		next->resume_from_wait = false;
 		next->block_obj = NULL;
 		next->block_class = NULL;
+		// Publish the wakeup before making the coroutine runnable.  The main
+		// coroutine is resumed by PumpMain only when its state is CO_READY, so
+		// omitting this left main parked in CO_MONITOR forever when it
+		// happened to be the next entry-queue owner at a wait() handoff.
+		next->state = CO_READY;
 		if (next->pin_main)
 		{
 			impl->cv.notify_all();
@@ -1584,9 +1589,16 @@ void Scheduler::FinishCoroutine(lpCoroutine co, bool)
 		PrintUncaughtException(VMContext::pending_exception);
 		VMContext::pending_exception = NULL;
 	}
-	// Publish termination before waking joiners: a concurrent JoinCurrent
-	// either finds the coroutine while it is still registered (and is then
-	// woken by WakeJoiners below) or fails the lookup and returns at once.
+	// Clear isAlive() before publishing termination to joiners.  JoinCurrent
+	// treats "not in by_thread" as already finished and returns immediately;
+	// clearing the flag afterwards left a window where join() returned while
+	// isAlive() still observed true, so callers thought a finished worker was
+	// hung.  SetBoolField takes the VM lock, so it is called before acquiring
+	// the scheduler lock (and released again) instead of nesting the two.
+	if (co->thread_ref)
+	{
+		SetBoolField(co->thread_ref, "alive", false);
+	}
 	{
 		std::lock_guard<std::recursive_mutex> lk(impl->m);
 		co->state = CO_TERMINATED;
@@ -1598,10 +1610,6 @@ void Scheduler::FinishCoroutine(lpCoroutine co, bool)
 		}
 	}
 	WakeJoiners(co);
-	if (co->thread_ref)
-	{
-		SetBoolField(co->thread_ref, "alive", false);
-	}
 	if (co->ts)
 	{
 		delete co->ts;

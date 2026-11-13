@@ -40,6 +40,8 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/InterruptSleep.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/JoinTimeoutTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/GcThreads.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/MainMonitorHandoff.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/TimedWait.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/ReflectionAdvanced.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/JitWorkload.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/CollectionsAdvanced.java"
@@ -440,6 +442,57 @@ if(JAVAC)
     add_thread_test(SleepConcurrency "sleep-concurrency ok")
     add_thread_test(InterruptSleep "interrupt ok")
     add_thread_test(JoinTimeoutTest "join-timeout ok")
+    add_thread_test(MainMonitorHandoff "main-monitor-handoff ok")
+    add_thread_test(TimedWait "timed-wait ok")
+
+    # ------------------------------------------------------------------
+    # Producer/consumer example (examples/producer-consumer) and the
+    # synchronized-counter / racy-counter correctness checks.  Sources are
+    # compiled with --release 8 (no invokedynamic) and share the test class
+    # directory so a plain -cp works on every platform.
+    # ------------------------------------------------------------------
+    set(PC_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../examples/producer-consumer")
+    # Compile into the shared classes directory so the tests can use the same
+    # single-entry class path on every platform.
+    set(PC_STAMP "${CMAKE_BINARY_DIR}/producer-consumer.stamp")
+    add_custom_command(
+        OUTPUT "${PC_STAMP}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CLASSES_DIR}"
+        COMMAND "${JAVAC}" --release 8 -d "${CLASSES_DIR}"
+                "${PC_SRC_DIR}/ProducerConsumerDemo.java"
+                "${PC_SRC_DIR}/CounterCorrectness.java"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${PC_STAMP}"
+        DEPENDS
+            "${PC_SRC_DIR}/ProducerConsumerDemo.java"
+            "${PC_SRC_DIR}/CounterCorrectness.java"
+        COMMENT "Compiling the producer/consumer example")
+    add_custom_target(producer_consumer_classes ALL DEPENDS "${PC_STAMP}")
+    add_dependencies(producer_consumer_classes java_classes)
+
+    foreach(mp 1 4)
+        add_test(NAME producer_consumer_e2e_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};ProducerConsumerDemo"
+                -DEXPECT_RC=0 -DTIMEOUT=120
+                "-DEXPECT_TEXT=producer-consumer ok"
+                "-DEXPECT_TEXT2=produced=600 consumed=600 unique=600 duplicates=0 missing=0 outOfRange=0 left=0"
+                "-DEXPECT_TEXT3=queueEmpty=true" -P "${CHECK}")
+        add_test(NAME concurrency_correctness_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};CounterCorrectness"
+                -DEXPECT_RC=0 -DTIMEOUT=120
+                "-DEXPECT_TEXT=counter-check ok locked=100000 expected=100000"
+                -P "${CHECK}")
+    endforeach()
+
+    # Stability: run the same demo 20 times, alternating MP=1 and MP=4.
+    add_test(NAME producer_consumer_repeat
+        COMMAND "${CMAKE_COMMAND}"
+            "-DJVM=${JVM}" "-DCLASSES=${CLASSES_DIR}" "-DREPEAT=20"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/producer_consumer_repeat.cmake")
+    set_tests_properties(producer_consumer_repeat PROPERTIES TIMEOUT 300)
 
     # Continuous allocation with a low GC threshold: the collector must stop
     # every interpreter worker at a safepoint without deadlocking.

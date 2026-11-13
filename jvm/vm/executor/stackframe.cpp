@@ -3059,8 +3059,20 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		if (strcmp(decl, "java/lang/Object") == 0 && !method->isStatic() &&
 		    strcmp(mn, "wait") == 0)
 		{
+			// wait(), wait(long) and wait(long,int) differ in the number of
+			// argument slots.  The old code popped a single long for every
+			// non-empty descriptor, so wait(long,int) popped the receiver as
+			// the long and then read a stale slot as the receiver, raising
+			// IllegalMonitorStateException.  nanos is accepted and ignored
+			// (millisecond granularity).
 			int64_t millis = 0;
-			if (!type_desc.empty())
+			if (type_desc.size() == 2)
+			{
+				Slot nanos;
+				op_stack->pop(nanos);
+				millis = popLong();
+			}
+			else if (type_desc.size() == 1)
 			{
 				millis = popLong();
 			}
