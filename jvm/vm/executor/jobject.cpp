@@ -44,18 +44,25 @@ void JObject::DeleteArray()
 	array_var = NULL;
 }
 
+void JObject::ReleaseFields()
+{
+	delete[] slots;
+	slots = NULL;
+	slot_count = 0;
+	if (extras)
+	{
+		for (size_t i = 0; i < extras->size(); i++)
+		{
+			delete (*extras)[i].value;
+		}
+		delete extras;
+		extras = NULL;
+	}
+}
+
 JObject::~JObject()
 {
-	// Values are owned exactly once, through owned_values.  Both the name map
-	// and the slot vector may alias the same FieldValue, so deleting through
-	// either of them would double free.
-	for (size_t i = 0; i < owned_values.size(); i++)
-	{
-		delete owned_values[i];
-	}
-	owned_values.clear();
-	varants.clear();
-	instance_slots.clear();
+	ReleaseFields();
 	obj_class = NULL;
 	DeleteArray();
 }
@@ -63,16 +70,19 @@ JObject::~JObject()
 bool JObject::newInstance(lpClass obj_class)
 {
 	this->obj_class = obj_class;
+	ReleaseFields();
 	if (!obj_class)
 	{
 		return false;
 	}
-	// Instance fields are inherited: an object layout contains the fields of
-	// the whole superclass chain (matching the JVM). Without this, subclass
-	// constructors cannot initialise Throwable.detailMessage or any other
-	// inherited field.
+	// One contiguous allocation for every slot in the superclass chain.  A
+	// hidden superclass field keeps its own slot, like the JVM layout.
 	int total = obj_class->EnsureInstanceLayout();
-	instance_slots.assign(total > 0 ? total : 0, (lpFieldValue)NULL);
+	if (total > 0)
+	{
+		slots = new FieldValue[static_cast<size_t>(total)];
+		slot_count = total;
+	}
 	for (lpClass c = obj_class; c; c = c->super_class)
 	{
 		for (int i = 0; i < c->fieldCount; i++)
@@ -86,20 +96,15 @@ bool JObject::newInstance(lpClass obj_class)
 			{
 				continue;
 			}
-			lpFieldValue fv = new FieldValue(field);
-			fv->initialize();
-			owned_values.push_back(fv);
-			if (field->slot >= 0 && static_cast<size_t>(field->slot) < instance_slots.size())
+			if (field->slot < 0 || field->slot >= slot_count)
 			{
-				instance_slots[field->slot] = fv;
+				continue;
 			}
-			// Keep the historical name-keyed entry for code that looks fields
-			// up by "<name>:<descriptor>" (the JNI/reflection paths use Field
-			// identity directly).
-			varants[string(field->GetSimpleName())] = fv;
+			FieldValue *fv = &slots[field->slot];
+			fv->field = field;
+			fv->initialize();
 		}
 	}
-
 	return true;
 }
 
@@ -109,8 +114,77 @@ void JObject::AdoptFieldValue(const string &key, lpFieldValue value)
 	{
 		return;
 	}
-	owned_values.push_back(value);
-	varants[key] = value;
+	if (!extras)
+	{
+		extras = new std::vector<ExtraField>();
+	}
+	extras->push_back(ExtraField(key, value));
+}
+
+lpFieldValue JObject::GetFieldValueSlow(lpField field)
+{
+	if (!field)
+	{
+		return NULL;
+	}
+	// Layouts are normally computed when the object is created.  A field
+	// resolved through reflection on a class whose layout was not ready yet
+	// gets one more chance here; the object's slot array is still the
+	// authority for bounds.
+	if (obj_class)
+	{
+		obj_class->EnsureInstanceLayout();
+		int slot = field->slot;
+		if (slot >= 0 && slot < slot_count)
+		{
+			return &slots[slot];
+		}
+	}
+	// Fall back to the name index (covers objects whose class metadata did
+	// not assign this particular field a slot).
+	return GetFieldValueByName(std::string(field->GetSimpleName()));
+}
+
+lpFieldValue JObject::GetFieldValueByName(const string &key)
+{
+	if (extras)
+	{
+		// Later adoptions win, mirroring map assignment semantics.
+		for (size_t i = extras->size(); i > 0; i--)
+		{
+			if ((*extras)[i - 1].key == key)
+			{
+				return (*extras)[i - 1].value;
+			}
+		}
+	}
+	if (obj_class)
+	{
+		int slot = obj_class->FindInstanceSlot(key);
+		if (slot >= 0 && slot < slot_count)
+		{
+			return &slots[slot];
+		}
+	}
+	return NULL;
+}
+
+lpFieldValue JObject::GetFieldValueByNamePrefix(const string &key)
+{
+	lpFieldValue exact = GetFieldValueByName(key);
+	if (exact)
+	{
+		return exact;
+	}
+	if (obj_class)
+	{
+		int slot = obj_class->FindInstanceSlotByName(key.c_str());
+		if (slot >= 0 && slot < slot_count)
+		{
+			return &slots[slot];
+		}
+	}
+	return NULL;
 }
 
 bool JObject::newArrayInstance(int size)
@@ -231,26 +305,4 @@ void JObject::SetArrayIndex(int index, Slot &slot)
 	default:
 		break;
 	}
-}
-
-lpFieldValue JObject::GetFieldValue(lpField field)
-{
-	if (!field)
-	{
-		return NULL;
-	}
-	if (field->slot >= 0 && static_cast<size_t>(field->slot) < instance_slots.size())
-	{
-		return instance_slots[field->slot];
-	}
-	if (!field->simple_name)
-	{
-		field->GetSimpleName();
-	}
-	FIELD_MAP::iterator it = varants.find(string(field->simple_name));
-	if (it == varants.end())
-	{
-		return NULL;
-	}
-	return it->second;
 }

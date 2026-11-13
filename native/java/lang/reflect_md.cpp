@@ -638,7 +638,7 @@ jobject ReadAnnotation(JNIEnv *env, ConstantPool *pool, ByteReader &r)
 			continue;
 		}
 		std::string element_name = annotation_method->methodName->GetName();
-		if (object->varants.find("ann:" + element_name) != object->varants.end())
+		if (object->HasFieldValue("ann:" + element_name))
 		{
 			continue;
 		}

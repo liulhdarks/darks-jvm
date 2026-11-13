@@ -172,6 +172,15 @@ int Class::EnsureInstanceLayout()
 	}
 	int base = super_class ? super_class->EnsureInstanceLayout() : 0;
 	instance_field_base = base;
+	instance_slot_index.clear();
+	instance_name_index.clear();
+	if (super_class)
+	{
+		// Inherited names keep their slot numbers; the maps are copied so a
+		// lookup on a subclass does not have to walk the chain.
+		instance_slot_index = super_class->instance_slot_index;
+		instance_name_index = super_class->instance_name_index;
+	}
 	int slot = base;
 	for (U2 i = 0; i < fieldCount; i++)
 	{
@@ -181,10 +190,31 @@ int Class::EnsureInstanceLayout()
 			continue;
 		}
 		field->slot = slot++;
+		instance_slot_index[std::string(field->GetSimpleName())] = field->slot;
+		if (field->fieldName && field->fieldName->GetName())
+		{
+			instance_name_index[std::string(field->fieldName->GetName())] = field->slot;
+		}
 	}
 	instance_field_total = slot;
 	instance_layout_ready = true;
 	return instance_field_total;
+}
+
+int Class::FindInstanceSlot(const std::string &key) const
+{
+	std::map<std::string, int>::const_iterator it = instance_slot_index.find(key);
+	return it == instance_slot_index.end() ? -1 : it->second;
+}
+
+int Class::FindInstanceSlotByName(const char *name) const
+{
+	if (!name)
+	{
+		return -1;
+	}
+	std::map<std::string, int>::const_iterator it = instance_name_index.find(std::string(name));
+	return it == instance_name_index.end() ? -1 : it->second;
 }
 
 bool Class::FindMethod(LPSTR method_name, lpMethod& method)

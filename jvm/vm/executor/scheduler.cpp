@@ -95,22 +95,7 @@ lpFieldValue FindInstanceField(lpObject obj, const char *name)
 	{
 		return NULL;
 	}
-	std::string key(name);
-	FIELD_MAP::iterator it = obj->varants.find(key);
-	if (it != obj->varants.end())
-	{
-		return it->second;
-	}
-	key += ':';
-	size_t key_len = key.size();
-	for (it = obj->varants.begin(); it != obj->varants.end(); ++it)
-	{
-		if (it->first.size() >= key_len && it->first.compare(0, key_len, key) == 0)
-		{
-			return it->second;
-		}
-	}
-	return NULL;
+	return obj->GetFieldValueByNamePrefix(std::string(name));
 }
 
 bool GetBoolField(LPOBJECT_REF ref, const char *name, bool &out)

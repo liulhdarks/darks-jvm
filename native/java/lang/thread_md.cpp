@@ -34,23 +34,10 @@ void SetRawField(LPOBJECT_REF ref, const char *name, const Variant &value)
 		return;
 	}
 	// Layout keys are "<name>:<descriptor>"; accept the bare name.
-	std::string key(name);
-	FIELD_MAP::iterator it = obj->varants.find(key);
-	if (it == obj->varants.end())
+	lpFieldValue fv = obj->GetFieldValueByNamePrefix(std::string(name));
+	if (fv)
 	{
-		key += ':';
-		size_t key_len = key.size();
-		for (it = obj->varants.begin(); it != obj->varants.end(); ++it)
-		{
-			if (it->first.size() >= key_len && it->first.compare(0, key_len, key) == 0)
-			{
-				break;
-			}
-		}
-	}
-	if (it != obj->varants.end() && it->second)
-	{
-		it->second->field_value = value;
+		fv->field_value = value;
 	}
 }
 

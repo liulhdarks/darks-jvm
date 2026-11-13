@@ -107,10 +107,17 @@ size_t ObjectHeap::ObjectBytes(lpObject obj) const
 	{
 		return 0;
 	}
-	// Approximate footprint: the object header, the per-field value boxes and
-	// the array payload. Field map overhead is not counted exactly, which only
-	// makes the threshold slightly pessimistic.
-	size_t bytes = sizeof(JObject) + obj->varants.size() * (sizeof(FieldValue) + 32);
+	// Approximate footprint: the object header, the contiguous slot array and
+	// the array payload.  Synthetic extras are rare and counted coarsely.
+	size_t bytes = sizeof(JObject);
+	if (obj->slots && obj->slot_count > 0)
+	{
+		bytes += static_cast<size_t>(obj->slot_count) * sizeof(FieldValue);
+	}
+	if (obj->extras)
+	{
+		bytes += obj->extras->size() * sizeof(JObject::ExtraField);
+	}
 	if (obj->array_var && obj->array_length > 0)
 	{
 		bytes += static_cast<size_t>(obj->array_length) * ElementBytes(obj->array_data_type);
@@ -457,15 +464,23 @@ void ObjectHeap::gc()
 		{
 			continue;
 		}
-		// Instance fields. Primitive values are tolerated: MarkObjectRef only
-		// accepts pointers that match a live object's index address.
-		FIELD_MAP::iterator field_it = obj->varants.begin();
-		for (; field_it != obj->varants.end(); ++field_it)
+		// Instance field slots.  Primitive values are tolerated:
+		// MarkObjectRef only accepts pointers that match a live object's
+		// index address, so scanning every slot is safe.
+		for (int slot = 0; slot < obj->slot_count; slot++)
 		{
-			lpFieldValue fv = field_it->second;
-			if (fv)
+			MarkObjectRef(obj->slots[slot].field_value.heapPtr);
+		}
+		// VM-synthetic name-keyed values ("ann:", "$lambda:").
+		if (obj->extras)
+		{
+			for (size_t e = 0; e < obj->extras->size(); e++)
 			{
-				MarkObjectRef(fv->field_value.heapPtr);
+				lpFieldValue fv = (*obj->extras)[e].value;
+				if (fv)
+				{
+					MarkObjectRef(fv->field_value.heapPtr);
+				}
 			}
 		}
 		// Reference arrays (object arrays and nested arrays).

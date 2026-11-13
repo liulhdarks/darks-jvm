@@ -8,3 +8,6 @@ ipch/
 # CMake build trees
 build/
 build-*/
+
+# Performance harness output
+perf-results/

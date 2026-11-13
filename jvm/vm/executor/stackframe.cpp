@@ -100,12 +100,12 @@ void StoreSlotField(lpObject obj, const std::string &name, const Slot &slot)
 
 bool LoadSlotField(lpObject obj, const std::string &name, Slot &slot)
 {
-	FIELD_MAP::iterator it = obj->varants.find(name);
-	if (it == obj->varants.end() || !it->second)
+	lpFieldValue fv = obj->GetFieldValueByName(name);
+	if (!fv)
 	{
 		return false;
 	}
-	slot = it->second->field_value;
+	slot = fv->field_value;
 	return true;
 }
 
@@ -2845,13 +2845,13 @@ bool StackFrame::AppendStringRefUnits(LPOBJECT_REF ref, std::vector<uint16_t> &o
 		return false;
 	}
 	const std::string key("value:[C");
-	std::map<std::string, lpFieldValue>::iterator it = str->varants.find(key);
-	if (it == str->varants.end() || !it->second || !it->second->field_value.heapPtr)
+	lpFieldValue value = str->GetFieldValueByName(key);
+	if (!value || !value->field_value.heapPtr)
 	{
 		return true; // empty string
 	}
 	lpObject chars = NULL;
-	if (!VMContext::object_heap->GetObject(it->second->field_value.heapPtr, chars) ||
+	if (!VMContext::object_heap->GetObject(value->field_value.heapPtr, chars) ||
 	    !chars || !chars->array_var)
 	{
 		return false;
@@ -3440,8 +3440,8 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		    VMContext::object_heap->GetObject(ann_recv.heapPtr, ann_obj) && ann_obj)
 		{
 			std::string ann_key = std::string("ann:") + method->methodName->GetName();
-			FIELD_MAP::iterator ann_it = ann_obj->varants.find(ann_key);
-			if (ann_it != ann_obj->varants.end() && ann_it->second)
+			lpFieldValue ann_value_field = ann_obj->GetFieldValueByName(ann_key);
+			if (ann_value_field)
 			{
 				for (int k = 0; k < ann_arg_slots; k++)
 				{
@@ -3449,7 +3449,7 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 					op_stack->pop(dropped);
 				}
 				op_stack->pop(ann_recv);
-				Variant ann_value = ann_it->second->field_value;
+				Variant ann_value = ann_value_field->field_value;
 				switch (result_desc.data_type)
 				{
 				case DT_VOID:
@@ -3595,10 +3595,10 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 			return false;
 		}
 		int lambda_id = 0;
-		FIELD_MAP::iterator lit = obj->varants.find("$lambda:id");
-		if (lit != obj->varants.end() && lit->second)
+		lpFieldValue lambda_field = obj->GetFieldValueByName("$lambda:id");
+		if (lambda_field)
 		{
-			lambda_id = lit->second->field_value.iValue;
+			lambda_id = lambda_field->field_value.iValue;
 		}
 		if (lambda_id > 0)
 		{
@@ -4372,12 +4372,12 @@ bool UnboxWrapper(LPOBJECT_REF ref, DATA_TYPE target, Slot &value, bool &wide)
 	case DT_DOUBLE: key = "value:D"; break;
 	default: return false;
 	}
-	FIELD_MAP::iterator it = obj->varants.find(std::string(key));
-	if (it == obj->varants.end() || !it->second)
+	lpFieldValue field_value = obj->GetFieldValueByName(std::string(key));
+	if (!field_value)
 	{
 		return false;
 	}
-	Slot stored = it->second->field_value;
+	Slot stored = field_value->field_value;
 	if (target == DT_LONG || target == DT_DOUBLE)
 	{
 		WByteValue bv;

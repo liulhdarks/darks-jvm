@@ -55,6 +55,15 @@ public:
 	int instance_field_total;
 	bool instance_layout_ready;
 
+	// Name -> slot indexes for the whole superclass chain, built together with
+	// the layout.  The key is Field::GetSimpleName() ("<name>:<descriptor>").
+	// A subclass entry replaces the inherited one, so a hidden field resolves
+	// to the subclass slot, matching the historical map-overwrite behaviour.
+	// instance_name_index accepts the bare field name (used by JNI helpers);
+	// for duplicate names the most-derived field wins.
+	std::map<std::string, int> instance_slot_index;
+	std::map<std::string, int> instance_name_index;
+
 public:
 	Class();
 
@@ -72,6 +81,12 @@ public:
 	// and returns the total number of instance slots for objects of this
 	// class.  Idempotent; safe to call before the class is initialised.
 	int EnsureInstanceLayout();
+
+	// Resolve "<name>:<descriptor>" (FindInstanceSlot) or a bare field name
+	// (FindInstanceSlotByName) to a slot index.  Returns -1 when there is no
+	// such instance field.  Both require EnsureInstanceLayout() to have run.
+	int FindInstanceSlot(const std::string &key) const;
+	int FindInstanceSlotByName(const char *name) const;
 
 	void StoreField(LPSTR field_name, lpField field)
 	{
