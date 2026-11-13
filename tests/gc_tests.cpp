@@ -36,7 +36,7 @@ static void set_ref_field(lpObject obj, const char *name, LPOBJECT_REF ref)
 {
 	lpFieldValue fv = new FieldValue();
 	fv->field_value.heapPtr = ref;
-	obj->varants[std::string(name)] = fv;
+	obj->AdoptFieldValue(std::string(name), fv);
 }
 
 static bool int_at(lpObjectHeap heap, LPOBJECT_REF ref, int index, int &value)

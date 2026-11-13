@@ -4,6 +4,7 @@
 vector<string> Environment::native_libs;
 vector<string> Environment::system_libs;
 vector<string> Environment::classpath;
+bool Environment::assertions_enabled = false;
 
 namespace {
 // Heap allocated so that process-lifetime entries do not look like leaks to

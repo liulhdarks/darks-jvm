@@ -12,6 +12,16 @@ package java.lang;
  */
 public class Thread implements Runnable
 {
+    public enum State
+    {
+        NEW,
+        RUNNABLE,
+        BLOCKED,
+        WAITING,
+        TIMED_WAITING,
+        TERMINATED
+    }
+
     private String name;
     private Runnable target;
     private boolean daemon;
@@ -143,6 +153,21 @@ public class Thread implements Runnable
     public boolean isAlive()
     {
         return alive;
+    }
+
+    public State getState()
+    {
+        // The scheduler tracks liveness only; a live coroutine may be runnable,
+        // waiting or blocked, so report the conservative RUNNABLE state.
+        if (!started)
+        {
+            return State.NEW;
+        }
+        if (!alive)
+        {
+            return State.TERMINATED;
+        }
+        return State.RUNNABLE;
     }
 
     public final boolean isDaemon()

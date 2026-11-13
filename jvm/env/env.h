@@ -13,6 +13,7 @@ private:
 	static vector<string> native_libs;
 	static vector<string> system_libs;
 	static vector<string> classpath;
+	static bool assertions_enabled;
 
 public:
 
@@ -54,4 +55,16 @@ public:
 	static bool ClearProperty(const string &key);
 	static const map<string, string> &GetProperties();
 	static void ClearProperties();
+
+	// Global assertion status, controlled by -ea/-da on the command line and
+	// exposed to Java through Class.desiredAssertionStatus().
+	static void SetAssertionsEnabled(bool enabled)
+	{
+		assertions_enabled = enabled;
+	}
+
+	static bool AssertionsEnabled()
+	{
+		return assertions_enabled;
+	}
 };

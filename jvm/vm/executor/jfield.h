@@ -17,6 +17,12 @@ public:
 
 	LPSTR simple_name;
 
+	// Index into JObject::instance_slots for instance fields.  Slots are
+	// assigned once per class (superclass fields first) so that a field
+	// hidden by a subclass still has its own storage.  -1 means the field is
+	// static or its layout has not been computed yet.
+	int slot;
+
 public:
 	Field();
 

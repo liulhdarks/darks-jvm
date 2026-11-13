@@ -47,6 +47,8 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/CollectionsAdvanced.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/RuntimeCompat.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/LongArrayInit.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/P0Checks.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/AssertCheck.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SystemProps.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/FileIoDemo.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/ResourceDemo.java"
@@ -408,6 +410,158 @@ if(JAVAC)
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
                 "-DARGS=-cp;${CLASSES_DIR};ResourceDemo" -DEXPECT_RC=0
                 "-DEXPECT_TEXT=resource\ checks=5\ failures=0" -P "${CHECK}")
+
+    # ------------------------------------------------------------------
+    # P0/P1 semantics: array bounds/null/type checks, wide locals,
+    # MIN_VALUE / -1 division, the Runtime subset, assertions, simple names,
+    # thread states and hidden-field / inlined accessor behaviour.
+    # ------------------------------------------------------------------
+    add_test(NAME p0_p1_checks
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};P0Checks" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=p0\\ checks=[0-9]+\\ failures=0"
+                "-DEXPECT_TEXT2=p0\\ checks:\\ ok" -P "${CHECK}")
+
+    add_test(NAME assert_default_off
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};AssertCheck" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=assert-fired=false\\ msg=null"
+                "-DEXPECT_TEXT2=assert-desired=false" -P "${CHECK}")
+
+    add_test(NAME assert_enabled
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-ea;-cp;${CLASSES_DIR};AssertCheck" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=assert-fired=true\\ msg=assert-msg"
+                "-DEXPECT_TEXT2=assert-desired=true" -P "${CHECK}")
+
+    # ------------------------------------------------------------------
+    # Link-time resolution failures.  Each fixture is compiled against a
+    # stub API and then run with an incompatible class file, so the error
+    # is raised when the call site is linked, as in a real deployment.
+    # ------------------------------------------------------------------
+    find_program(PYTHON3_EXECUTABLE NAMES python3)
+    set(RES_DIR "${CMAKE_BINARY_DIR}/resolution")
+    set(RES_SRC "${CMAKE_CURRENT_SOURCE_DIR}/resolution")
+
+    add_custom_command(
+        OUTPUT "${RES_DIR}/.method.stamp"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${RES_DIR}"
+        COMMAND "${JAVAC}" -source 8 -target 8 -d "${RES_DIR}"
+                "${RES_SRC}/CallNoMethod.java"
+                "${RES_SRC}/stub/LibMissingMethod.java"
+        COMMAND "${JAVAC}" -source 8 -target 8 -classpath "${RES_DIR}"
+                -d "${RES_DIR}" "${RES_SRC}/runtime/LibMissingMethod.java"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${RES_DIR}/.method.stamp"
+        DEPENDS "${RES_SRC}/CallNoMethod.java"
+                "${RES_SRC}/stub/LibMissingMethod.java"
+                "${RES_SRC}/runtime/LibMissingMethod.java"
+        COMMENT "Compiling the NoSuchMethodError fixture"
+        VERBATIM)
+
+    add_custom_command(
+        OUTPUT "${RES_DIR}/.field.stamp"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${RES_DIR}"
+        COMMAND "${JAVAC}" -source 8 -target 8 -d "${RES_DIR}"
+                "${RES_SRC}/CallNoField.java"
+                "${RES_SRC}/stub/LibMissingField.java"
+        COMMAND "${JAVAC}" -source 8 -target 8 -classpath "${RES_DIR}"
+                -d "${RES_DIR}" "${RES_SRC}/runtime/LibMissingField.java"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${RES_DIR}/.field.stamp"
+        DEPENDS "${RES_SRC}/CallNoField.java"
+                "${RES_SRC}/stub/LibMissingField.java"
+                "${RES_SRC}/runtime/LibMissingField.java"
+        COMMENT "Compiling the NoSuchFieldError fixture"
+        VERBATIM)
+
+    add_custom_command(
+        OUTPUT "${RES_DIR}/.class.stamp"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${RES_DIR}"
+        COMMAND "${JAVAC}" -source 8 -target 8 -d "${RES_DIR}"
+                "${RES_SRC}/CallNoClass.java" "${RES_SRC}/stub/Ghost.java"
+        COMMAND "${CMAKE_COMMAND}" -E rm -f "${RES_DIR}/Ghost.class"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${RES_DIR}/.class.stamp"
+        DEPENDS "${RES_SRC}/CallNoClass.java" "${RES_SRC}/stub/Ghost.java"
+        COMMENT "Compiling the NoClassDefFoundError fixture"
+        VERBATIM)
+
+    add_custom_target(resolution_method_classes ALL
+        DEPENDS "${RES_DIR}/.method.stamp")
+    add_custom_target(resolution_field_classes ALL
+        DEPENDS "${RES_DIR}/.field.stamp")
+    add_custom_target(resolution_class_classes ALL
+        DEPENDS "${RES_DIR}/.class.stamp")
+
+    add_test(NAME resolution_nosuchmethod
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${RES_DIR}:${CLASSES_DIR};CallNoMethod"
+                -DEXPECT_RC=3
+                "-DEXPECT_TEXT=java.lang.NoSuchMethodError" -P "${CHECK}")
+
+    add_test(NAME resolution_nosuchfield
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${RES_DIR}:${CLASSES_DIR};CallNoField"
+                -DEXPECT_RC=3
+                "-DEXPECT_TEXT=java.lang.NoSuchFieldError" -P "${CHECK}")
+
+    add_test(NAME resolution_noclassdef
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${RES_DIR}:${CLASSES_DIR};CallNoClass"
+                -DEXPECT_RC=3
+                "-DEXPECT_TEXT=java.lang.NoClassDefFoundError" -P "${CHECK}")
+
+
+    # ------------------------------------------------------------------
+    # `wide ret` (and jsr) with a local index above 255.  javac no longer
+    # emits jsr/ret, so the subroutine method is assembled directly.
+    # ------------------------------------------------------------------
+    if(PYTHON3_EXECUTABLE)
+        # A concrete class whose method table lacks the interface method is
+        # produced by clearing ACC_ABSTRACT from an abstract class file.
+        add_custom_command(
+            OUTPUT "${RES_DIR}/.abstract.stamp"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${RES_DIR}"
+            COMMAND "${JAVAC}" -source 8 -target 8 -d "${RES_DIR}"
+                    "${RES_SRC}/CallAbstract.java"
+                    "${RES_SRC}/stub/Iface.java" "${RES_SRC}/stub/Impl.java"
+            COMMAND "${JAVAC}" -source 8 -target 8 -classpath "${RES_DIR}"
+                    -d "${RES_DIR}" "${RES_SRC}/runtime/Impl.java"
+            COMMAND "${PYTHON3_EXECUTABLE}"
+                    "${RES_SRC}/clear_abstract.py" "${RES_DIR}/Impl.class"
+            COMMAND "${CMAKE_COMMAND}" -E touch "${RES_DIR}/.abstract.stamp"
+            DEPENDS "${RES_SRC}/CallAbstract.java" "${RES_SRC}/stub/Iface.java"
+                    "${RES_SRC}/stub/Impl.java" "${RES_SRC}/runtime/Impl.java"
+                    "${RES_SRC}/clear_abstract.py"
+            COMMENT "Compiling the AbstractMethodError fixture"
+            VERBATIM)
+        add_custom_target(resolution_abstract_classes ALL
+            DEPENDS "${RES_DIR}/.abstract.stamp")
+
+        add_test(NAME resolution_abstractmethod
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${RES_DIR}:${CLASSES_DIR};CallAbstract"
+                    -DEXPECT_RC=3
+                    "-DEXPECT_TEXT=java.lang.AbstractMethodError" -P "${CHECK}")
+
+        add_custom_command(
+            OUTPUT "${RES_DIR}/.ret.stamp"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${RES_DIR}"
+            COMMAND "${JAVAC}" -source 8 -target 8 -d "${RES_DIR}"
+                    "${RES_SRC}/RetCheck.java" "${RES_SRC}/stub/WideRet.java"
+            COMMAND "${PYTHON3_EXECUTABLE}" "${RES_SRC}/make_wide_ret.py"
+                    "${RES_DIR}/WideRet.class"
+            COMMAND "${CMAKE_COMMAND}" -E touch "${RES_DIR}/.ret.stamp"
+            DEPENDS "${RES_SRC}/RetCheck.java" "${RES_SRC}/stub/WideRet.java"
+                    "${RES_SRC}/make_wide_ret.py"
+            COMMENT "Assembling the wide ret fixture"
+            VERBATIM)
+        add_custom_target(resolution_ret_classes ALL
+            DEPENDS "${RES_DIR}/.ret.stamp")
+
+        add_test(NAME wide_ret
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${RES_DIR}:${CLASSES_DIR};RetCheck"
+                    -DEXPECT_RC=0 "-DEXPECT_TEXT=wide-ret=2" -P "${CHECK}")
+    endif()
 
     add_test(NAME version
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}

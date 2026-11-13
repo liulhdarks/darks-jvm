@@ -124,14 +124,19 @@ private:
 	bool ExecuteNormalMethod(lpClass clazz, lpMethod method, vector<TypeDesc> &type_desc);
 	bool ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<TypeDesc> &type_desc, TypeDesc &result_desc);
 
-	void SetArrayIndex(int index, Slot &slot);
-	void LoadArray(DATA_TYPE data_type);
-	void ArrayLength();
+	// Operand-stack based array access.  The value/index/arrayref are peeked
+	// (not popped) until validation succeeds, so a GC triggered while the
+	// type check runs still traces the array and value through the frame.
+	bool SetArrayIndex(int value_slots);
+	bool LoadArray(DATA_TYPE data_type);
+	bool ArrayLength();
 
-	void PutStatic(U2 index);
-	void GetStatic(U2 index);
-	void GetField(U2 index);
-	void PutField(U2 index);
+	bool PutStatic(U2 index);
+	bool GetStatic(U2 index);
+	bool GetField(U2 index);
+	bool PutField(U2 index);
+	bool TryInline(lpClass declaring, lpMethod method,
+	               vector<TypeDesc> &type_desc, TypeDesc &result_desc);
 	void TableSwitch();
 	void LookupSwitch();
 private:

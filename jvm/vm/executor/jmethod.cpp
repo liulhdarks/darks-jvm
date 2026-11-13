@@ -15,6 +15,11 @@ Method::Method()
 	clazz = NULL;
 	attrCount = 0;
 	accFlag = 0;
+	jit_state.store(0);
+	jit_hit_count.store(0);
+	jit_program.store(NULL);
+	inline_kind.store(0);
+	inline_cp.store(0);
 }
 
 Method::~Method()

@@ -38,6 +38,7 @@ static void print_usage()
 	cout << "Options:" << endl;
 	cout << "  -cp <path>, -classpath <path>  class search path" << endl;
 	cout << "  -Dkey=value                    set a system property" << endl;
+	cout << "  -ea / -da                      enable / disable assertions" << endl;
 	cout << "  --dump <class>                 print class file metadata" << endl;
 	cout << "  --version                      print version information" << endl;
 	cout << "  -h, --help                     print this help" << endl;
@@ -295,6 +296,20 @@ int main(int argc, char **argv)
 				Environment::SetProperty(assignment.substr(0, equals),
 				                         assignment.substr(equals + 1));
 			}
+			continue;
+		}
+		// Assertion switches: -ea enables them for every class (the optional
+		// :package suffix is accepted but applied globally), -da disables.
+		if (arg == "-ea" || arg == "-enableassertions" ||
+		    arg.compare(0, 4, "-ea:") == 0 || arg.compare(0, 16, "-enableassertions:") == 0)
+		{
+			Environment::SetAssertionsEnabled(true);
+			continue;
+		}
+		if (arg == "-da" || arg == "-disableassertions" ||
+		    arg.compare(0, 4, "-da:") == 0 || arg.compare(0, 17, "-disableassertions:") == 0)
+		{
+			Environment::SetAssertionsEnabled(false);
 			continue;
 		}
 		if (arg == "-h" || arg == "--help")

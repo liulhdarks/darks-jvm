@@ -17,6 +17,7 @@
 #include <ffi.h>
 
 #include <string>
+#include <atomic>
 #include <vector>
 #include <map>
 
@@ -94,7 +95,7 @@ void StoreSlotField(lpObject obj, const std::string &name, const Slot &slot)
 {
 	lpFieldValue fv = new FieldValue();
 	fv->field_value = slot;
-	obj->varants[name] = fv;
+	obj->AdoptFieldValue(name, fv);
 }
 
 bool LoadSlotField(lpObject obj, const std::string &name, Slot &slot)
@@ -106,6 +107,221 @@ bool LoadSlotField(lpObject obj, const std::string &name, Slot &slot)
 	}
 	slot = it->second->field_value;
 	return true;
+}
+
+// Bounded inlining: only tiny, side-effect-free methods are recognised.
+// Everything with parameters beyond a setter, branches, exception handlers,
+// synchronization or native/abstract modifiers keeps the normal call path.
+enum InlineKind
+{
+	IK_UNKNOWN = 0,
+	IK_NONE = -1,
+	IK_EMPTY = 1,
+	IK_CONST_INT = 2,
+	IK_CONST_LONG = 3,
+	IK_CONST_FLOAT = 4,
+	IK_CONST_DOUBLE = 5,
+	IK_CONST_NULL = 6,
+	IK_GETTER = 7,
+	IK_SETTER = 8
+};
+
+int AnalyzeInline(lpMethod method, int &cp_index)
+{
+	cp_index = 0;
+	if (!method || !method->code_attr || !method->code_attr->codes)
+	{
+		return IK_NONE;
+	}
+	if (method->isNative() || (method->accFlag & (ACM_ABSTRACT | ACM_SYNCHRONIZED)) != 0)
+	{
+		return IK_NONE;
+	}
+	if (method->code_attr->exception_length != 0)
+	{
+		return IK_NONE;
+	}
+	if (method->methodName)
+	{
+		const char *name = method->methodName->GetName();
+		if (name && (strcmp(name, "<init>") == 0 || strcmp(name, "<clinit>") == 0))
+		{
+			return IK_NONE;
+		}
+	}
+	const U1 *codes = method->code_attr->codes;
+	int len = static_cast<int>(method->code_attr->code_length);
+	if (len == 1 && codes[0] == _return)
+	{
+		return IK_EMPTY;
+	}
+	if (len == 2)
+	{
+		U1 value = codes[0];
+		U1 ret_op = codes[1];
+		if (value >= iconst_m1 && value <= iconst_5 && ret_op == ireturn)
+		{
+			return IK_CONST_INT;
+		}
+		if ((value == lconst_0 || value == lconst_1) && ret_op == lreturn)
+		{
+			return IK_CONST_LONG;
+		}
+		if (value >= fconst_0 && value <= fconst_2 && ret_op == freturn)
+		{
+			return IK_CONST_FLOAT;
+		}
+		if ((value == dconst_0 || value == dconst_1) && ret_op == dreturn)
+		{
+			return IK_CONST_DOUBLE;
+		}
+		if (value == aconst_null && ret_op == areturn)
+		{
+			return IK_CONST_NULL;
+		}
+		return IK_NONE;
+	}
+	// aload_0; getfield <cp>; xreturn
+	if (len == 5 && codes[0] == aload_0 && codes[1] == getfield)
+	{
+		U1 ret_op = codes[4];
+		if (ret_op == ireturn || ret_op == lreturn || ret_op == freturn ||
+		    ret_op == dreturn || ret_op == areturn)
+		{
+			cp_index = (static_cast<int>(codes[2]) << 8) | codes[3];
+			return IK_GETTER;
+		}
+	}
+	// aload_0; <x>load_1; putfield <cp>; return
+	if (len == 6 && codes[0] == aload_0 && codes[2] == putfield && codes[5] == _return)
+	{
+		U1 load_op = codes[1];
+		if (load_op == iload_1 || load_op == fload_1 || load_op == aload_1 ||
+		    load_op == lload_1 || load_op == dload_1)
+		{
+			cp_index = (static_cast<int>(codes[3]) << 8) | codes[4];
+			return IK_SETTER;
+		}
+	}
+	return IK_NONE;
+}
+
+// Resolves a class for the interpreter, translating a load failure into a
+// pending NoClassDefFoundError instead of letting the C++ exception escape
+// (which would abort the process with the generic VM error code).
+bool FindClassOrError(lpClassLoader loader, const char *name, lpClass &out,
+                      const char *error_class = "java/lang/NoClassDefFoundError");
+
+bool ResolveInstanceField(lpClassLoader loader, FieldRefConstant *frc, lpField &field)
+{
+	field = frc->resolved_field.load(std::memory_order_acquire);
+	if (field)
+	{
+		return true;
+	}
+	lpClass target = NULL;
+	if (!FindClassOrError(loader, frc->clazz ? frc->clazz->GetName() : NULL, target))
+	{
+		return false;
+	}
+	const char *name = (frc->nameType && frc->nameType->nameUtf8)
+		? frc->nameType->nameUtf8->bytes : NULL;
+	const char *desc = (frc->nameType && frc->nameType->descUtf8)
+		? frc->nameType->descUtf8->bytes : NULL;
+	field = JniFindField(target, name, desc, false);
+	if (!field)
+	{
+		std::string message = (target->thisClass && target->thisClass->GetName())
+			? target->thisClass->GetName() : "?";
+		message += ".";
+		message += name ? name : "?";
+		message += ":";
+		message += desc ? desc : "?";
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NoSuchFieldError", message.c_str());
+		return false;
+	}
+	frc->resolved_field.store(field, std::memory_order_release);
+	return true;
+}
+
+bool ResolveStaticField(lpClassLoader loader, FieldRefConstant *frc,
+                        lpField &field, lpFieldValue &value)
+{
+	field = frc->resolved_field.load(std::memory_order_acquire);
+	value = frc->resolved_static_value.load(std::memory_order_acquire);
+	if (field && value)
+	{
+		return true;
+	}
+	lpClass target = NULL;
+	if (!FindClassOrError(loader, frc->clazz ? frc->clazz->GetName() : NULL, target))
+	{
+		return false;
+	}
+	if (!field)
+	{
+		const char *name = (frc->nameType && frc->nameType->nameUtf8)
+			? frc->nameType->nameUtf8->bytes : NULL;
+		const char *desc = (frc->nameType && frc->nameType->descUtf8)
+			? frc->nameType->descUtf8->bytes : NULL;
+		field = JniFindField(target, name, desc, true);
+		if (!field)
+		{
+			std::string message = (target->thisClass && target->thisClass->GetName())
+				? target->thisClass->GetName() : "?";
+			message += ".";
+			message += name ? name : "?";
+			message += ":";
+			message += desc ? desc : "?";
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NoSuchFieldError", message.c_str());
+			return false;
+		}
+		frc->resolved_field.store(field, std::memory_order_release);
+	}
+	if (!value)
+	{
+		// A static field without an explicit initializer has no <clinit>
+		// entry; create its default value lazily on first access.
+		value = JniStaticFieldValue(target, field, true);
+		if (!value)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NoSuchFieldError", "static field has no storage");
+			return false;
+		}
+		frc->resolved_static_value.store(value, std::memory_order_release);
+	}
+	return true;
+}
+
+bool FindClassOrError(lpClassLoader loader, const char *name, lpClass &out,
+                      const char *error_class)
+{
+	out = NULL;
+	if (!loader || !name)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			error_class, name ? name : "null class name");
+		return false;
+	}
+	try
+	{
+		if (loader->FindClass(name, out) && out)
+		{
+			return true;
+		}
+	}
+	catch (VMException *e)
+	{
+		delete e;
+	}
+	catch (...)
+	{
+	}
+	VMContext::pending_exception = CreateJavaException(error_class, name);
+	return false;
 }
 
 } // namespace
@@ -455,28 +671,52 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 			break;
 
 		case iaload:
-			LoadArray(DT_INT);
+			if (!LoadArray(DT_INT))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case laload:
-			LoadArray(DT_LONG);
+			if (!LoadArray(DT_LONG))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case faload:
-			LoadArray(DT_FLOAT);
+			if (!LoadArray(DT_FLOAT))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case daload:
-			LoadArray(DT_DOUBLE);
+			if (!LoadArray(DT_DOUBLE))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case aaload:
-			LoadArray(DT_REF);
+			if (!LoadArray(DT_REF))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case baload:
-			LoadArray(DT_BYTE);
+			if (!LoadArray(DT_BYTE))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case caload:
-			LoadArray(DT_CHAR);
+			if (!LoadArray(DT_CHAR))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case saload:
-			LoadArray(DT_SHORT);
+			if (!LoadArray(DT_SHORT))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case iastore:
 		case fastore:
@@ -484,19 +724,17 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 		case castore:
 		case sastore:
 		case aastore:
-			op_stack->pop(s1);
-			op_stack->pop(s2);
-			SetArrayIndex(s2.iValue, s1);
+			if (!SetArrayIndex(1))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case lastore:
-			s1.lValue = popLong();
-			op_stack->pop(s2);
-			SetArrayIndex(s2.iValue, s1);
-			break;
 		case dastore:
-			s1.dValue = popDouble();
-			op_stack->pop(s2);
-			SetArrayIndex(s2.iValue, s1);
+			if (!SetArrayIndex(2))
+			{
+				return ExceptionEvent();
+			}
 			break;
 
 		case _pop:
@@ -622,7 +860,16 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 					"java/lang/ArithmeticException", "/ by zero");
 				return ExceptionEvent();
 			}
-			op_stack->push(s2.iValue / s1.iValue);
+			if (s1.iValue == -1 && s2.iValue == (-2147483647 - 1))
+			{
+				// JLS 15.17.2: MIN_VALUE / -1 wraps to MIN_VALUE.  The C++
+				// operation would be undefined and traps with SIGFPE.
+				op_stack->push((-2147483647 - 1));
+			}
+			else
+			{
+				op_stack->push(s2.iValue / s1.iValue);
+			}
 			break;
 		case ldiv:
 			lValue = popLong();
@@ -633,7 +880,14 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 					"java/lang/ArithmeticException", "/ by zero");
 				return ExceptionEvent();
 			}
-			op_stack->push(lValue2 / lValue);
+			if (lValue == -1 && lValue2 == (-9223372036854775807LL - 1))
+			{
+				op_stack->push(static_cast<LONG64>((-9223372036854775807LL - 1)));
+			}
+			else
+			{
+				op_stack->push(lValue2 / lValue);
+			}
 			break;
 		case fdiv:
 			op_stack->pop(s1);
@@ -653,7 +907,15 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 					"java/lang/ArithmeticException", "/ by zero");
 				return ExceptionEvent();
 			}
-			op_stack->push(s2.iValue % s1.iValue);
+			if (s1.iValue == -1)
+			{
+				// JLS 15.17.3: MIN_VALUE % -1 == 0 (and avoids SIGFPE).
+				op_stack->push(0);
+			}
+			else
+			{
+				op_stack->push(s2.iValue % s1.iValue);
+			}
 			break;
 		case lrem:
 			lValue = popLong();
@@ -664,7 +926,14 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 					"java/lang/ArithmeticException", "/ by zero");
 				return ExceptionEvent();
 			}
-			op_stack->push(lValue2 % lValue);
+			if (lValue == -1)
+			{
+				op_stack->push(static_cast<LONG64>(0));
+			}
+			else
+			{
+				op_stack->push(lValue2 % lValue);
+			}
 			break;
 		case frem:
 			op_stack->pop(s1);
@@ -947,28 +1216,52 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 			break;
 
 		case getstatic:
-			GetStatic(static_cast<U2>(insn.a));
+			if (!GetStatic(static_cast<U2>(insn.a)))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case putstatic:
-			PutStatic(static_cast<U2>(insn.a));
+			if (!PutStatic(static_cast<U2>(insn.a)))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case getfield:
-			GetField(static_cast<U2>(insn.a));
+			if (!GetField(static_cast<U2>(insn.a)))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case putfield:
-			PutField(static_cast<U2>(insn.a));
+			if (!PutField(static_cast<U2>(insn.a)))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case _new:
-			ExecuteNewObject(static_cast<U2>(insn.a));
+			if (!ExecuteNewObject(static_cast<U2>(insn.a)))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case newarray:
-			ExecuteNewArray(static_cast<U1>(insn.a));
+			if (!ExecuteNewArray(static_cast<U1>(insn.a)))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case anewarray:
-			ExecuteNewObjectArray(static_cast<U2>(insn.a));
+			if (!ExecuteNewObjectArray(static_cast<U2>(insn.a)))
+			{
+				return ExceptionEvent();
+			}
 			break;
 		case arraylength:
-			ArrayLength();
+			if (!ArrayLength())
+			{
+				return ExceptionEvent();
+			}
 			break;
 
 		case invokespecial:
@@ -1200,28 +1493,52 @@ EventNotify StackFrame::ExecuteCode()
 		break;
 
 	case iaload:// 46 /*(0x2e)*/Load int from array
-		LoadArray(DT_INT);
+		if (!LoadArray(DT_INT))
+		{
+			return ExceptionEvent();
+		}
 		break;
 	case laload:
-		LoadArray(DT_LONG);
+		if (!LoadArray(DT_LONG))
+		{
+			return ExceptionEvent();
+		}
 		break;
 	case faload:
-		LoadArray(DT_FLOAT);
+		if (!LoadArray(DT_FLOAT))
+		{
+			return ExceptionEvent();
+		}
 		break;
 	case daload:
-		LoadArray(DT_DOUBLE);
+		if (!LoadArray(DT_DOUBLE))
+		{
+			return ExceptionEvent();
+		}
 		break;
 	case aaload://50 
-		LoadArray(DT_REF);
+		if (!LoadArray(DT_REF))
+		{
+			return ExceptionEvent();
+		}
 		break;
 	case baload:
-		LoadArray(DT_BYTE);
+		if (!LoadArray(DT_BYTE))
+		{
+			return ExceptionEvent();
+		}
 		break;
 	case caload:
-		LoadArray(DT_CHAR);
+		if (!LoadArray(DT_CHAR))
+		{
+			return ExceptionEvent();
+		}
 		break;
 	case saload:
-		LoadArray(DT_SHORT);
+		if (!LoadArray(DT_SHORT))
+		{
+			return ExceptionEvent();
+		}
 		break;
 		//Instructions that store a value from the stack into a local variable
 
@@ -1307,20 +1624,18 @@ EventNotify StackFrame::ExecuteCode()
 	case bastore:
 	case castore:
 	case sastore:
-	case aastore: // 83 - both seems same (TODO: Check it)
-		op_stack->pop(s1);
-		op_stack->pop(s2);
-		SetArrayIndex(s2.iValue, s1);
+	case aastore:
+		if (!SetArrayIndex(1))
+		{
+			return ExceptionEvent();
+		}
 		break;
 	case lastore:
-		s1.lValue = popLong();
-		op_stack->pop(s2);
-		SetArrayIndex(s2.iValue, s1);
-		break;
-	case dastore: // 83 - both seems same (TODO: Check it)
-		s1.dValue = popDouble();
-		op_stack->pop(s2);
-		SetArrayIndex(s2.iValue, s1);
+	case dastore:
+		if (!SetArrayIndex(2))
+		{
+			return ExceptionEvent();
+		}
 		break;
 
 		//Generic (typeless) stack operations
@@ -1456,7 +1771,14 @@ EventNotify StackFrame::ExecuteCode()
 				"java/lang/ArithmeticException", "/ by zero");
 			return ExceptionEvent();
 		}
-		op_stack->push(s2.iValue / s1.iValue);	
+		if (s1.iValue == -1 && s2.iValue == (-2147483647 - 1))
+		{
+			op_stack->push((-2147483647 - 1));
+		}
+		else
+		{
+			op_stack->push(s2.iValue / s1.iValue);
+		}
 		break;
 	case ldiv:
 		lValue = popLong();
@@ -1467,7 +1789,14 @@ EventNotify StackFrame::ExecuteCode()
 				"java/lang/ArithmeticException", "/ by zero");
 			return ExceptionEvent();
 		}
-		op_stack->push(lValue2 / lValue);
+		if (lValue == -1 && lValue2 == (-9223372036854775807LL - 1))
+		{
+			op_stack->push(static_cast<LONG64>((-9223372036854775807LL - 1)));
+		}
+		else
+		{
+			op_stack->push(lValue2 / lValue);
+		}
 		break;
 	case fdiv:
 		op_stack->pop(s1);
@@ -1487,7 +1816,14 @@ EventNotify StackFrame::ExecuteCode()
 				"java/lang/ArithmeticException", "/ by zero");
 			return ExceptionEvent();
 		}
-		op_stack->push(s2.iValue % s1.iValue);	
+		if (s1.iValue == -1)
+		{
+			op_stack->push(0);
+		}
+		else
+		{
+			op_stack->push(s2.iValue % s1.iValue);
+		}
 		break;
 	case lrem:
 		lValue = popLong();
@@ -1498,7 +1834,14 @@ EventNotify StackFrame::ExecuteCode()
 				"java/lang/ArithmeticException", "/ by zero");
 			return ExceptionEvent();
 		}
-		op_stack->push(lValue2 % lValue);
+		if (lValue == -1)
+		{
+			op_stack->push(static_cast<LONG64>(0));
+		}
+		else
+		{
+			op_stack->push(lValue2 % lValue);
+		}
 		break;
 	case frem:
 		op_stack->pop(s1);
@@ -1607,6 +1950,62 @@ EventNotify StackFrame::ExecuteCode()
 		s1 = local_var_table->get(index);
 		s1.iValue += (int)(signed char)codes[pc++];
 		local_var_table->set(index, s1);
+		break;
+	case _ret:// 169 /*(0xa9)*/ Return from subroutine (legacy jsr/ret bytecode)
+		index = codes[pc++];
+		pc = local_var_table->get(index).iValue;
+		break;
+	case _wide:// 196 /*(0xc4)*/ Modify local variable instruction with a U2 index
+		{
+			BYTE wide_op = codes[pc++];
+			index = (static_cast<int>(codes[pc]) << 8) | codes[pc + 1];
+			pc += 2;
+			switch (wide_op)
+			{
+			case iload:
+			case fload:
+			case aload:
+				op_stack->push(local_var_table->get(index));
+				break;
+			case lload:
+			case dload:
+				s1 = local_var_table->get(index);
+				s2 = local_var_table->get(index + 1);
+				op_stack->push(s1);
+				op_stack->push(s2);
+				break;
+			case istore:
+			case fstore:
+			case astore:
+				op_stack->pop(s1);
+				local_var_table->set(index, s1);
+				break;
+			case lstore:
+			case dstore:
+				op_stack->pop(s1);
+				local_var_table->set(index + 1, s1);
+				op_stack->pop(s1);
+				local_var_table->set(index, s1);
+				break;
+			case iinc:
+				{
+					// The wide form's increment is a signed 16-bit value
+					// (not the signed byte used by the short form).
+					int increment = (static_cast<int>(static_cast<signed char>(codes[pc])) << 8)
+						| codes[pc + 1];
+					pc += 2;
+					s1 = local_var_table->get(index);
+					s1.iValue += increment;
+					local_var_table->set(index, s1);
+				}
+				break;
+			case _ret:
+				pc = local_var_table->get(index).iValue;
+				break;
+			default:
+				throw new VMExecutorException("Unsupported wide opcode.");
+			}
+		}
 		break;
 	case i2l://133
 		op_stack->pop(s1);
@@ -1729,28 +2128,46 @@ EventNotify StackFrame::ExecuteCode()
 		//Instructions that deal with objects
 
 	case _new:// 187 (0xbb)
-		ExecuteNewObject(ReadU2());
+		if (!ExecuteNewObject(ReadU2()))
+		{
+			return ExceptionEvent();
+		}
 		break;
 	case putfield: //181 (0xb5): Set field in object
-		PutField(ReadU2());
+		if (!PutField(ReadU2()))
+		{
+			return ExceptionEvent();
+		}
 		break;
 
 	case getfield: //180 (0xb4) Fetch field from object
-		GetField(ReadU2());
+		if (!GetField(ReadU2()))
+		{
+			return ExceptionEvent();
+		}
 		break;
 
 		//Instructions that deal with arrays
 
 	case newarray:// 188 /*(0xbc)*/
-		ExecuteNewArray(codes[pc++]);
+		if (!ExecuteNewArray(codes[pc++]))
+		{
+			return ExceptionEvent();
+		}
 		break;
 
 	case anewarray: //189
 		u2 = ReadU2();
-		ExecuteNewObjectArray(u2);
+		if (!ExecuteNewObjectArray(u2))
+		{
+			return ExceptionEvent();
+		}
 		break;
 	case arraylength:
-		ArrayLength();
+		if (!ArrayLength())
+		{
+			return ExceptionEvent();
+		}
 		break;
 
 		////////////// Control Flow /////////////////////
@@ -1892,6 +2309,24 @@ EventNotify StackFrame::ExecuteCode()
 	case  _goto: // 167 /*(0xa7)*/
 		pc = last_pc + ReadShort();
 		break;
+	case _jsr: // 168 /*(0xa8)*/ Jump to subroutine, pushing the return address
+		{
+			int offset = ReadShort();
+			Slot return_address;
+			return_address.iValue = pc;
+			op_stack->push(return_address);
+			pc = last_pc + offset;
+		}
+		break;
+	case _jsr_w: // 201 /*(0xc9)*/
+		{
+			int offset = ReadInt();
+			Slot return_address;
+			return_address.iValue = pc;
+			op_stack->push(return_address);
+			pc = last_pc + offset;
+		}
+		break;
 		//Table jumping instructions
 
 		////////////// Exceptions ///////////////////////
@@ -2000,13 +2435,19 @@ EventNotify StackFrame::ExecuteCode()
 			thread_stack->return_wide = false;
 		}
 		return EN_POP;
-	case getstatic: //178 (0xb2): Return (void) from method			
+	case getstatic: //178 (0xb2): Return (void) from method
 		index = ReadU2();
-		GetStatic(index);
+		if (!GetStatic(index))
+		{
+			return ExceptionEvent();
+		}
 		break;
-	case putstatic: //179 (0xb3): Return (void) from method			
+	case putstatic: //179 (0xb3): Return (void) from method
 		index = ReadU2();
-		PutStatic(index);
+		if (!PutStatic(index))
+		{
+			return ExceptionEvent();
+		}
 		break;
 		//////////////// Thread Synchronization ////////////////////
 
@@ -2097,9 +2538,12 @@ EventNotify StackFrame::ExecuteCode()
 			op_stack->push(yes ? 1 : 0);
 		}
 		break;
-	case multianewarray:// Release and exit object monitor
+	case multianewarray:
 		u2 = ReadU2();
-		ExecuteNewMultiArray(u2, codes[pc++]);
+		if (!ExecuteNewMultiArray(u2, codes[pc++]))
+		{
+			return ExceptionEvent();
+		}
 		break;
 	case ifnull:
 		index = ReadShort();
@@ -2326,19 +2770,22 @@ LONG64 StackFrame::popLong()
 bool StackFrame::ExecuteNewObject(U2 index)
 {
 	lpClassConstant cc = (lpClassConstant)clazz->const_pool->GetConstant(index);
-	if (!cc)
+	if (!cc || !cc->utf8)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NoClassDefFoundError", "invalid class constant");
+		return false;
+	}
+	lpClass target = NULL;
+	if (!FindClassOrError(class_loader, cc->utf8->bytes, target))
 	{
 		return false;
 	}
-	if (!class_loader)
-	{
-		return false;
-	}
-	lpClass clazz = NULL;
-	class_loader->FindClass(cc->utf8->bytes, clazz);
 	LPOBJECT_REF obj_ref = NULL;
-	if (!VMContext::object_heap->NewObject(clazz, obj_ref))
+	if (!VMContext::object_heap->NewObject(target, obj_ref))
 	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/OutOfMemoryError", "cannot allocate object");
 		return false;
 	}
 	op_stack->pushObject(obj_ref);
@@ -2920,7 +3367,8 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 	MethodRefConstant *method_ref = (MethodRefConstant*)this->clazz->const_pool->GetConstant(index);
 	if (!method_ref)
 	{
-		cout<<"Cannot find method index"<<index<<endl;
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NoSuchMethodError", "invalid method constant index");
 		return false;
 	}
 	// Array classes have no parsed method table, so the generated
@@ -2932,26 +3380,40 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 	{
 		return CloneArrayReceiver();
 	}
-	lpClass clazz = NULL;
-	class_loader->FindClass(method_ref->clazz->GetName(), clazz);
-	if (!clazz)
+	// Resolution is cached on the constant-pool entry; invokestatic and
+	// invokespecial resolve to a fixed method, and the first call of a
+	// virtual site is a useful fallback before dispatch.
+	lpMethod method = method_ref->resolved_method.load(std::memory_order_acquire);
+	lpClass clazz = (method && method->clazz) ? method->clazz : NULL;
+	if (!method)
 	{
-		cout<<"Cannot find class "<<method_ref->clazz->utf8->bytes<<endl;
-		return false;
-	}
-	//lpMethod method = MethodArea::GetMethod(method_ref->GetName());
-	lpMethod method = NULL;
-	if (!clazz->FindMethod(method_ref->simple_name, method))
-	{
-		cout<<"Cannot find method "<<method_ref->GetName()<<endl;
-		return false;
-	}
-	// The resolved method may be declared by a superclass or interface. The
-	// bytecode (and therefore the constant pool) belongs to the declaring
-	// class, so the frame must execute with that class.
-	if (method->clazz)
-	{
-		clazz = method->clazz;
+		if (!FindClassOrError(class_loader, method_ref->clazz->GetName(), clazz))
+		{
+			return false;
+		}
+		if (!clazz->FindMethod(method_ref->simple_name, method))
+		{
+			std::string message = method_ref->clazz->GetName();
+			if (method_ref->nameType && method_ref->nameType->nameUtf8)
+			{
+				message += ".";
+				message += method_ref->nameType->nameUtf8->bytes;
+			}
+			if (method_ref->nameType && method_ref->nameType->descUtf8)
+			{
+				message += method_ref->nameType->descUtf8->bytes;
+			}
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NoSuchMethodError", message.c_str());
+			return false;
+		}
+		// The resolved method may be declared by a superclass or interface.
+		// The frame must execute with the declaring class.
+		if (method->clazz)
+		{
+			clazz = method->clazz;
+		}
+		method_ref->resolved_method.store(method, std::memory_order_release);
 	}
 
 	vector<TypeDesc> type_desc;
@@ -3155,11 +3617,62 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 			}
 		}
 		lpMethod tmp_method = NULL;
-		if (obj->obj_class->FindMethod(method->fullName, tmp_method))
+		lpClass receiver_class = obj->obj_class;
+		if (method_ref->cached_receiver_class.load(std::memory_order_acquire) == receiver_class)
+		{
+			tmp_method = method_ref->cached_method.load(std::memory_order_acquire);
+		}
+		if (!tmp_method)
+		{
+			if (receiver_class->FindMethod(method_ref->simple_name, tmp_method))
+			{
+				// Publish the method before the receiver class that validates
+				// the cache entry.
+				method_ref->cached_method.store(tmp_method, std::memory_order_release);
+				method_ref->cached_receiver_class.store(receiver_class,
+					std::memory_order_release);
+			}
+		}
+		if (tmp_method)
 		{
 			method = tmp_method;
-			clazz = method->clazz;
+			if (method->clazz)
+			{
+				clazz = method->clazz;
+			}
 		}
+	}
+	if ((method->accFlag & ACM_ABSTRACT) != 0)
+	{
+		std::string message = (method->clazz && method->clazz->thisClass)
+			? method->clazz->thisClass->GetName() : "";
+		if (method->fullName)
+		{
+			message += ".";
+			message += method->fullName;
+		}
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/AbstractMethodError", message.c_str());
+		return false;
+	}
+	if (!method->isNative() && !method->code_attr)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/AbstractMethodError", "method has no code");
+		return false;
+	}
+	// Bounded inlining: execute trivial getters/setters, constant returns and
+	// empty bodies at the call site.  A rejection leaves the normal call path
+	// untouched; a failure inside the inlined body (NPE, missing field) sets a
+	// pending exception that must be propagated.
+	if (type != STATIC_METHOD && !VMContext::pending_exception &&
+	    TryInline(clazz, method, type_desc, result_desc))
+	{
+		return true;
+	}
+	if (VMContext::pending_exception)
+	{
+		return false;
 	}
 	//----------------------------------------------------------------------------------------------
 	// Synchronized methods acquire the receiver (or the declaring class for
@@ -3217,6 +3730,227 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 	{
 		return ExecuteNativeMethod(clazz, method, type_desc, result_desc);
 	}
+}
+
+// Executes a trivial method body directly at the call site.  The bounded set
+// (empty body, primitive/null constant, field getter, field setter) is
+// recognised once per Method by AnalyzeInline and cached in the method's
+// atomics, so the hot path is a single acquire load.
+bool StackFrame::TryInline(lpClass declaring, lpMethod method,
+                           vector<TypeDesc> &type_desc, TypeDesc &result_desc)
+{
+	(void)declaring;
+	if (!method || method->isStatic() || method->isSpecial())
+	{
+		return false;
+	}
+	int kind = method->inline_kind.load(std::memory_order_acquire);
+	if (kind == 0)
+	{
+		int cp = 0;
+		int analysed = AnalyzeInline(method, cp);
+		// Publish the index before the kind so a concurrent reader that sees
+		// the kind also sees the matching constant index.
+		method->inline_cp.store(cp, std::memory_order_relaxed);
+		method->inline_kind.store(analysed, std::memory_order_release);
+		kind = analysed;
+	}
+	if (kind == IK_NONE || kind == 0)
+	{
+		return false;
+	}
+	if (method->isNative() || !method->code_attr ||
+	    (method->accFlag & (ACM_ABSTRACT | ACM_SYNCHRONIZED)) != 0)
+	{
+		return false;
+	}
+
+	int arg_slots = 0;
+	for (size_t ti = 0; ti < type_desc.size(); ti++)
+	{
+		DATA_TYPE at = type_desc[ti].data_type;
+		arg_slots += (at == DT_LONG || at == DT_DOUBLE) ? 2 : 1;
+	}
+
+	lpField field = NULL;
+	TypeDesc field_type;
+	if (kind == IK_GETTER || kind == IK_SETTER)
+	{
+		int cp_index = method->inline_cp.load(std::memory_order_relaxed);
+		ConstantPool *pool = method->clazz ? method->clazz->const_pool : NULL;
+		FieldRefConstant *frc = pool
+			? (FieldRefConstant*)pool->GetConstant(cp_index) : NULL;
+		if (!frc)
+		{
+			return false;
+		}
+		// Resolve while the receiver is still on the operand stack: class
+		// loading can collect, and the stack is a GC root.
+		lpClassLoader loader = method->clazz ? method->clazz->classloader : NULL;
+		if (!ResolveInstanceField(loader, frc, field))
+		{
+			return false;
+		}
+		LPSTR fdesc = (frc->nameType && frc->nameType->descUtf8)
+			? frc->nameType->descUtf8->GetName() : NULL;
+		if (!fdesc ||
+		    !parse_desc_type(fdesc, field_type, static_cast<int>(strlen(fdesc))))
+		{
+			return false;
+		}
+		if (field_type.check_array)
+		{
+			field_type.data_type = DT_ARRAY;
+		}
+		bool ref_kind = (field_type.data_type == DT_REF ||
+		                 field_type.data_type == DT_ARRAY);
+		if (kind == IK_GETTER)
+		{
+			bool ret_ref = (result_desc.data_type == DT_REF ||
+			                result_desc.data_type == DT_ARRAY);
+			if ((ref_kind != ret_ref) ||
+			    (!ref_kind && field_type.data_type != result_desc.data_type))
+			{
+				return false;
+			}
+		}
+		else
+		{
+			if (type_desc.size() != 1)
+			{
+				return false;
+			}
+			bool arg_ref = (type_desc[0].data_type == DT_REF ||
+			                type_desc[0].data_type == DT_ARRAY);
+			if ((ref_kind != arg_ref) ||
+			    (!ref_kind && field_type.data_type != type_desc[0].data_type))
+			{
+				return false;
+			}
+		}
+	}
+	else if (!type_desc.empty())
+	{
+		// Constants and empty bodies only have a receiver on the stack.
+		return false;
+	}
+	if (kind == IK_EMPTY && result_desc.data_type != DT_VOID)
+	{
+		return false;
+	}
+
+	Slot recv;
+	op_stack->top(arg_slots, recv);
+	LPOBJECT_REF obj_ref = recv.heapPtr;
+	if (!obj_ref)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NullPointerException", "null object reference");
+		return false;
+	}
+
+	Slot dropped;
+	if (kind == IK_SETTER)
+	{
+		Slot value;
+		switch (field_type.data_type)
+		{
+		case DT_LONG:
+			value.lValue = popLong();
+			break;
+		case DT_DOUBLE:
+			value.dValue = popDouble();
+			break;
+		default:
+			op_stack->pop(value);
+			break;
+		}
+		op_stack->pop(dropped); // receiver
+		lpObject obj = NULL;
+		if (!VMContext::object_heap->GetObject(obj_ref, obj) || !obj)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NullPointerException", "invalid object reference");
+			return false;
+		}
+		lpFieldValue fv = obj->GetFieldValue(field);
+		if (!fv)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NoSuchFieldError", "field storage is missing");
+			return false;
+		}
+		fv->field_value = value;
+		return true;
+	}
+
+	op_stack->pop(dropped); // receiver
+	if (kind == IK_EMPTY)
+	{
+		return true;
+	}
+	if (kind == IK_CONST_INT)
+	{
+		const U1 *codes = method->code_attr->codes;
+		op_stack->push(static_cast<int>(codes[0]) - static_cast<int>(iconst_0));
+		return true;
+	}
+	if (kind == IK_CONST_LONG)
+	{
+		const U1 *codes = method->code_attr->codes;
+		op_stack->push(static_cast<LONG64>(codes[0] == lconst_1 ? 1 : 0));
+		return true;
+	}
+	if (kind == IK_CONST_FLOAT)
+	{
+		const U1 *codes = method->code_attr->codes;
+		op_stack->push(static_cast<float>(codes[0] - fconst_0));
+		return true;
+	}
+	if (kind == IK_CONST_DOUBLE)
+	{
+		const U1 *codes = method->code_attr->codes;
+		op_stack->push(static_cast<double>(codes[0] == dconst_1 ? 1.0 : 0.0));
+		return true;
+	}
+	if (kind == IK_CONST_NULL)
+	{
+		Slot null_slot;
+		null_slot.heapPtr = NULL;
+		op_stack->push(null_slot);
+		return true;
+	}
+	if (kind == IK_GETTER)
+	{
+		lpObject obj = NULL;
+		if (!VMContext::object_heap->GetObject(obj_ref, obj) || !obj)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NullPointerException", "invalid object reference");
+			return false;
+		}
+		lpFieldValue fv = obj->GetFieldValue(field);
+		if (!fv)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NoSuchFieldError", "field storage is missing");
+			return false;
+		}
+		switch (field_type.data_type)
+		{
+		case DT_LONG:
+			op_stack->push(fv->field_value.lValue);
+			break;
+		case DT_DOUBLE:
+			op_stack->push(fv->field_value.dValue);
+			break;
+		default:
+			op_stack->push(fv->field_value);
+			break;
+		}
+		return true;
+	}
+	return false;
 }
 
 bool StackFrame::ExecuteNormalMethod(lpClass clazz, lpMethod method, vector<TypeDesc> &type_desc)
@@ -3302,7 +4036,11 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 			if (!VMContext::native_libs->GetNativeFunction(jni_name, native_func) ||
 			    !native_func)
 			{
-				throw new VMExecutorException((LPSTR)(std::string("Cannot find native method in library: ") + jni_name).c_str());
+				std::string message = "Cannot find native method in library: ";
+				message += jni_name;
+				VMContext::pending_exception = CreateJavaException(
+					"java/lang/UnsatisfiedLinkError", message.c_str());
+				return false;
 			}
 		}
 	}
@@ -4087,16 +4825,25 @@ bool StackFrame::ExecuteNewArray(U1 index)
 		throw new VMExecutorException("Invalid newarray type.");
 	}
 	char name[3] = { '[', atype, '\0' };
-	lpClass clazz = NULL;
-	if (!class_loader->FindClass(name, clazz))
+	lpClass array_class = NULL;
+	if (!FindClassOrError(class_loader, name, array_class))
 	{
 		return false;
 	}
 	Slot slot;
+	op_stack->top(0, slot);
+	if (slot.iValue < 0)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NegativeArraySizeException", "negative array size");
+		return false;
+	}
 	op_stack->pop(slot);
 	LPOBJECT_REF obj_ref = NULL;
-	if (!VMContext::object_heap->NewArrayObject(slot.iValue, clazz, obj_ref))
+	if (!VMContext::object_heap->NewArrayObject(slot.iValue, array_class, obj_ref))
 	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/OutOfMemoryError", "cannot allocate array");
 		return false;
 	}
 	op_stack->pushObject(obj_ref);
@@ -4126,14 +4873,26 @@ bool StackFrame::ExecuteNewObjectArray(U2 index)
 	{
 		array_name = "[L" + component + ";";
 	}
-	lpClass clazz = NULL;
-	class_loader->FindClass(array_name.c_str(), clazz);
+	lpClass array_class = NULL;
+	if (!FindClassOrError(class_loader, array_name.c_str(), array_class))
+	{
+		return false;
+	}
 
 	Slot slot;
+	op_stack->top(0, slot);
+	if (slot.iValue < 0)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NegativeArraySizeException", "negative array size");
+		return false;
+	}
 	op_stack->pop(slot);
 	LPOBJECT_REF obj_ref = NULL;
-	if (!VMContext::object_heap->NewObjectArrayObject(slot.iValue, clazz, obj_ref))
+	if (!VMContext::object_heap->NewObjectArrayObject(slot.iValue, array_class, obj_ref))
 	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/OutOfMemoryError", "cannot allocate array");
 		return false;
 	}
 	op_stack->pushObject(obj_ref);
@@ -4151,79 +4910,261 @@ bool StackFrame::ExecuteNewMultiArray(U2 index, int count)
 	{
 		return false;
 	}
-	lpClass clazz = NULL;
-	if (!class_loader->FindClass(cc->utf8->bytes, clazz))
+	lpClass array_class = NULL;
+	if (!FindClassOrError(class_loader, cc->utf8->bytes, array_class))
 	{
 		return false;
 	}
 
-	Slot slot;
 	LPINT32 nums = new INT32[count];
-	for (int i = count - 1; i >= 0; i--)
+	Slot slot;
+	for (int i = 0; i < count; i++)
 	{
-		op_stack->pop(slot);
+		op_stack->top(i, slot);
 		nums[i] = slot.iValue;
 	}
+	for (int i = 0; i < count; i++)
+	{
+		if (nums[i] < 0)
+		{
+			delete[] nums;
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NegativeArraySizeException", "negative array size");
+			return false;
+		}
+	}
+	for (int i = 0; i < count; i++)
+	{
+		op_stack->pop(slot);
+	}
 	LPOBJECT_REF obj_ref = NULL;
-	bool ok = VMContext::object_heap->NewMultiArrayObject(nums, count, clazz, obj_ref);
+	bool ok = VMContext::object_heap->NewMultiArrayObject(nums, count, array_class, obj_ref);
 	delete[] nums;
 	if (!ok)
 	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/OutOfMemoryError", "cannot allocate multi-dimensional array");
 		return false;
 	}
 	op_stack->pushObject(obj_ref);
 	return true;
 }
 
-void StackFrame::SetArrayIndex(int index, Slot &slot)
+namespace {
+
+lpClass LoadedComponentClass(lpClassLoader loader, const char *internal_name)
 {
-	VMLock lk;
-	Slot ary;
-	op_stack->pop(ary);
-	LPOBJECT_REF obj_ref = ary.heapPtr;
-	if (!obj_ref)
+	if (!loader || !internal_name || !internal_name[0])
 	{
-		throw new VMExecutorException("Array object heap ptr is invalid.");
+		return NULL;
 	}
-	lpObject obj = NULL;
-	if (!VMContext::object_heap->GetObject(obj_ref, obj))
-	{
-		throw new VMExecutorException("Array object is invalid.");
-	}
-	if (!obj->array_var)
-	{
-		throw new VMExecutorException("Array object is not inited.");
-	}
-	if (index < 0 || index >= obj->array_length)
-	{
-		throw new VMExecutorException("Array index out of memory.");
-	}
-	obj->SetArrayIndex(index, slot);
+	lpClass clazz = NULL;
+	loader->GetLoadedClass(internal_name, clazz);
+	return clazz;
 }
 
-void StackFrame::LoadArray(DATA_TYPE data_type)
+// True when a value of class src may be stored into an array whose element
+// class is target.  Only already-loaded classes are consulted: the aastore
+// check must not trigger class loading (and therefore a GC) while the
+// receiver/value live only in operand-stack slots.
+bool ArrayElementAccepts(lpClassLoader loader, lpClass target, lpClass src)
+{
+	if (!target || !src)
+	{
+		return true;
+	}
+	if (ClassIsAssignable(target, src))
+	{
+		return true;
+	}
+	const char *tn = (target->thisClass && target->thisClass->GetName())
+		? target->thisClass->GetName() : NULL;
+	const char *sn = (src->thisClass && src->thisClass->GetName())
+		? src->thisClass->GetName() : NULL;
+	if (!tn || !sn)
+	{
+		return true;
+	}
+	if (sn[0] == '[')
+	{
+		// Arrays are assignable to Object, Cloneable and java.io.Serializable.
+		if (strcmp(tn, "java/lang/Object") == 0 ||
+		    strcmp(tn, "java/lang/Cloneable") == 0 ||
+		    strcmp(tn, "java/io/Serializable") == 0)
+		{
+			return true;
+		}
+		if (tn[0] == '[')
+		{
+			const char *tc = tn + 1;
+			const char *sc = sn + 1;
+			if (tc[0] == 'L' && sc[0] == 'L')
+			{
+				std::string tcn(tc + 1, strlen(tc) - 2);
+				std::string scn(sc + 1, strlen(sc) - 2);
+				return ArrayElementAccepts(loader,
+					LoadedComponentClass(loader, tcn.c_str()),
+					LoadedComponentClass(loader, scn.c_str()));
+			}
+			if (tc[0] == '[' && sc[0] == '[')
+			{
+				return ArrayElementAccepts(loader,
+					LoadedComponentClass(loader, tc),
+					LoadedComponentClass(loader, sc));
+			}
+			return strcmp(tc, sc) == 0;
+		}
+	}
+	return false;
+}
+
+// Returns the element class of an array object, or NULL for primitive arrays
+// or classes that are not loaded.
+lpClass ArrayElementClass(lpClassLoader loader, lpObject array)
+{
+	if (!array || !array->obj_class || !array->obj_class->thisClass)
+	{
+		return NULL;
+	}
+	const char *name = array->obj_class->thisClass->GetName();
+	if (!name || name[0] != '[')
+	{
+		return NULL;
+	}
+	const char *comp = name + 1;
+	if (comp[0] == 'L' && comp[strlen(comp) - 1] == ';')
+	{
+		std::string internal(comp + 1, strlen(comp) - 2);
+		return LoadedComponentClass(loader, internal.c_str());
+	}
+	if (comp[0] == '[')
+	{
+		return LoadedComponentClass(loader, comp);
+	}
+	return NULL;
+}
+
+bool SetArrayException(const char *class_name, const std::string &message)
+{
+	VMContext::pending_exception = CreateJavaException(class_name, message.c_str());
+	return false;
+}
+
+} // namespace
+
+bool StackFrame::SetArrayIndex(int value_slots)
 {
 	VMLock lk;
-	Slot ary, slot;
-	op_stack->pop(slot);
-	op_stack->pop(ary);
+	Slot value_low;
+	Slot value_high;
+	Slot index_slot;
+	Slot ary;
+	if (value_slots == 2)
+	{
+		op_stack->top(0, value_high);
+		op_stack->top(1, value_low);
+	}
+	else
+	{
+		op_stack->top(0, value_low);
+		value_high = Slot();
+	}
+	op_stack->top(value_slots, index_slot);
+	op_stack->top(value_slots + 1, ary);
+
 	LPOBJECT_REF obj_ref = ary.heapPtr;
 	if (!obj_ref)
 	{
-		throw new VMExecutorException("Array object heap ptr is invalid.");
+		return SetArrayException("java/lang/NullPointerException",
+			"array reference is null");
 	}
 	lpObject obj = NULL;
-	if (!VMContext::object_heap->GetObject(obj_ref, obj))
+	if (!VMContext::object_heap->GetObject(obj_ref, obj) || !obj)
 	{
-		throw new VMExecutorException("Array object is invalid.");
+		return SetArrayException("java/lang/NullPointerException",
+			"array reference is invalid");
 	}
 	if (!obj->array_var)
 	{
-		throw new VMExecutorException("Array object is not inited.");
+		return SetArrayException("java/lang/ClassCastException",
+			"value is not an array");
 	}
-	if (slot.iValue < 0 || slot.iValue >= obj->array_length)
+	int index = index_slot.iValue;
+	if (index < 0 || index >= obj->array_length)
 	{
-		throw new VMExecutorException("Array index out of memory.");
+		char msg[128];
+		snprintf(msg, sizeof(msg), "Index %d out of bounds for length %d",
+			index, obj->array_length);
+		return SetArrayException("java/lang/ArrayIndexOutOfBoundsException", msg);
+	}
+
+	Slot value = value_low;
+	if (value_slots == 2)
+	{
+		WByteValue wb(value_low.bytes, value_high.bytes);
+		value.dValue = wb.dValue;
+	}
+
+	if (obj->array_data_type == DT_REF || obj->array_data_type == DT_ARRAY)
+	{
+		LPOBJECT_REF value_ref = value.heapPtr;
+		if (value_ref)
+		{
+			lpClass element = ArrayElementClass(class_loader, obj);
+			lpObject value_obj = NULL;
+			if (element && VMContext::object_heap->GetObject(value_ref, value_obj) && value_obj)
+			{
+				if (!ArrayElementAccepts(class_loader, element, value_obj->obj_class))
+				{
+					char msg[256];
+					snprintf(msg, sizeof(msg),
+						"cannot store %s into array of %s",
+						ObjectClassName(value_obj), ObjectClassName(obj));
+					return SetArrayException("java/lang/ArrayStoreException", msg);
+				}
+			}
+		}
+	}
+
+	obj->SetArrayIndex(index, value);
+	for (int i = 0; i < value_slots + 2; i++)
+	{
+		Slot discarded;
+		op_stack->pop(discarded);
+	}
+	return true;
+}
+
+bool StackFrame::LoadArray(DATA_TYPE data_type)
+{
+	VMLock lk;
+	Slot ary, index_slot;
+	op_stack->top(0, index_slot);
+	op_stack->top(1, ary);
+	LPOBJECT_REF obj_ref = ary.heapPtr;
+	if (!obj_ref)
+	{
+		return SetArrayException("java/lang/NullPointerException",
+			"array reference is null");
+	}
+	lpObject obj = NULL;
+	if (!VMContext::object_heap->GetObject(obj_ref, obj) || !obj)
+	{
+		return SetArrayException("java/lang/NullPointerException",
+			"array reference is invalid");
+	}
+	if (!obj->array_var)
+	{
+		return SetArrayException("java/lang/ClassCastException",
+			"value is not an array");
+	}
+	int index = index_slot.iValue;
+	if (index < 0 || index >= obj->array_length)
+	{
+		char msg[128];
+		snprintf(msg, sizeof(msg), "Index %d out of bounds for length %d",
+			index, obj->array_length);
+		return SetArrayException("java/lang/ArrayIndexOutOfBoundsException", msg);
 	}
 	Slot ret;
 	switch (data_type)
@@ -4231,53 +5172,56 @@ void StackFrame::LoadArray(DATA_TYPE data_type)
 	case DT_BYTE:
 		{
 			jbyte *bytes = (jbyte*)obj->array_var;
-			ret.bValue = bytes[slot.iValue];
+			ret.bValue = bytes[index];
 			break;
 		}
 	case DT_CHAR:
 		{
 			jchar *vals = (jchar*)obj->array_var;
-			ret.cValue = vals[slot.iValue];
+			ret.cValue = vals[index];
 			break;
 		}
 	case DT_DOUBLE:
 		{
 			jdouble *vals = (jdouble*)obj->array_var;
-			ret.dValue = vals[slot.iValue];
+			ret.dValue = vals[index];
 			break;
 		}
 	case DT_FLOAT:
 		{
 			jfloat *vals = (jfloat*)obj->array_var;
-			ret.fValue = vals[slot.iValue];
+			ret.fValue = vals[index];
 			break;
 		}
 	case DT_INT:
 		{
 			jint *vals = (jint*)obj->array_var;
-			ret.iValue = vals[slot.iValue];
+			ret.iValue = vals[index];
 			break;
 		}
 	case DT_LONG:
 		{
 			jlong *vals = (jlong*)obj->array_var;
-			ret.lValue = vals[slot.iValue];
+			ret.lValue = vals[index];
 			break;
 		}
 	case DT_SHORT:
 		{
 			jshort *vals = (jshort*)obj->array_var;
-			ret.sValue = vals[slot.iValue];
+			ret.sValue = vals[index];
 			break;
 		}
 	case DT_ARRAY:
 	case DT_REF:
 		{
 			LPOBJECT_REF* refs = (LPOBJECT_REF*)obj->array_var;
-			ret.heapPtr = refs[slot.iValue];
+			ret.heapPtr = refs[index];
 			break;
 		}
 	}
+	Slot discarded;
+	op_stack->pop(discarded);
+	op_stack->pop(discarded);
 	if (data_type == DT_LONG)
 	{
 		op_stack->push(ret.lValue);
@@ -4290,58 +5234,58 @@ void StackFrame::LoadArray(DATA_TYPE data_type)
 	{
 		op_stack->push(ret);
 	}
+	return true;
 }
 
-void StackFrame::ArrayLength()
+bool StackFrame::ArrayLength()
 {
 	VMLock lk;
 	Slot slot;
-	op_stack->pop(slot);
+	op_stack->top(0, slot);
 	LPOBJECT_REF obj_ref = slot.heapPtr;
 	if (!obj_ref)
 	{
-		throw new VMExecutorException("Array object heap ptr is invalid.");
+		return SetArrayException("java/lang/NullPointerException",
+			"array reference is null");
 	}
 	lpObject obj = NULL;
-	if (!VMContext::object_heap->GetObject(obj_ref, obj))
+	if (!VMContext::object_heap->GetObject(obj_ref, obj) || !obj)
 	{
-		throw new VMExecutorException("Array object is invalid.");
+		return SetArrayException("java/lang/NullPointerException",
+			"array reference is invalid");
 	}
 	if (!obj->array_var)
 	{
-		throw new VMExecutorException("Array object is not inited.");
+		return SetArrayException("java/lang/ClassCastException",
+			"value is not an array");
 	}
+	op_stack->pop(slot);
 	op_stack->push(obj->array_length);
+	return true;
 }
 
-void StackFrame::PutStatic(U2 index)
+bool StackFrame::PutStatic(U2 index)
 {
 	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
-		throw new VMExecutorException("Put static field have the invalid index.");
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NoSuchFieldError", "invalid field constant index");
+		return false;
 	}
-	// Resolve the class that declares the field (it may differ from the
-	// current class for inherited/other-class statics).
-	lpClass target_class = NULL;
-	if (!class_loader->FindClass(frc->clazz->GetName(), target_class) || !target_class)
+	lpField field = NULL;
+	lpFieldValue fv = NULL;
+	if (!ResolveStaticField(class_loader, frc, field, fv))
 	{
-		throw new VMExecutorException("Class does not exists when put static field.");
+		return false;
 	}
-	const char *name = frc->nameType && frc->nameType->nameUtf8 ? frc->nameType->nameUtf8->bytes : NULL;
-	const char *desc = frc->nameType && frc->nameType->descUtf8 ? frc->nameType->descUtf8->bytes : NULL;
-	lpField field = JniFindField(target_class, name, desc, true);
-	lpFieldValue fv = JniStaticFieldValue(target_class, field, true);
-	if (!fv)
-	{
-		throw new VMExecutorException("Class field does not exists.");
-	}
-
+	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
+		? frc->nameType->descUtf8->GetName() : NULL;
 	TypeDesc type_desc;
 	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
 	{
-		throw new VMExecutorException("Invalid static field descriptor.");
+		return false;
 	}
 	// An array descriptor such as [J keeps its element type in data_type; the
 	// field itself is always a single reference slot.
@@ -4361,40 +5305,32 @@ void StackFrame::PutStatic(U2 index)
 		op_stack->pop(fv->field_value);
 		break;
 	}
+	return true;
 }
 
-void StackFrame::GetStatic(U2 index)
+bool StackFrame::GetStatic(U2 index)
 {
 	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
-		throw new VMExecutorException("Get static field have the invalid index.");
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NoSuchFieldError", "invalid field constant index");
+		return false;
 	}
-
-	lpClass target_class = NULL;
-	if (!class_loader->FindClass(frc->clazz->GetName(), target_class) || !target_class)
+	lpField field = NULL;
+	lpFieldValue fv = NULL;
+	if (!ResolveStaticField(class_loader, frc, field, fv))
 	{
-		throw new VMExecutorException("Fail to find class when get static field.");
+		return false;
 	}
-
-	const char *name = frc->nameType && frc->nameType->nameUtf8 ? frc->nameType->nameUtf8->bytes : NULL;
-	const char *desc = frc->nameType && frc->nameType->descUtf8 ? frc->nameType->descUtf8->bytes : NULL;
-	lpField field = JniFindField(target_class, name, desc, true);
-	// A static field without an explicit initializer has no <clinit> entry;
-	// create its default value lazily on first access.
-	lpFieldValue fv = JniStaticFieldValue(target_class, field, true);
-	if (!fv)
-	{
-		throw new VMExecutorException("Static field does not exists.");
-	}
+	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
+		? frc->nameType->descUtf8->GetName() : NULL;
 	TypeDesc type_desc;
 	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
 	{
-		throw new VMExecutorException("Invalid static field descriptor.");
+		return false;
 	}
-	// An array descriptor such as [J keeps its element type in data_type; the
-	// field itself is always a single reference slot.
 	if (type_desc.check_array)
 	{
 		type_desc.data_type = DT_ARRAY;
@@ -4411,36 +5347,57 @@ void StackFrame::GetStatic(U2 index)
 		op_stack->push(fv->field_value);
 		break;
 	}
+	return true;
 }
 
-void StackFrame::GetField(U2 index)
+bool StackFrame::GetField(U2 index)
 {
 	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
-		throw new VMExecutorException("Get field have the invalid index.");
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NoSuchFieldError", "invalid field constant index");
+		return false;
+	}
+	// Resolve before popping the receiver: resolution can load classes and
+	// therefore collect, and the receiver must stay rooted on the operand
+	// stack until the field is known.
+	lpField field = NULL;
+	if (!ResolveInstanceField(class_loader, frc, field))
+	{
+		return false;
 	}
 	Slot slot_obj;
 	op_stack->pop(slot_obj);
 	LPOBJECT_REF obj_ref = slot_obj.heapPtr;
 	if (!obj_ref)
 	{
-		throw new VMExecutorException("Get field object heap ptr is invalid.");
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NullPointerException", "null object reference");
+		return false;
 	}
 	lpObject obj = NULL;
-	if (!VMContext::object_heap->GetObject(obj_ref, obj))
+	if (!VMContext::object_heap->GetObject(obj_ref, obj) || !obj)
 	{
-		throw new VMExecutorException("Get field object is invalid.");
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NullPointerException", "invalid object reference");
+		return false;
 	}
-	lpFieldValue fv = obj->varants[string(frc->simple_name)];
+	lpFieldValue fv = obj->GetFieldValue(field);
 	if (!fv)
 	{
-		throw new VMExecutorException("Get field value from object is invalid");
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NoSuchFieldError", "field storage is missing");
+		return false;
 	}
+	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
+		? frc->nameType->descUtf8->GetName() : NULL;
 	TypeDesc type_desc;
-	LPSTR desc = frc->nameType->descUtf8->GetName();
-	parse_desc_type(desc, type_desc, strlen(desc));
+	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	{
+		return false;
+	}
 	if (type_desc.check_array)
 	{
 		type_desc.data_type = DT_ARRAY;
@@ -4466,25 +5423,37 @@ void StackFrame::GetField(U2 index)
 	default:
 		break;
 	}
+	return true;
 }
 
-void StackFrame::PutField(U2 index)
+bool StackFrame::PutField(U2 index)
 {
 	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
-		throw new VMExecutorException("Put field have the invalid index.");
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NoSuchFieldError", "invalid field constant index");
+		return false;
 	}
-
-	Slot slot_val;
+	lpField field = NULL;
+	if (!ResolveInstanceField(class_loader, frc, field))
+	{
+		return false;
+	}
+	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
+		? frc->nameType->descUtf8->GetName() : NULL;
 	TypeDesc type_desc;
-	LPSTR desc = frc->nameType->descUtf8->GetName();
-	parse_desc_type(desc, type_desc, strlen(desc));
+	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	{
+		return false;
+	}
 	if (type_desc.check_array)
 	{
 		type_desc.data_type = DT_ARRAY;
 	}
+
+	Slot slot_val;
 	switch (type_desc.data_type)
 	{
 	case DT_BOOL:
@@ -4512,20 +5481,26 @@ void StackFrame::PutField(U2 index)
 	LPOBJECT_REF obj_ref = slot_obj.heapPtr;
 	if (!obj_ref)
 	{
-		throw new VMExecutorException("Put field object heap ptr is invalid.");
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NullPointerException", "null object reference");
+		return false;
 	}
 	lpObject obj = NULL;
-	if (!VMContext::object_heap->GetObject(obj_ref, obj))
+	if (!VMContext::object_heap->GetObject(obj_ref, obj) || !obj)
 	{
-		throw new VMExecutorException("Put field object is invalid.");
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NullPointerException", "invalid object reference");
+		return false;
 	}
-	lpFieldValue fv = obj->varants[string(frc->simple_name)];
+	lpFieldValue fv = obj->GetFieldValue(field);
 	if (!fv)
 	{
-		throw new VMExecutorException("Put field value from object is invalid");
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NoSuchFieldError", "field storage is missing");
+		return false;
 	}
-	
 	fv->field_value = slot_val;
+	return true;
 }
 
 void StackFrame::TableSwitch()

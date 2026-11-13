@@ -46,16 +46,16 @@ void JObject::DeleteArray()
 
 JObject::~JObject()
 {
-	FIELD_MAP::iterator it = varants.begin();
-	for(; it != varants.end(); it++)
+	// Values are owned exactly once, through owned_values.  Both the name map
+	// and the slot vector may alias the same FieldValue, so deleting through
+	// either of them would double free.
+	for (size_t i = 0; i < owned_values.size(); i++)
 	{
-		if (it->second)
-		{
-			delete it->second;
-			it->second = NULL;
-		}
+		delete owned_values[i];
 	}
+	owned_values.clear();
 	varants.clear();
+	instance_slots.clear();
 	obj_class = NULL;
 	DeleteArray();
 }
@@ -71,6 +71,8 @@ bool JObject::newInstance(lpClass obj_class)
 	// the whole superclass chain (matching the JVM). Without this, subclass
 	// constructors cannot initialise Throwable.detailMessage or any other
 	// inherited field.
+	int total = obj_class->EnsureInstanceLayout();
+	instance_slots.assign(total > 0 ? total : 0, (lpFieldValue)NULL);
 	for (lpClass c = obj_class; c; c = c->super_class)
 	{
 		for (int i = 0; i < c->fieldCount; i++)
@@ -86,11 +88,29 @@ bool JObject::newInstance(lpClass obj_class)
 			}
 			lpFieldValue fv = new FieldValue(field);
 			fv->initialize();
+			owned_values.push_back(fv);
+			if (field->slot >= 0 && static_cast<size_t>(field->slot) < instance_slots.size())
+			{
+				instance_slots[field->slot] = fv;
+			}
+			// Keep the historical name-keyed entry for code that looks fields
+			// up by "<name>:<descriptor>" (the JNI/reflection paths use Field
+			// identity directly).
 			varants[string(field->GetSimpleName())] = fv;
 		}
 	}
 
 	return true;
+}
+
+void JObject::AdoptFieldValue(const string &key, lpFieldValue value)
+{
+	if (!value)
+	{
+		return;
+	}
+	owned_values.push_back(value);
+	varants[key] = value;
 }
 
 bool JObject::newArrayInstance(int size)
@@ -218,6 +238,10 @@ lpFieldValue JObject::GetFieldValue(lpField field)
 	if (!field)
 	{
 		return NULL;
+	}
+	if (field->slot >= 0 && static_cast<size_t>(field->slot) < instance_slots.size())
+	{
+		return instance_slots[field->slot];
 	}
 	if (!field->simple_name)
 	{

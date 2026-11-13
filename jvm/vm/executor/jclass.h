@@ -47,6 +47,14 @@ public:
 	// repeated initialisation from JNI GetStaticMethodID/GetStaticFieldID.
 	bool initialized_state;
 
+	// Instance field layout: instance fields of the superclass chain occupy
+	// slots [0, instance_field_total).  Fields declared by this class start at
+	// instance_field_base, so a subclass field that hides a superclass field
+	// still gets distinct storage.
+	int instance_field_base;
+	int instance_field_total;
+	bool instance_layout_ready;
+
 public:
 	Class();
 
@@ -59,6 +67,11 @@ public:
 	void LoadSuperClass();
 	bool initialize(bool load_super = true);
 	bool FindMethod(LPSTR method_name, lpMethod& method);
+
+	// Assigns Field::slot for every instance field in the superclass chain
+	// and returns the total number of instance slots for objects of this
+	// class.  Idempotent; safe to call before the class is initialised.
+	int EnsureInstanceLayout();
 
 	void StoreField(LPSTR field_name, lpField field)
 	{

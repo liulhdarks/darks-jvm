@@ -5,13 +5,37 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <map>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace darksjit {
 
 namespace {
+
+// Compiled programs live for the lifetime of the process.  They are owned
+// here, not by the Method objects (methods are never reclaimed), so that the
+// allocations are still released by a static destructor and leak checkers
+// stay clean after a JIT-enabled run.
+struct ProgramPool
+{
+	std::mutex mutex;
+	std::vector<Program *> programs;
+
+	~ProgramPool()
+	{
+		for (size_t i = 0; i < programs.size(); i++)
+		{
+			delete programs[i];
+		}
+	}
+};
+
+ProgramPool &GetProgramPool()
+{
+	static ProgramPool pool;
+	return pool;
+}
 
 bool ReadEnabled()
 {
@@ -283,31 +307,6 @@ bool Compile(lpMethod method, Program &program)
 	return !program.insns.empty();
 }
 
-struct Entry
-{
-	int count;
-	const Program *program;
-	bool failed;
-
-	Entry() : count(0), program(NULL), failed(false) {}
-};
-
-typedef std::map<lpMethod, Entry> Registry;
-
-Registry &GetRegistry()
-{
-	// Kept alive for the process lifetime; the pointer itself is a global so
-	// leak checkers can reach every compiled program.
-	static Registry *registry = new Registry();
-	return *registry;
-}
-
-std::mutex &GetMutex()
-{
-	static std::mutex *mutex = new std::mutex();
-	return *mutex;
-}
-
 std::string MethodName(lpMethod method)
 {
 	if (!method)
@@ -349,27 +348,37 @@ const Program *Acquire(lpMethod method)
 	{
 		return NULL;
 	}
-	std::lock_guard<std::mutex> lock(GetMutex());
-	Registry &registry = GetRegistry();
-	Entry &entry = registry[method];
-	if (entry.program)
+	// Fast path: no lock, one acquire load of the per-method state.
+	int state = method->jit_state.load(std::memory_order_acquire);
+	if (state == 2)
 	{
-		return entry.program;
+		return method->jit_program.load(std::memory_order_acquire);
 	}
-	if (entry.failed)
+	if (state == 3 || state == 1)
+	{
+		// Unsupported, or another coroutine is already compiling: interpret
+		// for now.  Waiting here would block a worker under M:N scheduling.
+		return NULL;
+	}
+	if (method->jit_hit_count.fetch_add(1, std::memory_order_relaxed) + 1 <
+	    Threshold())
 	{
 		return NULL;
 	}
-	entry.count++;
-	if (entry.count < Threshold())
+	int expected = 0;
+	if (!method->jit_state.compare_exchange_strong(expected, 1,
+	        std::memory_order_acq_rel))
 	{
-		return NULL;
+		// Lost the race (another thread is compiling or already finished).
+		return expected == 2
+			? method->jit_program.load(std::memory_order_acquire)
+			: NULL;
 	}
 	Program *program = new Program();
 	if (!Compile(method, *program))
 	{
 		delete program;
-		entry.failed = true;
+		method->jit_state.store(3, std::memory_order_release);
 		if (Verbose())
 		{
 			fprintf(stderr, "[jit] fallback %s (unsupported bytecode)\n",
@@ -377,7 +386,14 @@ const Program *Acquire(lpMethod method)
 		}
 		return NULL;
 	}
-	entry.program = program;
+	// Publish the program before advertising the compiled state.
+	{
+		ProgramPool &pool = GetProgramPool();
+		std::lock_guard<std::mutex> lock(pool.mutex);
+		pool.programs.push_back(program);
+	}
+	method->jit_program.store(program, std::memory_order_release);
+	method->jit_state.store(2, std::memory_order_release);
 	if (Verbose())
 	{
 		fprintf(stderr, "[jit] compiled %s (%d insns)\n",

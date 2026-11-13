@@ -9,6 +9,7 @@ Field::Field()
 	attrCount = 0;
 	accFlag = 0;
 	simple_name = NULL;
+	slot = -1;
 }
 
 Field::~Field()

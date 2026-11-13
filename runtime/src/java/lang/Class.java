@@ -17,6 +17,101 @@ public final class Class<T>
         return name;
     }
 
+    public String getSimpleName()
+    {
+        String n = name;
+        if (n == null)
+        {
+            return "";
+        }
+        if (n.length() > 0 && n.charAt(0) == '[')
+        {
+            int dims = 0;
+            while (dims < n.length() && n.charAt(dims) == '[')
+            {
+                dims++;
+            }
+            char kind = n.charAt(dims);
+            String base;
+            if (kind == 'L')
+            {
+                int end = n.lastIndexOf(';');
+                String internal = end > dims ? n.substring(dims + 1, end) : "";
+                base = simpleNameOf(internal);
+            }
+            else if (kind == 'Z')
+            {
+                base = "boolean";
+            }
+            else if (kind == 'B')
+            {
+                base = "byte";
+            }
+            else if (kind == 'C')
+            {
+                base = "char";
+            }
+            else if (kind == 'S')
+            {
+                base = "short";
+            }
+            else if (kind == 'I')
+            {
+                base = "int";
+            }
+            else if (kind == 'J')
+            {
+                base = "long";
+            }
+            else if (kind == 'F')
+            {
+                base = "float";
+            }
+            else if (kind == 'D')
+            {
+                base = "double";
+            }
+            else
+            {
+                base = "";
+            }
+            for (int i = 0; i < dims; i++)
+            {
+                base = base + "[]";
+            }
+            return base;
+        }
+        return simpleNameOf(n);
+    }
+
+    private static String simpleNameOf(String n)
+    {
+        int dot = n.lastIndexOf('.');
+        if (dot < 0)
+        {
+            dot = n.lastIndexOf('/');
+        }
+        String local = dot < 0 ? n : n.substring(dot + 1);
+        int dollar = local.lastIndexOf('$');
+        if (dollar >= 0)
+        {
+            local = local.substring(dollar + 1);
+        }
+        // Anonymous/local classes have a numeric prefix before the real name.
+        int start = 0;
+        while (start < local.length() && local.charAt(start) >= '0' && local.charAt(start) <= '9')
+        {
+            start++;
+        }
+        if (start > 0)
+        {
+            local = local.substring(start);
+        }
+        return local;
+    }
+
+    public native boolean desiredAssertionStatus();
+
     public String toString()
     {
         return name;

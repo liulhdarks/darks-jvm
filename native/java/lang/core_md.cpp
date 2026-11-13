@@ -225,6 +225,14 @@ JNIEXPORT jboolean JNICALL Java_java_lang_Class_isArray(JNIEnv *env, jobject thi
 	return (clazz->class_type == CT_ARRAY) ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_java_lang_Class_desiredAssertionStatus(JNIEnv *env,
+                                                                     jobject thiz)
+{
+	(void)env;
+	(void)thiz;
+	return Environment::AssertionsEnabled() ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jboolean JNICALL Java_java_lang_Class_isPrimitive(JNIEnv *env, jobject thiz)
 {
 	(void)env;

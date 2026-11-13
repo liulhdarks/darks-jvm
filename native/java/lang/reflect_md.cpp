@@ -624,7 +624,7 @@ jobject ReadAnnotation(JNIEnv *env, ConstantPool *pool, ByteReader &r)
 		}
 		lpFieldValue fv = new FieldValue();
 		fv->field_value = value;
-		object->varants["ann:" + element_name] = fv;
+		object->AdoptFieldValue("ann:" + element_name, fv);
 	}
 	// Elements absent from the annotation bytes take their declared default
 	// from the annotation type's AnnotationDefault attributes.
@@ -651,7 +651,7 @@ jobject ReadAnnotation(JNIEnv *env, ConstantPool *pool, ByteReader &r)
 		{
 			lpFieldValue fv = new FieldValue();
 			fv->field_value = value;
-			object->varants["ann:" + element_name] = fv;
+			object->AdoptFieldValue("ann:" + element_name, fv);
 		}
 	}
 	return annotation;

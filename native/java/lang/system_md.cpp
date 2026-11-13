@@ -5,6 +5,10 @@
 #include "system_md.h"
 #include "jni_impl.h"
 #include "env/env.h"
+#include "vm/executor/context.h"
+#include "vm/executor/objectheap.h"
+#include "vm/executor/jobject.h"
+#include "vm/executor/javaexception.h"
 #include "platform/platform.h"
 
 #include <cstdio>
@@ -347,6 +351,67 @@ jlong JNICALL Java_java_lang_System_nanoTime
 	return static_cast<jlong>(dk::NanoTime());
 }
 
+static lpClass RuntimeArrayElement(lpObject array)
+{
+	if (!array || !array->obj_class || !array->obj_class->thisClass)
+	{
+		return NULL;
+	}
+	const char *name = array->obj_class->thisClass->GetName();
+	if (!name || name[0] != '[')
+	{
+		return NULL;
+	}
+	const char *component = name + 1;
+	std::string internal;
+	if (component[0] == 'L' && component[strlen(component) - 1] == ';')
+	{
+		internal.assign(component + 1, strlen(component) - 2);
+	}
+	else if (component[0] == '[')
+	{
+		internal = component;
+	}
+	else
+	{
+		return NULL;
+	}
+	lpClass element = NULL;
+	if (VMContext::bootstrap_classloader)
+	{
+		VMContext::bootstrap_classloader->GetLoadedClass(internal.c_str(), element);
+	}
+	return element;
+}
+
+static bool RuntimeValueAssignable(lpClass target, lpClass src)
+{
+	if (!target || !src)
+	{
+		return true;
+	}
+	if (ClassIsAssignable(target, src))
+	{
+		return true;
+	}
+	const char *tn = (target->thisClass && target->thisClass->GetName())
+		? target->thisClass->GetName() : NULL;
+	const char *sn = (src->thisClass && src->thisClass->GetName())
+		? src->thisClass->GetName() : NULL;
+	if (!tn || !sn)
+	{
+		return true;
+	}
+	if (sn[0] == '[' &&
+	    (strcmp(tn, "java/lang/Object") == 0 ||
+	     strcmp(tn, "java/lang/Cloneable") == 0 ||
+	     strcmp(tn, "java/io/Serializable") == 0))
+	{
+		return true;
+	}
+	return strcmp(tn, sn) == 0;
+}
+
 void JNICALL Java_java_lang_System_arraycopy
 	(JNIEnv *env, jclass, jobject src, jint src_pos, jobject dest, jint dest_pos, jint length)
 {
@@ -381,6 +446,37 @@ void JNICALL Java_java_lang_System_arraycopy
 	{
 		return;
 	}
+
+	lpObject src_object = JniResolveObject(reinterpret_cast<jobject>(src));
+	lpObject dest_object = JniResolveObject(reinterpret_cast<jobject>(dest));
+	// Equal element widths are not enough for reference arrays: every copied
+	// value must be assignable to the destination component type.
+	if (src_object && dest_object &&
+	    src_object->array_data_type == DT_REF &&
+	    dest_object->array_data_type == DT_REF)
+	{
+		lpClass dest_element = RuntimeArrayElement(dest_object);
+		if (dest_element)
+		{
+			jobject *src_refs = static_cast<jobject *>(src_object->array_var);
+			for (jint i = 0; i < length; i++)
+			{
+				jobject value = src_refs[src_pos + i];
+				if (!value)
+				{
+					continue;
+				}
+				lpObject value_object = JniResolveObject(value);
+				if (value_object && !RuntimeValueAssignable(dest_element, value_object->obj_class))
+				{
+					ThrowByName(env, "java/lang/ArrayStoreException",
+						"arraycopy: element type mismatch");
+					return;
+				}
+			}
+		}
+	}
+
 	char *src_data = (char*) env->GetArrayDirectAddress(src_arg);
 	char *dest_data = (char*) env->GetArrayDirectAddress(dest_arg);
 	if (!src_data || !dest_data)
@@ -392,6 +488,87 @@ void JNICALL Java_java_lang_System_arraycopy
 	memmove(dest_data + (size_t)dest_pos * dest_type_size,
 	        src_data + (size_t)src_pos * src_type_size,
 	        (size_t)length * src_type_size);
+}
+
+JNIEXPORT jint JNICALL Java_java_lang_Runtime_availableProcessors(JNIEnv *env, jobject thiz)
+{
+	(void)env;
+	(void)thiz;
+#if defined(_WIN32)
+	SYSTEM_INFO info;
+	GetSystemInfo(&info);
+	return static_cast<jint>(info.dwNumberOfProcessors);
+#else
+	long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+	return cpus > 0 ? static_cast<jint>(cpus) : 1;
+#endif
+}
+
+static jlong PhysicalMemory()
+{
+#if defined(_WIN32)
+	MEMORYSTATUSEX status;
+	status.dwLength = sizeof(status);
+	if (GlobalMemoryStatusEx(&status))
+	{
+		return static_cast<jlong>(status.ullTotalPhys);
+	}
+	return 0;
+#else
+	long pages = sysconf(_SC_PHYS_PAGES);
+	long page_size = sysconf(_SC_PAGESIZE);
+	return (pages > 0 && page_size > 0)
+		? static_cast<jlong>(pages) * static_cast<jlong>(page_size) : 0;
+#endif
+}
+
+static jlong AvailableMemory()
+{
+#if defined(_WIN32)
+	MEMORYSTATUSEX status;
+	status.dwLength = sizeof(status);
+	if (GlobalMemoryStatusEx(&status))
+	{
+		return static_cast<jlong>(status.ullAvailPhys);
+	}
+	return 0;
+#else
+	long pages = sysconf(_SC_AVPHYS_PAGES);
+	long page_size = sysconf(_SC_PAGESIZE);
+	return (pages > 0 && page_size > 0)
+		? static_cast<jlong>(pages) * static_cast<jlong>(page_size) : 0;
+#endif
+}
+
+JNIEXPORT jlong JNICALL Java_java_lang_Runtime_freeMemory(JNIEnv *env, jobject thiz)
+{
+	(void)env;
+	(void)thiz;
+	return AvailableMemory();
+}
+
+JNIEXPORT jlong JNICALL Java_java_lang_Runtime_totalMemory(JNIEnv *env, jobject thiz)
+{
+	(void)env;
+	(void)thiz;
+	return PhysicalMemory();
+}
+
+JNIEXPORT jlong JNICALL Java_java_lang_Runtime_maxMemory(JNIEnv *env, jobject thiz)
+{
+	(void)env;
+	(void)thiz;
+	return PhysicalMemory();
+}
+
+JNIEXPORT void JNICALL Java_java_lang_Runtime_gc(JNIEnv *env, jobject thiz)
+{
+	(void)env;
+	(void)thiz;
+	if (VMContext::object_heap)
+	{
+		VMContext::object_heap->gc();
+	}
 }
 
 jobject JNICALL Java_java_lang_System_initProperties

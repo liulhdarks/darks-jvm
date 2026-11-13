@@ -200,6 +200,11 @@
 
 
 #define _goto 167 /*(0xa7)*/
+#define _jsr 168 /*(0xa8)*/
+#define _jsr_w 201 /*(0xc9)*/
+#define _ret 169 /*(0xa9)*/
+
+#define _wide 196 /*(0xc4)*/
 
 #define tableswitch 170 /*(0xaa)*/
 #define lookupswitch 171 /*(0xab)*/

@@ -33,6 +33,13 @@ public:
 		return classMap;
 	}
 
+	// Looks up an already loaded class without triggering a load (used by
+	// type checks that must not allocate).
+	bool GetLoadedClass(LPCSTR classname, lpClass &jclass)
+	{
+		return GetClass(classname, jclass);
+	}
+
 private:
 	ClassLoader *parent;
 

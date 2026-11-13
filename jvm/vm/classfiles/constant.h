@@ -5,6 +5,12 @@
 #include "vm/exceptions.h"
 
 #include <string>
+#include <atomic>
+
+class Field;
+class FieldValue;
+class Class;
+class Method;
 
 class Constant
 {
@@ -251,12 +257,27 @@ public:
 	NameTypeConstant *nameType;
 	LPSTR simple_name;
 
+	// Resolution caches filled by the interpreter.  A constant-pool entry is
+	// shared by all threads, but the resolved objects are stable for the
+	// lifetime of the class, so racy duplicate resolution is harmless.
+	mutable std::atomic<Field*> resolved_field;
+	mutable std::atomic<FieldValue*> resolved_static_value;
+	mutable std::atomic<Method*> resolved_method;
+	// Monomorphic inline-style dispatch cache for invokevirtual/interface.
+	mutable std::atomic<Class*> cached_receiver_class;
+	mutable std::atomic<Method*> cached_method;
+
 public:
 	FieldRefConstant() : Constant(FIELDREF_CONSTANT, (LPSTR)"Fieldref")
 	{
 		clazz = NULL;
 		nameType = NULL;
 		simple_name = NULL;
+		resolved_field.store(NULL);
+		resolved_static_value.store(NULL);
+		resolved_method.store(NULL);
+		cached_receiver_class.store(NULL);
+		cached_method.store(NULL);
 	}
 
 	FieldRefConstant(ConstantEnum tag, LPSTR flag) : Constant(tag, flag)
@@ -264,6 +285,11 @@ public:
 		clazz = NULL;
 		nameType = NULL;
 		simple_name = NULL;
+		resolved_field.store(NULL);
+		resolved_static_value.store(NULL);
+		resolved_method.store(NULL);
+		cached_receiver_class.store(NULL);
+		cached_method.store(NULL);
 	}
 
 	~FieldRefConstant()

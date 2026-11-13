@@ -12,7 +12,13 @@ class JObject
 {
 
 public:
+	// Name-keyed view of all values (real instance fields and VM-synthetic
+	// entries such as "$lambda:id").  It does not own the values.
 	FIELD_MAP varants;
+	// Slot-indexed instance field storage; a hidden superclass field keeps
+	// its own slot.  Not owning either; ownership is in owned_values.
+	vector<lpFieldValue> instance_slots;
+	vector<lpFieldValue> owned_values;
 	lpClass obj_class;
 	OBJECT_REF index;
 
@@ -45,6 +51,16 @@ public:
 	~JObject();
 
 	lpFieldValue GetFieldValue(lpField field);
+
+	// Takes ownership of a FieldValue created for a VM-synthetic entry and
+	// publishes it in the name map.
+	void AdoptFieldValue(const string &key, lpFieldValue value);
+
+	lpFieldValue GetFieldValueByName(const string &key)
+	{
+		FIELD_MAP::iterator it = varants.find(key);
+		return it == varants.end() ? NULL : it->second;
+	}
 
 	bool newInstance()
 	{

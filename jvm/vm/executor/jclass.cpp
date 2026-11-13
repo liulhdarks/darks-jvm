@@ -27,6 +27,9 @@ Class::Class()
 	fieldCount = 0;
 	methodCount = 0;
 	accFlag = 0;
+	instance_field_base = 0;
+	instance_field_total = 0;
+	instance_layout_ready = false;
 }
 
 Class::Class(ClassType class_type)
@@ -52,6 +55,9 @@ Class::Class(ClassType class_type)
 	fieldCount = 0;
 	methodCount = 0;
 	accFlag = 0;
+	instance_field_base = 0;
+	instance_field_total = 0;
+	instance_layout_ready = false;
 }
 
 Class::~Class()
@@ -144,6 +150,41 @@ void Class::LoadSuperClass()
 		return;
 	}
 	classloader->FindClass(superClass->GetName(), super_class);
+}
+
+int Class::EnsureInstanceLayout()
+{
+	if (instance_layout_ready)
+	{
+		return instance_field_total;
+	}
+	// The superclass contributes its whole layout first.
+	if (!super_class && superClass && classloader)
+	{
+		try
+		{
+			classloader->FindClass(superClass->GetName(), super_class);
+		}
+		catch (...)
+		{
+			super_class = NULL;
+		}
+	}
+	int base = super_class ? super_class->EnsureInstanceLayout() : 0;
+	instance_field_base = base;
+	int slot = base;
+	for (U2 i = 0; i < fieldCount; i++)
+	{
+		lpField field = fields ? fields[i] : NULL;
+		if (!field || (field->accFlag & ACF_STATIC) != 0)
+		{
+			continue;
+		}
+		field->slot = slot++;
+	}
+	instance_field_total = slot;
+	instance_layout_ready = true;
+	return instance_field_total;
 }
 
 bool Class::FindMethod(LPSTR method_name, lpMethod& method)
