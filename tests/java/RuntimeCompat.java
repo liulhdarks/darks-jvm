@@ -175,6 +175,14 @@ public class RuntimeCompat
                       Math.sqrt(81.0) == 9.0 && Math.floor(1.9) == 1.0 &&
                       Math.ceil(1.1) == 2.0 && Math.round(2.6) == 3L);
 
+        Object identityObject = new Object();
+        int identityHash = System.identityHashCode(identityObject);
+        check("identityHashCode-stable", identityHash != 0 &&
+              identityHash == System.identityHashCode(identityObject));
+        long nanoStart = System.nanoTime();
+        long nanoEnd = System.nanoTime();
+        check("nanoTime-monotonic", nanoEnd >= nanoStart);
+
         System.out.println("runtime-compat checks=" + checks + " failures=" + failures);
         if (failures != 0)
         {

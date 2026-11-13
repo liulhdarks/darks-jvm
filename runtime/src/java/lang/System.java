@@ -23,6 +23,8 @@ public final class System
 
     public static native void exit(int code);
 
+    public static native int identityHashCode(Object object);
+
     public static String getProperty(String key)
     {
         return props.getProperty(key);
