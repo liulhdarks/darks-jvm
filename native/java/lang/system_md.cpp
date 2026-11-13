@@ -11,6 +11,7 @@
 #include "vm/executor/javaexception.h"
 #include "platform/platform.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -24,6 +25,12 @@
 #include <pwd.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach/host_info.h>
+#include <mach/mach.h>
+#include <mach/vm_statistics.h>
+#include <sys/sysctl.h>
+#endif
 extern char **environ;
 #endif
 
@@ -514,11 +521,25 @@ static jlong PhysicalMemory()
 		return static_cast<jlong>(status.ullTotalPhys);
 	}
 	return 0;
-#else
+#elif defined(__APPLE__)
+	// macOS does not provide _SC_PHYS_PAGES; hw.memsize is the documented
+	// physical memory size.
+	uint64_t bytes = 0;
+	size_t length = sizeof(bytes);
+	if (sysctlbyname("hw.memsize", &bytes, &length, NULL, 0) == 0)
+	{
+		return static_cast<jlong>(bytes);
+	}
+	return 0;
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__DragonFly__) || \
+      defined(__NetBSD__) || defined(__OpenBSD__)
 	long pages = sysconf(_SC_PHYS_PAGES);
 	long page_size = sysconf(_SC_PAGESIZE);
 	return (pages > 0 && page_size > 0)
 		? static_cast<jlong>(pages) * static_cast<jlong>(page_size) : 0;
+#else
+	// Conservative fallback: unknown total memory.
+	return 0;
 #endif
 }
 
@@ -532,11 +553,37 @@ static jlong AvailableMemory()
 		return static_cast<jlong>(status.ullAvailPhys);
 	}
 	return 0;
-#else
+#elif defined(__APPLE__)
+	// macOS has no _SC_AVPHYS_PAGES.  Free plus inactive pages is the
+	// conventional approximation of reclaimable memory.
+	mach_port_t host = mach_host_self();
+	if (host != MACH_PORT_NULL)
+	{
+		vm_statistics64_data_t vm_stat;
+		mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+		if (host_statistics64(host, HOST_VM_INFO64,
+		        reinterpret_cast<host_info64_t>(&vm_stat), &count) == KERN_SUCCESS)
+		{
+			long page_size = sysconf(_SC_PAGESIZE);
+			uint64_t pages = static_cast<uint64_t>(vm_stat.free_count) +
+			                 static_cast<uint64_t>(vm_stat.inactive_count);
+			if (page_size > 0)
+			{
+				return static_cast<jlong>(pages * static_cast<uint64_t>(page_size));
+			}
+		}
+	}
+	return 0;
+#elif defined(__linux__) || defined(__FreeBSD__) || defined(__DragonFly__) || \
+      defined(__NetBSD__) || defined(__OpenBSD__)
 	long pages = sysconf(_SC_AVPHYS_PAGES);
 	long page_size = sysconf(_SC_PAGESIZE);
 	return (pages > 0 && page_size > 0)
 		? static_cast<jlong>(pages) * static_cast<jlong>(page_size) : 0;
+#else
+	// Conservative fallback: report total memory rather than an undefined
+	// platform symbol.
+	return PhysicalMemory();
 #endif
 }
 
