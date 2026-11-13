@@ -3071,6 +3071,11 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 				Slot nanos;
 				op_stack->pop(nanos);
 				millis = popLong();
+				// wait(0, n>0) is a timed wait, not an indefinite one.
+				if (millis == 0 && nanos.iValue > 0)
+				{
+					millis = 1;
+				}
 			}
 			else if (type_desc.size() == 1)
 			{

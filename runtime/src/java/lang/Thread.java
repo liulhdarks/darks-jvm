@@ -88,7 +88,9 @@ public class Thread implements Runnable
 
     public static void sleep(long millis, int nanos) throws InterruptedException
     {
-        sleep0(millis);
+        // Nanoseconds are accepted but the scheduler has millisecond
+        // granularity; a positive sub-millisecond request waits one tick.
+        sleep0(millis == 0 && nanos > 0 ? 1 : millis);
     }
 
     private static native void sleep0(long millis) throws InterruptedException;
@@ -112,7 +114,7 @@ public class Thread implements Runnable
 
     public final void join(long millis, int nanos) throws InterruptedException
     {
-        join0(millis);
+        join0(millis == 0 && nanos > 0 ? 1 : millis);
     }
 
     private native void join0(long millis) throws InterruptedException;

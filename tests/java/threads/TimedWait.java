@@ -23,6 +23,16 @@ public class TimedWait {
             throw new RuntimeException("wait(20,123456) slept " + elapsed + " ms");
         }
 
+        // wait(0, positive nanos) must be timed, not indefinite.
+        t0 = System.currentTimeMillis();
+        synchronized (LOCK) {
+            LOCK.wait(0, 1);
+        }
+        elapsed = System.currentTimeMillis() - t0;
+        if (elapsed > 3000) {
+            throw new RuntimeException("wait(0,1) treated as indefinite");
+        }
+
         Thread w = new Thread(new Runnable() {
             public void run() {
                 synchronized (LOCK) {
