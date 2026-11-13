@@ -15,6 +15,13 @@ JVM_API bool DarksVM_FindClassBytes(const std::string &class_name,
                                     std::vector<uint8_t> &out,
                                     std::string *source);
 
+// Locates an arbitrary class-path resource (Class.getResourceAsStream and
+// ClassLoader.getResourceAsStream).  Unlike class bytes an empty resource is
+// a valid result, so a successful read may leave "out" empty.
+JVM_API bool DarksVM_FindResourceBytes(const std::string &name,
+                                       std::vector<uint8_t> &out,
+                                       std::string *source);
+
 class JVM_API ClassLoader
 {
 

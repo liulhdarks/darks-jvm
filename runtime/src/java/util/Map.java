@@ -18,6 +18,10 @@ public interface Map<K, V>
 
     void clear();
 
+    void putAll(Map<? extends K, ? extends V> other);
+
+    V getOrDefault(Object key, V defaultValue);
+
     Set<K> keySet();
 
     Collection<V> values();

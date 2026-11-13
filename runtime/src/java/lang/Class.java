@@ -43,6 +43,35 @@ public final class Class<T>
         return getModifiers0();
     }
 
+    public ClassLoader getClassLoader()
+    {
+        return ClassLoader.getSystemClassLoader();
+    }
+
+    public java.io.InputStream getResourceAsStream(String name)
+    {
+        if (name == null)
+        {
+            throw new NullPointerException("name");
+        }
+        String absolute;
+        if (name.startsWith("/"))
+        {
+            absolute = name.substring(1);
+        }
+        else
+        {
+            String own = getName();
+            int dot = own.lastIndexOf('.');
+            String pkg = dot < 0 ? "" : own.substring(0, dot + 1).replace('.', '/');
+            absolute = pkg + name;
+        }
+        byte[] data = getResourceBytes0(absolute);
+        return data == null ? null : new java.io.ByteArrayInputStream(data);
+    }
+
+    private static native byte[] getResourceBytes0(String name);
+
     public native Class[] getInterfaces0();
 
     public Class[] getInterfaces()

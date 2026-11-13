@@ -86,6 +86,24 @@ public final class Long implements Comparable<Long>
         return new String(digits, pos, digits.length - pos);
     }
 
+    public static String toHexString(long v)
+    {
+        if (v == 0)
+        {
+            return "0";
+        }
+        char[] digits = new char[16];
+        int pos = digits.length;
+        while (v != 0)
+        {
+            pos = pos - 1;
+            int d = (int)(v & 15);
+            digits[pos] = (char)(d < 10 ? ('0' + d) : ('a' + (d - 10)));
+            v = v >>> 4;
+        }
+        return new String(digits, pos, digits.length - pos);
+    }
+
     public boolean equals(Object other)
     {
         if (!(other instanceof Long))

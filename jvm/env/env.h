@@ -1,6 +1,8 @@
 #pragma once
 
 #include "common.h"
+#include <map>
+#include <string>
 #include <vector>
 using namespace std;
 
@@ -40,4 +42,16 @@ public:
 	{
 		classpath.clear();
 	}
+
+	// System property table.  -Dkey=value options are stored here by the
+	// launcher before the VM starts; System.initProperties seeds the defaults
+	// without overwriting them, then hands the whole table to Java.
+	static void SetProperty(const string &key, const string &value);
+	static bool GetProperty(const string &key, string &value);
+	static bool HasProperty(const string &key);
+	// Inserts the default only when no -D override is present.
+	static void SetDefaultProperty(const string &key, const string &value);
+	static bool ClearProperty(const string &key);
+	static const map<string, string> &GetProperties();
+	static void ClearProperties();
 };

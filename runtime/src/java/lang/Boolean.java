@@ -24,6 +24,11 @@ public final class Boolean implements Comparable<Boolean>
         return value;
     }
 
+    public static Boolean valueOf(String s)
+    {
+        return parseBoolean(s) ? TRUE : FALSE;
+    }
+
     public static boolean parseBoolean(String s)
     {
         return s != null && s.equalsIgnoreCase("true");
@@ -46,6 +51,15 @@ public final class Boolean implements Comparable<Boolean>
     public int hashCode()
     {
         return value ? 1231 : 1237;
+    }
+
+    public static int compare(boolean a, boolean b)
+    {
+        if (a == b)
+        {
+            return 0;
+        }
+        return a ? 1 : -1;
     }
 
     public int compareTo(Boolean other)

@@ -47,6 +47,11 @@ public:
 	// Convenience: Main-Class from META-INF/MANIFEST.MF ("" when absent).
 	std::string GetManifestMainClass();
 
+	// Class-Path entries from META-INF/MANIFEST.MF, in declaration order.
+	// Relative entries are returned as written; the caller resolves them
+	// against the directory containing the jar.
+	std::vector<std::string> GetManifestClassPath();
+
 	const std::map<std::string, Entry> &Entries() const { return entries; }
 
 private:

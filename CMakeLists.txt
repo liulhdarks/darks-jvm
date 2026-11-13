@@ -175,7 +175,7 @@ set(DARKS_JVM_NATIVE_SOURCES
     native/java/lang/system_md.cpp
     native/java/lang/thread_md.cpp
     native/java/lang/string_md.cpp
-    native/java/io/filesystem.cpp
+    native/java/io/file_md.cpp
     native/java/io/printstream.cpp
 )
 

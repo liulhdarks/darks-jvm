@@ -1,6 +1,6 @@
 package java.lang;
 
-public class StringBuilder
+public class StringBuilder implements CharSequence
 {
     private char[] value;
     private int count;
@@ -340,6 +340,11 @@ public class StringBuilder
             j = j - 1;
         }
         return this;
+    }
+
+    public CharSequence subSequence(int start, int end)
+    {
+        return substring(start, end);
     }
 
     public String substring(int start)

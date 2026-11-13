@@ -121,6 +121,57 @@ JVM_API bool DarksVM_FindClassBytes(const std::string &class_name,
 	return false;
 }
 
+JVM_API bool DarksVM_FindResourceBytes(const std::string &resource_name,
+                                       std::vector<uint8_t> &out,
+                                       std::string *source)
+{
+	out.clear();
+	std::string name = resource_name;
+	while (!name.empty() && name[0] == '/')
+	{
+		name.erase(name.begin());
+	}
+	if (name.empty())
+	{
+		return false;
+	}
+	std::vector<std::string> classpath;
+	Environment::GetClassPath(&classpath);
+	if (classpath.empty())
+	{
+		classpath.push_back(".");
+	}
+	for (size_t i = 0; i < classpath.size(); i++)
+	{
+		const std::string &entry = classpath[i];
+		if (dk::IsDirectory(entry))
+		{
+			std::string candidate = dk::JoinPath(entry, name);
+			if (dk::FileExists(candidate) && dk::ReadFileBytes(candidate, out))
+			{
+				if (source) *source = candidate;
+				return true;
+			}
+			continue;
+		}
+		if (!dk::FileExists(entry))
+		{
+			continue;
+		}
+		ZipFile *zip = OpenArchive(entry);
+		if (!zip)
+		{
+			continue;
+		}
+		if (zip->ReadEntry(name, out))
+		{
+			if (source) *source = entry + "!/" + name;
+			return true;
+		}
+	}
+	return false;
+}
+
 ClassLoader::ClassLoader()
 {
 	parent = NULL;

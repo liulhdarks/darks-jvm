@@ -4,6 +4,12 @@ public final class Double implements Comparable<Double>
 {
     public static final Class TYPE = Class.getPrimitiveClass("double");
 
+    public static final double MAX_VALUE = 1.7976931348623157e308;
+    public static final double MIN_VALUE = 4.9e-324;
+    public static final double POSITIVE_INFINITY = 1.0 / 0.0;
+    public static final double NEGATIVE_INFINITY = -1.0 / 0.0;
+    public static final double NaN = 0.0 / 0.0;
+
     private final double value;
 
     public Double(double value)
@@ -24,6 +30,22 @@ public final class Double implements Comparable<Double>
     public int intValue()
     {
         return (int)value;
+    }
+
+    public static boolean isNaN(double v)
+    {
+        return v != v;
+    }
+
+    public static boolean isInfinite(double v)
+    {
+        return v > MAX_VALUE || v < -MAX_VALUE;
+    }
+
+    public static int hashCode(double v)
+    {
+        long bits = (long)v;
+        return (int)(bits ^ (bits >>> 32));
     }
 
     public static double parseDouble(String s)

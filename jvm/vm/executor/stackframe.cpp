@@ -3460,6 +3460,10 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 	switch (result_type)
 	{
 	case DT_BOOL:
+		// JNI boolean is an unsigned char; using a 32-bit ffi result would
+		// read undefined upper register bits from natives that only set AL.
+		result_ffi_type = &ffi_type_uint8;
+		break;
 	case DT_BYTE:
 	case DT_CHAR:
 	case DT_SHORT:
@@ -4322,6 +4326,12 @@ void StackFrame::PutStatic(U2 index)
 	{
 		throw new VMExecutorException("Invalid static field descriptor.");
 	}
+	// An array descriptor such as [J keeps its element type in data_type; the
+	// field itself is always a single reference slot.
+	if (type_desc.check_array)
+	{
+		type_desc.data_type = DT_ARRAY;
+	}
 	switch (type_desc.data_type)
 	{
 	case DT_LONG:
@@ -4366,6 +4376,12 @@ void StackFrame::GetStatic(U2 index)
 	{
 		throw new VMExecutorException("Invalid static field descriptor.");
 	}
+	// An array descriptor such as [J keeps its element type in data_type; the
+	// field itself is always a single reference slot.
+	if (type_desc.check_array)
+	{
+		type_desc.data_type = DT_ARRAY;
+	}
 	switch (type_desc.data_type)
 	{
 	case DT_LONG:
@@ -4408,6 +4424,10 @@ void StackFrame::GetField(U2 index)
 	TypeDesc type_desc;
 	LPSTR desc = frc->nameType->descUtf8->GetName();
 	parse_desc_type(desc, type_desc, strlen(desc));
+	if (type_desc.check_array)
+	{
+		type_desc.data_type = DT_ARRAY;
+	}
 	switch (type_desc.data_type)
 	{
 	case DT_BOOL:
@@ -4444,6 +4464,10 @@ void StackFrame::PutField(U2 index)
 	TypeDesc type_desc;
 	LPSTR desc = frc->nameType->descUtf8->GetName();
 	parse_desc_type(desc, type_desc, strlen(desc));
+	if (type_desc.check_array)
+	{
+		type_desc.data_type = DT_ARRAY;
+	}
 	switch (type_desc.data_type)
 	{
 	case DT_BOOL:

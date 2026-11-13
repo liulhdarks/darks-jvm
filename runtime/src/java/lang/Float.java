@@ -54,8 +54,13 @@ public final class Float implements Comparable<Float>
         return value == other.value ? 0 : 1;
     }
 
+    public static String toString(float v)
+    {
+        return Double.toString((double)v);
+    }
+
     public String toString()
     {
-        return Double.toString((double)value);
+        return toString(value);
     }
 }

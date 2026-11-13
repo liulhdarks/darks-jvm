@@ -1690,7 +1690,7 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Field_get0(JNIEnv *env,
 	}
 	TypeDesc type;
 	parse_desc_type(desc.c_str(), type, static_cast<int>(desc.size()));
-	return VariantToObject(env, type.data_type, value);
+	return VariantToObject(env, type.check_array ? DT_ARRAY : type.data_type, value);
 }
 
 JNIEXPORT void JNICALL Java_java_lang_reflect_Field_set0(JNIEnv *env,
@@ -1723,7 +1723,7 @@ JNIEXPORT void JNICALL Java_java_lang_reflect_Field_set0(JNIEnv *env,
 	TypeDesc type;
 	parse_desc_type(desc.c_str(), type, static_cast<int>(desc.size()));
 	Variant value;
-	if (type.data_type == DT_REF || type.data_type == DT_ARRAY)
+	if (type.data_type == DT_REF || type.data_type == DT_ARRAY || type.check_array)
 	{
 		value.heapPtr = JniRef(new_value);
 	}

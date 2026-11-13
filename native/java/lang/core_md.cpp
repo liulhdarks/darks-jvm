@@ -338,6 +338,49 @@ JNIEXPORT jobject JNICALL Java_java_lang_Enum_valueOf(JNIEnv *env, jclass enum_c
 	return result;
 }
 
+// Class/ClassLoader.getResourceAsStream support.  The Java side resolves
+// relative names to an absolute class-path name and wraps these bytes in a
+// ByteArrayInputStream.
+static jbyteArray ResourceBytes(JNIEnv *env, jstring name)
+{
+	std::string resource = JStringToUtf8(env, name);
+	std::vector<uint8_t> bytes;
+	if (!DarksVM_FindResourceBytes(resource, bytes, NULL))
+	{
+		return NULL;
+	}
+	jbyteArray result = env->NewByteArray(static_cast<jsize>(bytes.size()));
+	if (!result)
+	{
+		return NULL;
+	}
+	if (!bytes.empty())
+	{
+		env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytes.size()),
+			reinterpret_cast<const jbyte*>(bytes.data()));
+	}
+	return result;
+}
+
+JNIEXPORT jbyteArray JNICALL Java_java_lang_Class_getResourceBytes0(JNIEnv *env,
+	jclass, jstring name)
+{
+	return ResourceBytes(env, name);
+}
+
+JNIEXPORT jbyteArray JNICALL Java_java_lang_ClassLoader_getResourceBytes0(JNIEnv *env,
+	jclass, jstring name)
+{
+	return ResourceBytes(env, name);
+}
+
+// JDK-style java.lang.Object.<clinit> calls registerNatives; accepting it
+// keeps such class libraries loadable.  darks-jvm's own Object has no
+// <clinit> and binds hashCode/getClass directly by JNI symbol name.
+JNIEXPORT void JNICALL Java_java_lang_Object_registerNatives(JNIEnv *, jclass)
+{
+}
+
 // ---------------------------------------------------------------------------
 // java.lang.System (extras)
 // ---------------------------------------------------------------------------
@@ -349,79 +392,6 @@ JNIEXPORT void JNICALL Java_java_lang_System_exit(JNIEnv *env, jclass clazz, jin
 	fflush(stdout);
 	fflush(stderr);
 	exit(code);
-}
-
-JNIEXPORT jstring JNICALL Java_java_lang_System_getProperty(JNIEnv *env, jclass clazz,
-	jstring key)
-{
-	(void)clazz;
-	std::string name = JStringToUtf8(env, key);
-	std::string value;
-	bool found = true;
-	if (name == "java.version")
-	{
-		value = "11.0.2";
-	}
-	else if (name == "java.specification.version")
-	{
-		value = "11";
-	}
-	else if (name == "java.vendor")
-	{
-		value = "darks-jvm";
-	}
-	else if (name == "java.vm.name")
-	{
-		value = "darks-jvm";
-	}
-	else if (name == "os.name")
-	{
-#if defined(_WIN32)
-		value = "Windows";
-#elif defined(__APPLE__)
-		value = "Mac OS X";
-#else
-		value = "Linux";
-#endif
-	}
-	else if (name == "file.separator")
-	{
-		value = std::string(1, '/');
-	}
-	else if (name == "path.separator")
-	{
-		value = std::string(1, dk::PathListSeparator());
-	}
-	else if (name == "line.separator")
-	{
-		value = "\n";
-	}
-	else if (name == "user.dir")
-	{
-		value = ".";
-	}
-	else if (name == "java.class.path")
-	{
-		std::vector<std::string> classpath;
-		Environment::GetClassPath(&classpath);
-		for (size_t i = 0; i < classpath.size(); i++)
-		{
-			if (i)
-			{
-				value.push_back(dk::PathListSeparator());
-			}
-			value += classpath[i];
-		}
-	}
-	else
-	{
-		found = false;
-	}
-	if (!found)
-	{
-		return NULL;
-	}
-	return env->NewStringUTF(value.c_str());
 }
 
 JNIEXPORT jint JNICALL Java_java_lang_System_identityHashCode(JNIEnv *env, jclass clazz,
@@ -439,22 +409,6 @@ JNIEXPORT jint JNICALL Java_java_lang_System_identityHashCode(JNIEnv *env, jclas
 	value *= 0x7feb352dU;
 	value ^= value >> 15;
 	return static_cast<jint>(value & 0x7fffffff);
-}
-
-JNIEXPORT void JNICALL Java_java_lang_System_loadLibrary(JNIEnv *env, jclass clazz,
-	jstring name)
-{
-	(void)clazz;
-	std::string library = JStringToUtf8(env, name);
-	if (DarksVM_LoadNativeLibrary(library.c_str()) != JNI_OK)
-	{
-		jclass error_class = reinterpret_cast<jclass>(JniFindClass(env, "java/lang/UnsatisfiedLinkError"));
-		if (error_class)
-		{
-			std::string message = "no " + library + " in java.library.path";
-			env->ThrowNew(error_class, message.c_str());
-		}
-	}
 }
 
 JNIEXPORT void JNICALL Java_java_lang_System_load(JNIEnv *env, jclass clazz, jstring path)

@@ -2,6 +2,7 @@
 //
 // Supported options:
 //   -cp <path> / -classpath <path>   class search path (platform separator)
+//   -Dkey=value                      set a system property (System.getProperty)
 //   --dump <class>                   parse a class file and print its metadata
 //   --version                        print the version
 //   -h / --help                      print this help
@@ -36,6 +37,7 @@ static void print_usage()
 	cout << "Usage: darks-jvm [options] <main-class> [args...]" << endl;
 	cout << "Options:" << endl;
 	cout << "  -cp <path>, -classpath <path>  class search path" << endl;
+	cout << "  -Dkey=value                    set a system property" << endl;
 	cout << "  --dump <class>                 print class file metadata" << endl;
 	cout << "  --version                      print version information" << endl;
 	cout << "  -h, --help                     print this help" << endl;
@@ -266,11 +268,35 @@ int main(int argc, char **argv)
 
 	vector<string> args;
 	bool classpath_set = false;
+	bool options_done = false;
 	bool jar_mode = false;
 	string jar_main_class;
+	vector<string> jar_entries;
 	for (int i = 1; i < argc; i++)
 	{
 		string arg(argv[i]);
+		if (options_done)
+		{
+			args.push_back(arg);
+			continue;
+		}
+		// Generic system property option: -Dkey=value.  Accepted before or
+		// after -cp/-jar and before the main class.
+		if (arg.size() > 2 && arg[0] == '-' && arg[1] == 'D')
+		{
+			string assignment = arg.substr(2);
+			size_t equals = assignment.find('=');
+			if (equals == string::npos)
+			{
+				Environment::SetProperty(assignment, "");
+			}
+			else
+			{
+				Environment::SetProperty(assignment.substr(0, equals),
+				                         assignment.substr(equals + 1));
+			}
+			continue;
+		}
 		if (arg == "-h" || arg == "--help")
 		{
 			print_usage();
@@ -320,12 +346,35 @@ int main(int argc, char **argv)
 				cerr << "Error: no Main-Class in " << jar_path << endl;
 				return 3;
 			}
-			Environment::AddClassPath(jar_path);
+			// Class-Path entries are resolved relative to the jar's directory.
+			string jar_dir = dk::DirectoryName(jar_path);
+			vector<string> deps = jar.GetManifestClassPath();
+			for (size_t d = 0; d < deps.size(); d++)
+			{
+				const string &dep = deps[d];
+				if (dep.empty() || dep.compare(0, 5, "file:") == 0)
+				{
+					continue;
+				}
+				string resolved = (!dep.empty() && dep[0] == '/')
+					? dep : dk::JoinPath(jar_dir, dep);
+				jar_entries.push_back(resolved);
+			}
+			jar_entries.push_back(jar_path);
 			jar_main_class = main_from_manifest;
 			jar_mode = true;
 			continue;
 		}
 		args.push_back(arg);
+		options_done = true;
+	}
+
+	if (jar_mode)
+	{
+		for (size_t i = 0; i < jar_entries.size(); i++)
+		{
+			Environment::AddClassPath(jar_entries[i]);
+		}
 	}
 
 	if (!classpath_set && !jar_mode)

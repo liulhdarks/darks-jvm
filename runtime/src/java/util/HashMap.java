@@ -130,6 +130,22 @@ public class HashMap<K, V> implements Map<K, V>
         return index < 0 ? null : (V)values[index];
     }
 
+    public void putAll(Map<? extends K, ? extends V> other)
+    {
+        Iterator<? extends K> it = other.keySet().iterator();
+        while (it.hasNext())
+        {
+            K key = it.next();
+            put(key, other.get(key));
+        }
+    }
+
+    public V getOrDefault(Object key, V defaultValue)
+    {
+        int index = findIndex(key);
+        return index < 0 ? defaultValue : (V)values[index];
+    }
+
     public boolean containsKey(Object key)
     {
         return findIndex(key) >= 0;

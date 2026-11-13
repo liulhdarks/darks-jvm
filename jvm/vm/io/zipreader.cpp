@@ -121,7 +121,10 @@ bool ZipFile::ParseCentralDirectory()
 		{
 			entry.method = 0xFFFF;
 		}
-		if (!entry.name.empty() && entry.name[entry.name.size() - 1] != '/')
+		// Duplicate names resolve to the first central-directory entry,
+		// matching the JDK zip implementation.
+		if (!entry.name.empty() && entry.name[entry.name.size() - 1] != '/' &&
+		    entries.find(entry.name) == entries.end())
 		{
 			entries[entry.name] = entry;
 		}
@@ -185,7 +188,20 @@ bool ZipFile::Inflate(const Entry &entry, std::vector<uint8_t> &out)
 	uint16_t name_len = ReadU16(data, pos + 26);
 	uint16_t extra_len = ReadU16(data, pos + 28);
 	size_t payload = pos + 30 + name_len + extra_len;
-	out.resize(entry.uncompressed_size ? entry.uncompressed_size : 1);
+	if (payload + entry.compressed_size > data.size())
+	{
+		last_error = "truncated entry data";
+		return false;
+	}
+	// Grow the output buffer as needed instead of trusting the declared
+	// uncompressed size; this also covers entries whose size fields are
+	// inconsistent with the actual deflate stream.
+	size_t capacity = entry.uncompressed_size ? entry.uncompressed_size : 1024;
+	if (capacity < 1024)
+	{
+		capacity = 1024;
+	}
+	out.resize(capacity);
 	z_stream stream;
 	memset(&stream, 0, sizeof(stream));
 	// Raw deflate stream: the zip container stores its own framing.
@@ -196,17 +212,39 @@ bool ZipFile::Inflate(const Entry &entry, std::vector<uint8_t> &out)
 	}
 	stream.next_in = reinterpret_cast<Bytef*>(&data[payload]);
 	stream.avail_in = entry.compressed_size;
-	stream.next_out = reinterpret_cast<Bytef*>(&out[0]);
-	stream.avail_out = static_cast<uInt>(out.size());
-	int rc = inflate(&stream, Z_FINISH);
-	inflateEnd(&stream);
-	if (rc != Z_STREAM_END)
+	int rc = Z_OK;
+	while (rc != Z_STREAM_END)
 	{
-		last_error = "inflate failed";
-		out.clear();
-		return false;
+		if (stream.total_out >= out.size())
+		{
+			size_t grown = out.size() * 2;
+			if (grown < out.size() + 1024)
+			{
+				grown = out.size() + 1024;
+			}
+			out.resize(grown);
+		}
+		stream.next_out = reinterpret_cast<Bytef*>(&out[stream.total_out]);
+		stream.avail_out = static_cast<uInt>(out.size() - stream.total_out);
+		rc = inflate(&stream, Z_NO_FLUSH);
+		if (rc != Z_OK && rc != Z_STREAM_END)
+		{
+			inflateEnd(&stream);
+			last_error = "inflate failed";
+			out.clear();
+			return false;
+		}
+		if (rc == Z_BUF_ERROR && stream.avail_out != 0)
+		{
+			inflateEnd(&stream);
+			last_error = "truncated deflate stream";
+			out.clear();
+			return false;
+		}
 	}
-	out.resize(stream.total_out);
+	size_t total = stream.total_out;
+	inflateEnd(&stream);
+	out.resize(total);
 	return true;
 #else
 	(void)entry;
@@ -215,14 +253,11 @@ bool ZipFile::Inflate(const Entry &entry, std::vector<uint8_t> &out)
 #endif
 }
 
-std::string ZipFile::GetManifestMainClass()
+namespace {
+
+std::string ManifestAttribute(const std::string &manifest, const std::string &wanted)
 {
-	std::vector<uint8_t> manifest;
-	if (!ReadEntry("META-INF/MANIFEST.MF", manifest))
-	{
-		return std::string();
-	}
-	std::string text(manifest.begin(), manifest.end());
+	std::string text = manifest;
 	// Unfold continuation lines (a leading space means "append to previous").
 	std::string unfolded;
 	for (size_t i = 0; i < text.size(); i++)
@@ -256,19 +291,67 @@ std::string ZipFile::GetManifestMainClass()
 		}
 		std::string key = line.substr(0, colon);
 		std::string value = line.substr(colon + 1);
-		// trim
 		while (!value.empty() && (value[0] == ' ' || value[0] == '\t'))
 		{
 			value.erase(value.begin());
 		}
-		while (!value.empty() && (value[value.size() - 1] == ' ' || value[value.size() - 1] == '\t'))
+		while (!value.empty() &&
+		       (value[value.size() - 1] == ' ' || value[value.size() - 1] == '\t'))
 		{
 			value.erase(value.size() - 1);
 		}
-		if (key == "Main-Class")
+		if (key == wanted)
 		{
 			return value;
 		}
 	}
 	return std::string();
+}
+
+std::string ReadManifest(ZipFile &zip)
+{
+	std::vector<uint8_t> manifest;
+	if (!zip.ReadEntry("META-INF/MANIFEST.MF", manifest))
+	{
+		return std::string();
+	}
+	return std::string(manifest.begin(), manifest.end());
+}
+
+} // namespace
+
+std::string ZipFile::GetManifestMainClass()
+{
+	std::string manifest = ReadManifest(*this);
+	if (manifest.empty())
+	{
+		return std::string();
+	}
+	return ManifestAttribute(manifest, "Main-Class");
+}
+
+std::vector<std::string> ZipFile::GetManifestClassPath()
+{
+	std::vector<std::string> result;
+	std::string manifest = ReadManifest(*this);
+	if (manifest.empty())
+	{
+		return result;
+	}
+	std::string value = ManifestAttribute(manifest, "Class-Path");
+	size_t start = 0;
+	while (start <= value.size())
+	{
+		size_t end = value.find(' ', start);
+		if (end == std::string::npos)
+		{
+			end = value.size();
+		}
+		if (end > start)
+		{
+			result.push_back(value.substr(start, end - start));
+		}
+		start = end + 1;
+	}
+	return result;
 }
