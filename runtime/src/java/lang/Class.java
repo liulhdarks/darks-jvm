@@ -132,7 +132,90 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
 
     public native boolean isPrimitive();
 
-    public native boolean isAnnotation();
+    public boolean isAnnotation()
+    {
+        return (getModifiers0() & 0x2000) != 0;
+    }
+
+    public boolean isEnum()
+    {
+        Class parent = getSuperclass();
+        return parent != null && parent.getName().equals("java.lang.Enum");
+    }
+
+    public boolean isSynthetic()
+    {
+        return (getModifiers0() & 0x1000) != 0;
+    }
+
+    private String lastBinarySegment()
+    {
+        String n = name == null ? "" : name;
+        int dollar = n.lastIndexOf('$');
+        return dollar < 0 ? n : n.substring(dollar + 1);
+    }
+
+    public boolean isAnonymousClass()
+    {
+        if (isArray() || isPrimitive())
+        {
+            return false;
+        }
+        String segment = lastBinarySegment();
+        return segment.length() > 0 &&
+            segment.charAt(0) >= '0' && segment.charAt(0) <= '9';
+    }
+
+    public boolean isMemberClass()
+    {
+        if (isArray() || isPrimitive() || name == null || name.indexOf('$') < 0)
+        {
+            return false;
+        }
+        return !isAnonymousClass();
+    }
+
+    public boolean isLocalClass()
+    {
+        return false;
+    }
+
+    public String getTypeName()
+    {
+        if (!isArray())
+        {
+            return getName();
+        }
+        String n = getName();
+        int dims = 0;
+        while (dims < n.length() && n.charAt(dims) == '[')
+        {
+            dims++;
+        }
+        char kind = n.charAt(dims);
+        String base;
+        if (kind == 'L')
+        {
+            int end = n.lastIndexOf(';');
+            base = end > dims ? n.substring(dims + 1, end).replace('/', '.') : "";
+        }
+        else
+        {
+            base = getSimpleName();
+        }
+        String result = base;
+        for (int i = 0; i < dims; i++)
+        {
+            result = result + "[]";
+        }
+        return result;
+    }
+
+    public String getCanonicalName()
+    {
+        String n = getName();
+        return n == null ? null : n.replace('$', '.').replace('/', '.');
+    }
 
     public native Class getComponentType();
 
@@ -156,6 +239,11 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
     }
 
     private native ClassLoader getClassLoader0();
+
+    public java.security.ProtectionDomain getProtectionDomain()
+    {
+        return null;
+    }
 
     public java.io.InputStream getResourceAsStream(String name)
     {
@@ -187,6 +275,20 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
     public Class[] getInterfaces()
     {
         return getInterfaces0();
+    }
+
+    public native Class[] getDeclaredClasses0();
+
+    public Class[] getDeclaredClasses()
+    {
+        return getDeclaredClasses0();
+    }
+
+    public native Class getEnclosingClass0();
+
+    public Class getEnclosingClass()
+    {
+        return getEnclosingClass0();
     }
 
     public native Method[] getDeclaredMethods0();

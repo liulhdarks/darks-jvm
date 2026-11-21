@@ -72,6 +72,20 @@ public interface Comparator<T>
         };
     }
 
+    static <T> Comparator<T> comparingInt(java.util.function.ToIntFunction<? super T> keyExtractor)
+    {
+        final java.util.function.ToIntFunction<? super T> key = keyExtractor;
+        return new Comparator<T>()
+        {
+            public int compare(T a, T b)
+            {
+                int first = key.applyAsInt(a);
+                int second = key.applyAsInt(b);
+                return first < second ? -1 : (first == second ? 0 : 1);
+            }
+        };
+    }
+
     static <T extends Comparable<? super T>> Comparator<T> naturalOrder()
     {
         return new Comparator<T>()

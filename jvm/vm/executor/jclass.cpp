@@ -2,6 +2,7 @@
 #include "jclass.h"
 #include "executor.h"
 #include "methodarea.h"
+#include "javaexception.h"
 #include "utils/DebugUtils.h"
 
 #include <set>
@@ -321,9 +322,12 @@ void CollectInterfaceMethods(lpClass iface, const std::string &key,
 
 bool Class::FindMethod(LPSTR method_name, lpMethod& method)
 {
-	method = MethodArea::GetMethod(this, method_name);
-	if (method)
+	method = NULL;
+	// 1. A method declared by this class always wins.
+	lpMethod declared = MethodArea::GetMethod(this, method_name);
+	if (declared)
 	{
+		method = declared;
 		return true;
 	}
 
@@ -359,16 +363,20 @@ bool Class::FindMethod(LPSTR method_name, lpMethod& method)
 
 	// No class method applies: pick the maximally specific default method from
 	// the interface graph.  A subinterface default shadows the one it inherits
-	// (class Impl implements A, B where B extends A resolves to B).
+	// (class Impl implements A, B where B extends A resolves to B).  Interfaces
+	// contributed by superclasses participate as well.
 	std::vector<std::pair<lpClass, lpMethod> > candidates;
 	std::set<std::string> visited;
 	std::string key(method_name ? method_name : "");
-	for (U2 i = 0; i < interfaceCount; i++)
+	for (lpClass c = this; c; c = c->super_class)
 	{
-		lpClass iface = ResolveInterface(this, interfaces ? interfaces[i] : NULL);
-		if (iface)
+		for (U2 i = 0; i < c->interfaceCount; i++)
 		{
-			CollectInterfaceMethods(iface, key, candidates, visited);
+			lpClass iface = ResolveInterface(c, c->interfaces ? c->interfaces[i] : NULL);
+			if (iface)
+			{
+				CollectInterfaceMethods(iface, key, candidates, visited);
+			}
 		}
 	}
 	lpMethod best = NULL;

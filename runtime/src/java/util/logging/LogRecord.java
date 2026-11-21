@@ -8,6 +8,12 @@ public class LogRecord
     private long millis;
     private Throwable thrown;
     private Object[] parameters;
+    private String resourceBundleName;
+    private java.util.ResourceBundle resourceBundle;
+    private long sequenceNumber;
+    private String sourceClassName;
+    private String sourceMethodName;
+    private int threadID;
 
     public LogRecord(Level level, String message)
     {
@@ -74,5 +80,65 @@ public class LogRecord
     public void setParameters(Object[] parameters)
     {
         this.parameters = parameters;
+    }
+
+    public String getResourceBundleName()
+    {
+        return resourceBundleName;
+    }
+
+    public void setResourceBundleName(String resourceBundleName)
+    {
+        this.resourceBundleName = resourceBundleName;
+    }
+
+    public java.util.ResourceBundle getResourceBundle()
+    {
+        return resourceBundle;
+    }
+
+    public void setResourceBundle(java.util.ResourceBundle resourceBundle)
+    {
+        this.resourceBundle = resourceBundle;
+    }
+
+    public long getSequenceNumber()
+    {
+        return sequenceNumber;
+    }
+
+    public void setSequenceNumber(long sequenceNumber)
+    {
+        this.sequenceNumber = sequenceNumber;
+    }
+
+    public String getSourceClassName()
+    {
+        return sourceClassName;
+    }
+
+    public void setSourceClassName(String sourceClassName)
+    {
+        this.sourceClassName = sourceClassName;
+    }
+
+    public String getSourceMethodName()
+    {
+        return sourceMethodName;
+    }
+
+    public void setSourceMethodName(String sourceMethodName)
+    {
+        this.sourceMethodName = sourceMethodName;
+    }
+
+    public int getThreadID()
+    {
+        return threadID;
+    }
+
+    public void setThreadID(int threadID)
+    {
+        this.threadID = threadID;
     }
 }

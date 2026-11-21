@@ -30,6 +30,17 @@ public class HashMap<K, V> implements Map<K, V>
         order = new int[size];
     }
 
+    public HashMap(int capacity, float loadFactor)
+    {
+        this(capacity);
+    }
+
+    public HashMap(Map<? extends K, ? extends V> values)
+    {
+        this();
+        putAll(values);
+    }
+
     private static int spread(Object key)
     {
         if (key == null)

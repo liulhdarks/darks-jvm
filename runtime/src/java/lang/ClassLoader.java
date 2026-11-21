@@ -100,14 +100,17 @@ public class ClassLoader
 
     protected Class<?> findClass(String name) throws ClassNotFoundException
     {
+        // Resolve classes that the VM can load from the class path through the
+        // same loader that owns them; otherwise a loader that has defined a
+        // class at runtime would create duplicate copies of ordinary classes.
+        Class<?> clazz = loadClass0(name);
+        if (clazz != null)
+        {
+            return clazz;
+        }
         if (vmLoader == 0)
         {
-            Class<?> clazz = loadClass0(name);
-            if (clazz == null)
-            {
-                throw new ClassNotFoundException(name);
-            }
-            return clazz;
+            throw new ClassNotFoundException(name);
         }
         byte[] bytes = findClassBytes0(name);
         if (bytes == null)
@@ -119,6 +122,13 @@ public class ClassLoader
 
     protected final Class<?> defineClass(String name, byte[] bytes, int offset,
         int length) throws ClassFormatError
+    {
+        return defineClass(name, bytes, offset, length, null);
+    }
+
+    protected final Class<?> defineClass(String name, byte[] bytes, int offset,
+        int length, java.security.ProtectionDomain protectionDomain)
+        throws ClassFormatError
     {
         if (bytes == null)
         {
@@ -141,6 +151,9 @@ public class ClassLoader
         {
             throw new ClassFormatError(name);
         }
+        // A class defined through this loader must be visible to later
+        // loadClass/findLoadedClass calls on the same loader.
+        cacheClass(clazz.getName(), clazz);
         return clazz;
     }
 

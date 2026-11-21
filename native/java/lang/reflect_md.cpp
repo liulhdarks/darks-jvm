@@ -1210,6 +1210,224 @@ bool UnboxValue(jobject boxed, DATA_TYPE type, Variant &out)
 	return true;
 }
 
+bool PrimitiveArrayType(const char *name, DATA_TYPE &type, char &tag)
+{
+	if (!name)
+	{
+		return false;
+	}
+	struct PrimitiveName
+	{
+		const char *name;
+		DATA_TYPE type;
+		char tag;
+	};
+	static const PrimitiveName names[] = {
+		{ "boolean", DT_BOOL, 'Z' },
+		{ "byte", DT_BYTE, 'B' },
+		{ "char", DT_CHAR, 'C' },
+		{ "short", DT_SHORT, 'S' },
+		{ "int", DT_INT, 'I' },
+		{ "long", DT_LONG, 'J' },
+		{ "float", DT_FLOAT, 'F' },
+		{ "double", DT_DOUBLE, 'D' },
+		{ NULL, DT_VOID, 0 }
+	};
+	for (int i = 0; names[i].name; i++)
+	{
+		if (strcmp(name, names[i].name) == 0)
+		{
+			type = names[i].type;
+			tag = names[i].tag;
+			return true;
+		}
+	}
+	return false;
+}
+
+void ThrowArrayIllegalArgument(JNIEnv *env, const char *message)
+{
+	jclass error = reinterpret_cast<jclass>(
+		JniFindClass(env, "java/lang/IllegalArgumentException"));
+	if (error)
+	{
+		env->ThrowNew(error, message ? message : "not an array");
+	}
+}
+
+void ThrowArrayIndex(JNIEnv *env, int index)
+{
+	jclass error = reinterpret_cast<jclass>(
+		JniFindClass(env, "java/lang/ArrayIndexOutOfBoundsException"));
+	if (error)
+	{
+		std::string message = "index " + std::to_string(index);
+		env->ThrowNew(error, message.c_str());
+	}
+}
+
+void ThrowArrayStore(JNIEnv *env)
+{
+	jclass error = reinterpret_cast<jclass>(
+		JniFindClass(env, "java/lang/ArrayStoreException"));
+	if (error)
+	{
+		env->ThrowNew(error, "array store");
+	}
+}
+
+// Resolves a java.lang.reflect.Array receiver, checking that it is an array
+// object and that the index is inside it.
+lpObject ResolveArray(JNIEnv *env, jobject array, int index, bool check_index)
+{
+	if (!array)
+	{
+		jclass error = reinterpret_cast<jclass>(
+			JniFindClass(env, "java/lang/NullPointerException"));
+		if (error)
+		{
+			env->ThrowNew(error, "array");
+		}
+		return NULL;
+	}
+	lpObject object = JniResolveObject(array);
+	if (!object || !object->obj_class || !object->obj_class->thisClass ||
+	    !object->obj_class->thisClass->GetName() ||
+	    object->obj_class->thisClass->GetName()[0] != '[')
+	{
+		ThrowArrayIllegalArgument(env, "not an array");
+		return NULL;
+	}
+	if (check_index && (index < 0 || index >= object->array_length))
+	{
+		ThrowArrayIndex(env, index);
+		return NULL;
+	}
+	return object;
+}
+
+bool ArrayElementMatches(lpObject object, DATA_TYPE expected)
+{
+	if (expected == DT_VOID)
+	{
+		return true;
+	}
+	DATA_TYPE actual = object->array_data_type;
+	if (actual == DT_ARRAY)
+	{
+		actual = DT_REF;
+	}
+	if (expected == DT_ARRAY)
+	{
+		expected = DT_REF;
+	}
+	return actual == expected;
+}
+
+bool ArrayStoreAllowed(JNIEnv *env, lpObject array, jobject value)
+{
+	if (!value || array->array_data_type != DT_REF)
+	{
+		return true;
+	}
+	lpObject source = JniResolveObject(value);
+	if (!source)
+	{
+		return true;
+	}
+	const char *name = array->obj_class && array->obj_class->thisClass
+		? array->obj_class->thisClass->GetName() : NULL;
+	if (!name || name[0] != '[' || name[1] != 'L')
+	{
+		return true;
+	}
+	size_t length = strlen(name);
+	if (length < 3)
+	{
+		return true;
+	}
+	std::string component(name + 2, length - 3);
+	lpClass target = JniFindClass(env, component.c_str());
+	if (!target)
+	{
+		return true;
+	}
+	return IsInstanceOfClass(source, target);
+}
+
+jobject BoxArrayElement(JNIEnv *env, lpObject array, int index, DATA_TYPE expected)
+{
+	if (!ArrayElementMatches(array, expected))
+	{
+		ThrowArrayIllegalArgument(env, "array type mismatch");
+		return NULL;
+	}
+	if (array->array_data_type == DT_REF || array->array_data_type == DT_ARRAY)
+	{
+		jobject *refs = static_cast<jobject *>(array->array_var);
+		jobject value = refs ? refs[index] : NULL;
+		if (value)
+		{
+			JniAddLocalRef(env, value);
+		}
+		return value;
+	}
+	Variant value;
+	switch (array->array_data_type)
+	{
+	case DT_BOOL: value.blValue = static_cast<jboolean *>(array->array_var)[index]; break;
+	case DT_BYTE: value.bValue = static_cast<jbyte *>(array->array_var)[index]; break;
+	case DT_CHAR: value.cValue = static_cast<jchar *>(array->array_var)[index]; break;
+	case DT_SHORT: value.sValue = static_cast<jshort *>(array->array_var)[index]; break;
+	case DT_INT: value.iValue = static_cast<jint *>(array->array_var)[index]; break;
+	case DT_LONG: value.lValue = static_cast<jlong *>(array->array_var)[index]; break;
+	case DT_FLOAT: value.fValue = static_cast<jfloat *>(array->array_var)[index]; break;
+	case DT_DOUBLE: value.dValue = static_cast<jdouble *>(array->array_var)[index]; break;
+	default: return NULL;
+	}
+	return BoxValue(env, array->array_data_type, value);
+}
+
+bool StoreArrayElement(JNIEnv *env, lpObject array, int index, jobject value,
+                       DATA_TYPE expected)
+{
+	if (!ArrayElementMatches(array, expected))
+	{
+		ThrowArrayIllegalArgument(env, "array type mismatch");
+		return false;
+	}
+	if (array->array_data_type == DT_REF || array->array_data_type == DT_ARRAY)
+	{
+		if (!ArrayStoreAllowed(env, array, value))
+		{
+			ThrowArrayIllegalArgument(env, "value cannot be converted");
+			return false;
+		}
+		static_cast<jobject *>(array->array_var)[index] =
+			reinterpret_cast<jobject>(JniRef(value));
+		return true;
+	}
+	Variant raw;
+	if (!UnboxValue(value, array->array_data_type, raw))
+	{
+		ThrowArrayIllegalArgument(env, "value type mismatch");
+		return false;
+	}
+	switch (array->array_data_type)
+	{
+	case DT_BOOL: static_cast<jboolean *>(array->array_var)[index] = raw.blValue; break;
+	case DT_BYTE: static_cast<jbyte *>(array->array_var)[index] = raw.bValue; break;
+	case DT_CHAR: static_cast<jchar *>(array->array_var)[index] = raw.cValue; break;
+	case DT_SHORT: static_cast<jshort *>(array->array_var)[index] = raw.sValue; break;
+	case DT_INT: static_cast<jint *>(array->array_var)[index] = raw.iValue; break;
+	case DT_LONG: static_cast<jlong *>(array->array_var)[index] = raw.lValue; break;
+	case DT_FLOAT: static_cast<jfloat *>(array->array_var)[index] = raw.fValue; break;
+	case DT_DOUBLE: static_cast<jdouble *>(array->array_var)[index] = raw.dValue; break;
+	default: break;
+	}
+	return true;
+}
+
 bool BuildArguments(lpObject args_array, const std::vector<TypeDesc> &types,
                     std::vector<jvalue> &out)
 {
@@ -1765,6 +1983,117 @@ JNIEXPORT jobject JNICALL Java_java_lang_Class_getDeclaredAnnotations0(JNIEnv *e
 		clazz ? clazz->rt_visible_attr : NULL);
 }
 
+JNIEXPORT jobject JNICALL Java_java_lang_Class_getDeclaredClasses0(JNIEnv *env,
+	jobject thiz)
+{
+	lpClass clazz = MirrorClass(thiz);
+	std::vector<jobject> items;
+	if (clazz && clazz->inner_classes && clazz->const_pool && clazz->thisClass)
+	{
+		std::string self = clazz->thisClass->GetName();
+		for (U2 i = 0; i < clazz->inner_classes->number_of_classes; i++)
+		{
+			InnerClassesInfo &info = clazz->inner_classes->inner_classes[i];
+			if (info.outer_class_info_index == 0 || info.inner_name_index == 0)
+			{
+				continue;
+			}
+			lpClassConstant outer = static_cast<lpClassConstant>(
+				clazz->const_pool->GetConstant(info.outer_class_info_index));
+			lpClassConstant inner = static_cast<lpClassConstant>(
+				clazz->const_pool->GetConstant(info.inner_class_info_index));
+			if (!outer || !inner || outer->tag != CLASS_CONSTANT ||
+			    inner->tag != CLASS_CONSTANT || !outer->utf8 ||
+			    !outer->utf8->bytes || !inner->utf8 || !inner->utf8->bytes)
+			{
+				continue;
+			}
+			if (self != outer->utf8->bytes)
+			{
+				continue;
+			}
+			lpClass inner_class = JniFindClass(env, inner->utf8->bytes);
+			if (!inner_class)
+			{
+				continue;
+			}
+			jobject mirror = JniClassMirror(reinterpret_cast<jclass>(inner_class));
+			if (mirror)
+			{
+				JniAddLocalRef(env, mirror);
+				items.push_back(mirror);
+			}
+		}
+	}
+	return MakeObjectArray(env, "[Ljava/lang/Class;", items);
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_Class_getEnclosingClass0(JNIEnv *env,
+	jobject thiz)
+{
+	lpClass clazz = MirrorClass(thiz);
+	if (!clazz || !clazz->const_pool || !clazz->thisClass)
+	{
+		return NULL;
+	}
+	std::string self = clazz->thisClass->GetName();
+	if (clazz->inner_classes)
+	{
+		for (U2 i = 0; i < clazz->inner_classes->number_of_classes; i++)
+		{
+			InnerClassesInfo &info = clazz->inner_classes->inner_classes[i];
+			if (info.outer_class_info_index == 0)
+			{
+				continue;
+			}
+			lpClassConstant outer = static_cast<lpClassConstant>(
+				clazz->const_pool->GetConstant(info.outer_class_info_index));
+			lpClassConstant inner = static_cast<lpClassConstant>(
+				clazz->const_pool->GetConstant(info.inner_class_info_index));
+			if (!outer || !inner || outer->tag != CLASS_CONSTANT ||
+			    inner->tag != CLASS_CONSTANT || !outer->utf8 ||
+			    !outer->utf8->bytes || !inner->utf8 || !inner->utf8->bytes)
+			{
+				continue;
+			}
+			if (self != inner->utf8->bytes)
+			{
+				continue;
+			}
+			lpClass outer_class = JniFindClass(env, outer->utf8->bytes);
+			if (!outer_class)
+			{
+				return NULL;
+			}
+			jobject mirror = JniClassMirror(reinterpret_cast<jclass>(outer_class));
+			if (mirror)
+			{
+				JniAddLocalRef(env, mirror);
+			}
+			return mirror;
+		}
+	}
+	if (clazz->enclose_method_attr)
+	{
+		lpClassConstant owner = static_cast<lpClassConstant>(
+			clazz->const_pool->GetConstant(clazz->enclose_method_attr->class_index));
+		if (owner && owner->tag == CLASS_CONSTANT && owner->utf8 && owner->utf8->bytes)
+		{
+			lpClass owner_class = JniFindClass(env, owner->utf8->bytes);
+			if (owner_class)
+			{
+				jobject mirror = JniClassMirror(reinterpret_cast<jclass>(owner_class));
+				if (mirror)
+				{
+					JniAddLocalRef(env, mirror);
+				}
+				return mirror;
+			}
+		}
+	}
+	return NULL;
+}
+
 // ---------------------------------------------------------------------------
 // java.lang.reflect.Method
 // ---------------------------------------------------------------------------
@@ -2179,6 +2508,32 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getExceptionTypes(JNIEnv
 		ResolveMemberMethod(env, thiz));
 }
 
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getDefaultValue(JNIEnv *env,
+	jobject thiz)
+{
+	lpMethod method = ResolveMemberMethod(env, thiz);
+	if (!method || !method->clazz || !method->clazz->const_pool ||
+	    !method->annotation_default || !method->annotation_default->bytes ||
+	    !method->methodDesc || !method->methodDesc->GetName())
+	{
+		return NULL;
+	}
+	std::string return_desc = AnnotationElementDescriptor(method);
+	if (return_desc.empty())
+	{
+		return NULL;
+	}
+	ByteReader reader(method->annotation_default->bytes,
+	                  method->annotation_default->attr_length);
+	Variant value;
+	if (!ReadElementValue(env, method->clazz->const_pool, reader,
+	                      return_desc.c_str(), value))
+	{
+		return NULL;
+	}
+	return AnnotationValueObject(env, value, return_desc.c_str());
+}
+
 JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_getParameterTypes(JNIEnv *env,
 	jobject thiz)
 {
@@ -2303,6 +2658,155 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_AnnotationSupport_expand0(
 	(void)unused;
 	return ExpandAnnotations(env, annotations, MirrorClass(annotationClass));
 }
+
+// ---------------------------------------------------------------------------
+// java.lang.reflect.Array
+// ---------------------------------------------------------------------------
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Array_newArray(
+	JNIEnv *env, jclass unused, jobject componentType, jint length)
+{
+	(void)unused;
+	if (length < 0)
+	{
+		jclass error = reinterpret_cast<jclass>(
+			JniFindClass(env, "java/lang/NegativeArraySizeException"));
+		if (error)
+		{
+			env->ThrowNew(error, "negative array size");
+		}
+		return NULL;
+	}
+	lpClass component = MirrorClass(componentType);
+	if (!component || !component->thisClass || !component->thisClass->GetName())
+	{
+		ThrowArrayIllegalArgument(env, "invalid component type");
+		return NULL;
+	}
+	const char *name = component->thisClass->GetName();
+	DATA_TYPE primitive_type = DT_VOID;
+	char primitive_tag = 0;
+	bool primitive = PrimitiveArrayType(name, primitive_type, primitive_tag);
+	std::string array_name;
+	if (primitive)
+	{
+		array_name = "[";
+		array_name += primitive_tag;
+	}
+	else if (name[0] == '[')
+	{
+		array_name = "[";
+		array_name += name;
+	}
+	else
+	{
+		if (strcmp(name, "void") == 0)
+		{
+			ThrowArrayIllegalArgument(env, "void component type");
+			return NULL;
+		}
+		array_name = "[L";
+		array_name += name;
+		array_name += ";";
+	}
+	lpClass array_class = JniFindClass(env, array_name.c_str());
+	if (!array_class || !VMContext::object_heap)
+	{
+		return NULL;
+	}
+	LPOBJECT_REF ref = NULL;
+	bool created = primitive
+		? VMContext::object_heap->NewArrayObject(length, array_class, ref)
+		: VMContext::object_heap->NewObjectArrayObject(length, array_class, ref);
+	if (!created)
+	{
+		return NULL;
+	}
+	jobject result = JniObject(ref);
+	JniAddLocalRef(env, result);
+	return result;
+}
+
+JNIEXPORT jint JNICALL Java_java_lang_reflect_Array_getLength(
+	JNIEnv *env, jclass unused, jobject array)
+{
+	(void)unused;
+	lpObject object = ResolveArray(env, array, 0, false);
+	return object ? static_cast<jint>(object->array_length) : 0;
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Array_get(
+	JNIEnv *env, jclass unused, jobject array, jint index)
+{
+	(void)unused;
+	lpObject object = ResolveArray(env, array, index, true);
+	return object ? BoxArrayElement(env, object, index, DT_VOID) : NULL;
+}
+
+JNIEXPORT void JNICALL Java_java_lang_reflect_Array_set(
+	JNIEnv *env, jclass unused, jobject array, jint index, jobject value)
+{
+	(void)unused;
+	lpObject object = ResolveArray(env, array, index, true);
+	if (object)
+	{
+		StoreArrayElement(env, object, index, value, DT_VOID);
+	}
+}
+
+#define DARKS_ARRAY_GETTER(NAME, TYPE, FIELD) \
+JNIEXPORT TYPE JNICALL Java_java_lang_reflect_Array_##NAME( \
+	JNIEnv *env, jclass unused, jobject array, jint index) \
+{ \
+	(void)unused; \
+	lpObject object = ResolveArray(env, array, index, true); \
+	if (!object) \
+	{ \
+		return 0; \
+	} \
+	if (!ArrayElementMatches(object, FIELD)) \
+	{ \
+		ThrowArrayIllegalArgument(env, "array type mismatch"); \
+		return 0; \
+	} \
+	return static_cast<TYPE *>(object->array_var)[index]; \
+}
+
+DARKS_ARRAY_GETTER(getBoolean, jboolean, DT_BOOL)
+DARKS_ARRAY_GETTER(getByte, jbyte, DT_BYTE)
+DARKS_ARRAY_GETTER(getChar, jchar, DT_CHAR)
+DARKS_ARRAY_GETTER(getShort, jshort, DT_SHORT)
+DARKS_ARRAY_GETTER(getInt, jint, DT_INT)
+DARKS_ARRAY_GETTER(getLong, jlong, DT_LONG)
+DARKS_ARRAY_GETTER(getFloat, jfloat, DT_FLOAT)
+DARKS_ARRAY_GETTER(getDouble, jdouble, DT_DOUBLE)
+
+#define DARKS_ARRAY_SETTER(NAME, TYPE, FIELD) \
+JNIEXPORT void JNICALL Java_java_lang_reflect_Array_##NAME( \
+	JNIEnv *env, jclass unused, jobject array, jint index, TYPE value) \
+{ \
+	(void)unused; \
+	lpObject object = ResolveArray(env, array, index, true); \
+	if (!object) \
+	{ \
+		return; \
+	} \
+	if (!ArrayElementMatches(object, FIELD)) \
+	{ \
+		ThrowArrayIllegalArgument(env, "array type mismatch"); \
+		return; \
+	} \
+	static_cast<TYPE *>(object->array_var)[index] = value; \
+}
+
+DARKS_ARRAY_SETTER(setBoolean, jboolean, DT_BOOL)
+DARKS_ARRAY_SETTER(setByte, jbyte, DT_BYTE)
+DARKS_ARRAY_SETTER(setChar, jchar, DT_CHAR)
+DARKS_ARRAY_SETTER(setShort, jshort, DT_SHORT)
+DARKS_ARRAY_SETTER(setInt, jint, DT_INT)
+DARKS_ARRAY_SETTER(setLong, jlong, DT_LONG)
+DARKS_ARRAY_SETTER(setFloat, jfloat, DT_FLOAT)
+DARKS_ARRAY_SETTER(setDouble, jdouble, DT_DOUBLE)
 
 } // extern "C"
 

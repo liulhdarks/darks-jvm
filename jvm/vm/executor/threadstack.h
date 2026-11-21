@@ -79,6 +79,10 @@ public:
 	// while holding a monitor may pin the carrier thread.
 	bool HoldsMonitor() const;
 
+	// Class loader of the innermost frame, used to resolve Class.forName and
+	// other symbolic lookups performed from that frame's code.
+	lpClassLoader TopFrameClassLoader() const;
+
 	// Diagnostics: writes the innermost frame as "Class.method" (internal
 	// class name).  Returns false when the stack is empty.
 	bool DescribeTopFrame(std::string &out) const;

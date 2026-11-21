@@ -81,6 +81,16 @@ public class Logger
         return name;
     }
 
+    public String getResourceBundleName()
+    {
+        return null;
+    }
+
+    public java.util.ResourceBundle getResourceBundle()
+    {
+        return null;
+    }
+
     public Logger getParent()
     {
         return parent;

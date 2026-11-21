@@ -11,4 +11,9 @@ public class IllegalArgumentException extends RuntimeException
     {
         super(message);
     }
+
+    public IllegalArgumentException(String message, Throwable cause)
+    {
+        super(message, cause);
+    }
 }

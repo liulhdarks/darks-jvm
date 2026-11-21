@@ -1,5 +1,6 @@
 package java.util.concurrent;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -202,6 +203,88 @@ public class CopyOnWriteArrayList<E> implements List<E>
     public boolean addAll(Collection<? extends E> values)
     {
         return addAll(arrayLength(), values);
+    }
+
+    public boolean removeAll(Collection<?> values)
+    {
+        if (values.isEmpty())
+        {
+            return false;
+        }
+        synchronized (lock)
+        {
+            ArrayList<Object> kept = new ArrayList<Object>();
+            boolean changed = false;
+            for (int i = 0; i < array.length; i++)
+            {
+                if (values.contains(array[i]))
+                {
+                    changed = true;
+                }
+                else
+                {
+                    kept.add(array[i]);
+                }
+            }
+            if (!changed)
+            {
+                return false;
+            }
+            array = kept.toArray();
+            return true;
+        }
+    }
+
+    public boolean retainAll(Collection<?> values)
+    {
+        synchronized (lock)
+        {
+            ArrayList<Object> kept = new ArrayList<Object>();
+            boolean changed = false;
+            for (int i = 0; i < array.length; i++)
+            {
+                if (values.contains(array[i]))
+                {
+                    kept.add(array[i]);
+                }
+                else
+                {
+                    changed = true;
+                }
+            }
+            if (!changed)
+            {
+                return false;
+            }
+            array = kept.toArray();
+            return true;
+        }
+    }
+
+    public boolean removeIf(java.util.function.Predicate<? super E> filter)
+    {
+        synchronized (lock)
+        {
+            ArrayList<Object> kept = new ArrayList<Object>();
+            boolean changed = false;
+            for (int i = 0; i < array.length; i++)
+            {
+                if (filter.test((E)array[i]))
+                {
+                    changed = true;
+                }
+                else
+                {
+                    kept.add(array[i]);
+                }
+            }
+            if (!changed)
+            {
+                return false;
+            }
+            array = kept.toArray();
+            return true;
+        }
     }
 
     public boolean addAll(int index, Collection<? extends E> values)

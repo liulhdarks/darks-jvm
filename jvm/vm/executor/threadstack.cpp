@@ -64,6 +64,20 @@ bool ThreadStack::HoldsMonitor() const
 	return false;
 }
 
+lpClassLoader ThreadStack::TopFrameClassLoader() const
+{
+	if (frames.empty())
+	{
+		return class_loader;
+	}
+	lpStackFrame frame = frames.top();
+	if (frame && frame->GetClassLoader())
+	{
+		return frame->GetClassLoader();
+	}
+	return class_loader;
+}
+
 bool ThreadStack::DescribeTopFrame(std::string &out) const
 {
 	out.clear();
@@ -191,7 +205,13 @@ void ThreadStack::CollectHeldMonitors(
 
 void ThreadStack::AddFrame(lpClass clazz, lpMethod method, lpStackFrame &frame)
 {
-	frame = new StackFrame(this, clazz, method, class_loader);
+	// Resolve symbolic references of the executed method through the loader
+	// that defined its class.  Runtime-defined classes (cglib, proxies) only
+	// exist in that loader, so the default (bootstrap) loader would fail to
+	// find the class itself when its own bytecode refers to it.
+	lpClassLoader loader = (clazz && clazz->classloader)
+		? clazz->classloader : class_loader;
+	frame = new StackFrame(this, clazz, method, loader);
 	frames.push(frame);
 	frame->jni_env = jni_env;
 }

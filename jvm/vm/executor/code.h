@@ -119,6 +119,7 @@
 #define dup2 92 /*(0x5c)*/
 #define dup2_x1 93 /*(0x5d)*/
 #define dup2_x2 94 /*(0x5e)*/
+#define _swap 95 /*(0x5f)*/
 
 #define iadd 96 /*(0x60)*/
 #define ladd 97 /*(0x61)*/

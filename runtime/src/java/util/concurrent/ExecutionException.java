@@ -17,11 +17,11 @@ public class ExecutionException extends Exception
 
     public ExecutionException(String message, Throwable cause)
     {
-        super(cause == null ? message : message + ": " + cause.toString());
+        super(message, cause);
     }
 
     public ExecutionException(Throwable cause)
     {
-        super(cause == null ? null : cause.toString());
+        super(cause);
     }
 }

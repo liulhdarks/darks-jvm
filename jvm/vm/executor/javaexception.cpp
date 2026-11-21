@@ -49,6 +49,134 @@ bool SameClassName(lpClass a, lpClass b)
 	return an && bn && strcmp(an, bn) == 0;
 }
 
+// Returns the component type of an array class name ("[Ljava/lang/String;"
+// -> "java/lang/String", "[[I" -> "[I", "[I" -> "I").
+std::string ArrayComponentName(const char *array_name)
+{
+	if (!array_name || array_name[0] != '[')
+	{
+		return std::string();
+	}
+	const char *p = array_name + 1;
+	if (*p == '[')
+	{
+		return std::string(p);
+	}
+	if (*p == 'L')
+	{
+		size_t len = strlen(p);
+		if (len >= 2 && p[len - 1] == ';')
+		{
+			return std::string(p + 1, len - 2);
+		}
+		return std::string();
+	}
+	return std::string(1, *p);
+}
+
+bool IsPrimitiveDescriptorName(const std::string &name)
+{
+	return name.size() == 1 && strchr("ZBCSIJFD", name[0]) != NULL;
+}
+
+bool ClassIsAssignableDepth(lpClass target, lpClass src, int depth);
+
+bool ArrayAssignable(lpClass target, lpClass src, int depth)
+{
+	const char *tname = target->thisClass->GetName();
+	const char *sname = src->thisClass->GetName();
+	if (strcmp(tname, "java/lang/Object") == 0 ||
+	    strcmp(tname, "java/lang/Cloneable") == 0 ||
+	    strcmp(tname, "java/io/Serializable") == 0)
+	{
+		return true;
+	}
+	if (tname[0] != '[')
+	{
+		return false;
+	}
+	std::string tc = ArrayComponentName(tname);
+	std::string sc = ArrayComponentName(sname);
+	if (tc.empty() || sc.empty())
+	{
+		return false;
+	}
+	if (IsPrimitiveDescriptorName(tc) || IsPrimitiveDescriptorName(sc))
+	{
+		return tc == sc;
+	}
+	if (depth <= 0)
+	{
+		return false;
+	}
+	lpClass tcomp = FindClassSafe(tc.c_str());
+	lpClass scomp = FindClassSafe(sc.c_str());
+	if (!tcomp || !scomp)
+	{
+		return false;
+	}
+	return ClassIsAssignableDepth(tcomp, scomp, depth - 1);
+}
+
+bool ClassIsAssignableDepth(lpClass target, lpClass src, int depth)
+{
+	if (!target || !src)
+	{
+		return false;
+	}
+	if (!target->thisClass || !target->thisClass->GetName() ||
+	    !src->thisClass || !src->thisClass->GetName())
+	{
+		return SameClassName(target, src);
+	}
+	const char *tname = target->thisClass->GetName();
+	const char *sname = src->thisClass->GetName();
+	if (strcmp(tname, sname) == 0)
+	{
+		return true;
+	}
+	if (sname[0] == '[')
+	{
+		return ArrayAssignable(target, src, depth);
+	}
+	if (depth <= 0)
+	{
+		return false;
+	}
+	// Superclass chain, with interfaces resolved recursively so that
+	// interface inheritance behaves like the JLS requires.
+	for (lpClass c = src; c; c = c->super_class)
+	{
+		if (SameClassName(target, c))
+		{
+			return true;
+		}
+		for (U2 i = 0; i < c->interfaceCount; i++)
+		{
+			lpClassConstant ic = c->interfaces ? c->interfaces[i] : NULL;
+			if (!ic)
+			{
+				continue;
+			}
+			const char *iname = ic->GetName();
+			if (!iname)
+			{
+				continue;
+			}
+			if (strcmp(iname, tname) == 0)
+			{
+				return true;
+			}
+			lpClass iface = FindClassSafe(iname);
+			if (iface && ClassIsAssignableDepth(target, iface, depth - 1))
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 } // namespace
 
 LPOBJECT_REF CreateJavaException(const char *class_name, const char *message)
@@ -125,36 +253,7 @@ LPOBJECT_REF CreateJavaExceptionWithCause(const char *class_name,
 
 bool ClassIsAssignable(lpClass target, lpClass src)
 {
-	if (!target || !src)
-	{
-		return false;
-	}
-	for (lpClass c = src; c; c = c->super_class)
-	{
-		if (SameClassName(target, c))
-		{
-			return true;
-		}
-	}
-	// Direct interfaces of every class on the chain.
-	for (lpClass c = src; c; c = c->super_class)
-	{
-		for (U2 i = 0; i < c->interfaceCount; i++)
-		{
-			lpClassConstant ic = c->interfaces ? c->interfaces[i] : NULL;
-			if (!ic)
-			{
-				continue;
-			}
-			const char *iname = ic->GetName();
-			if (iname && target->thisClass && target->thisClass->GetName() &&
-			    strcmp(iname, target->thisClass->GetName()) == 0)
-			{
-				return true;
-			}
-		}
-	}
-	return false;
+	return ClassIsAssignableDepth(target, src, 32);
 }
 
 bool IsInstanceOfClass(lpObject obj, lpClass target)

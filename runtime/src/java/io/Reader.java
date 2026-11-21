@@ -4,6 +4,11 @@ public abstract class Reader
 {
     public abstract int read() throws IOException;
 
+    public int read(char[] buffer) throws IOException
+    {
+        return read(buffer, 0, buffer.length);
+    }
+
     public int read(char[] buffer, int offset, int length) throws IOException
     {
         int count = 0;

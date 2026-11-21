@@ -2,8 +2,8 @@ package java.lang.reflect;
 
 import java.lang.annotation.Annotation;
 
-public final class Constructor<T> extends AccessibleObject
-    implements GenericDeclaration, AnnotatedElement
+public final class Constructor<T> extends Executable
+    implements AnnotatedElement
 {
     private Class<T> declaringClass;
     private String descriptor;
@@ -19,12 +19,32 @@ public final class Constructor<T> extends AccessibleObject
         return declaringClass;
     }
 
+    public String getName()
+    {
+        return declaringClass == null ? null : declaringClass.getName();
+    }
+
     public int getModifiers()
     {
         return modifiers;
     }
 
+    public boolean isSynthetic()
+    {
+        return (modifiers & 0x1000) != 0;
+    }
+
+    public boolean isVarArgs()
+    {
+        return (modifiers & 0x0080) != 0;
+    }
+
     public native Class[] getParameterTypes();
+
+    public int getParameterCount()
+    {
+        return getParameterTypes().length;
+    }
 
     public native Class[] getExceptionTypes();
 
@@ -117,6 +137,27 @@ public final class Constructor<T> extends AccessibleObject
     public <T extends Annotation> T[] getAnnotationsByType(Class<T> annotationClass)
     {
         return getDeclaredAnnotationsByType(annotationClass);
+    }
+
+    public boolean equals(Object obj)
+    {
+        if (this == obj)
+        {
+            return true;
+        }
+        if (!(obj instanceof Constructor))
+        {
+            return false;
+        }
+        Constructor other = (Constructor)obj;
+        return declaringClass == other.declaringClass &&
+            (descriptor == null ? other.descriptor == null
+                : descriptor.equals(other.descriptor));
+    }
+
+    public int hashCode()
+    {
+        return declaringClass == null ? 0 : declaringClass.getName().hashCode();
     }
 
     public String toString()

@@ -34,7 +34,7 @@ public:
 	void push(short v)
 	{
 		Slot slot;
-		slot.sValue = v;
+		slot.iValue = v;
 		push(slot);
 	}
 

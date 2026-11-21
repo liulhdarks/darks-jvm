@@ -134,6 +134,10 @@ private:
 
 	void MarkRoots();
 
+	// Clears unreachable referents and enqueues the affected
+	// java.lang.ref.Reference objects on their ReferenceQueue.
+	void ProcessWeakReferences();
+
 	void MarkStaticRoots();
 	void MarkConstantPoolRoots();
 	void MarkThreadStackRoots();
@@ -145,6 +149,7 @@ private:
 
 	std::vector<bool> marked;
 	std::vector<OBJECT_REF> mark_stack;
+	std::vector<OBJECT_REF> weak_reference_objects;
 	std::map<const OBJECT_REF *, OBJECT_REF> ref_index;
 
 	std::vector<OBJECT_REF> free_indices;

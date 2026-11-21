@@ -7,6 +7,7 @@ public class PropertyDescriptor extends FeatureDescriptor
     private Class propertyType;
     private Method readMethod;
     private Method writeMethod;
+    private Class propertyEditorClass;
 
     public PropertyDescriptor(String propertyName, Class beanClass)
         throws IntrospectionException
@@ -75,6 +76,16 @@ public class PropertyDescriptor extends FeatureDescriptor
     public Class getPropertyType()
     {
         return propertyType;
+    }
+
+    public Class getPropertyEditorClass()
+    {
+        return propertyEditorClass;
+    }
+
+    public void setPropertyEditorClass(Class propertyEditorClass)
+    {
+        this.propertyEditorClass = propertyEditorClass;
     }
 
     public Method getReadMethod()

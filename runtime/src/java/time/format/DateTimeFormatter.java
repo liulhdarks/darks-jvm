@@ -32,6 +32,13 @@ public final class DateTimeFormatter
         new DateTimeFormatter("yyyy-MM-dd'T'HH:mm:ssXXX", true, false);
     public static final DateTimeFormatter BASIC_ISO_DATE =
         new DateTimeFormatter("yyyyMMdd", true, false);
+    public static final DateTimeFormatter ISO_DATE = ISO_LOCAL_DATE;
+    public static final DateTimeFormatter ISO_TIME = ISO_LOCAL_TIME;
+    public static final DateTimeFormatter ISO_DATE_TIME = ISO_LOCAL_DATE_TIME;
+    public static final DateTimeFormatter ISO_OFFSET_DATE_TIME =
+        new DateTimeFormatter("yyyy-MM-dd'T'HH:mm:ssXXX", true, false);
+    public static final DateTimeFormatter ISO_OFFSET_TIME =
+        new DateTimeFormatter("HH:mm:ssXXX", true, false);
 
     private static final String[] MONTHS_SHORT = {
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -78,6 +85,32 @@ public final class DateTimeFormatter
     public DateTimeFormatter withLocale(Locale locale)
     {
         return this;
+    }
+
+    public DateTimeFormatter withZone(ZoneId zone)
+    {
+        return this;
+    }
+
+    public static DateTimeFormatter ofLocalizedDate(FormatStyle style)
+    {
+        return ISO_LOCAL_DATE;
+    }
+
+    public static DateTimeFormatter ofLocalizedTime(FormatStyle style)
+    {
+        return ISO_LOCAL_TIME;
+    }
+
+    public static DateTimeFormatter ofLocalizedDateTime(FormatStyle style)
+    {
+        return ISO_LOCAL_DATE_TIME;
+    }
+
+    public static DateTimeFormatter ofLocalizedDateTime(FormatStyle dateStyle,
+                                                       FormatStyle timeStyle)
+    {
+        return ISO_LOCAL_DATE_TIME;
     }
 
     public String toString()
@@ -173,6 +206,14 @@ public final class DateTimeFormatter
             offsetSeconds = zdt.getOffset().getTotalSeconds();
             hasOffset = true;
             zoneId = zdt.getZone().getId();
+        }
+        else if (value instanceof java.time.OffsetDateTime)
+        {
+            java.time.OffsetDateTime odt = (java.time.OffsetDateTime)value;
+            date = odt.toLocalDate();
+            time = odt.toLocalTime();
+            offsetSeconds = odt.getOffset().getTotalSeconds();
+            hasOffset = true;
         }
         else if (value instanceof LocalDateTime)
         {

@@ -123,6 +123,33 @@ public class StringBuilder implements CharSequence
         return append(String.valueOf(o));
     }
 
+    public StringBuilder append(CharSequence s)
+    {
+        return append(s == null ? "null" : s.toString());
+    }
+
+    public StringBuilder append(CharSequence s, int start, int end)
+    {
+        if (s == null)
+        {
+            s = "null";
+        }
+        if (start < 0 || start > end || end > s.length())
+        {
+            throw new IndexOutOfBoundsException();
+        }
+        int n = end - start;
+        ensure(count + n);
+        int i = 0;
+        while (i < n)
+        {
+            value[count + i] = s.charAt(start + i);
+            i = i + 1;
+        }
+        count = count + n;
+        return this;
+    }
+
     public StringBuilder append(float v)
     {
         return append(new Float(v).toString());
@@ -301,6 +328,11 @@ public class StringBuilder implements CharSequence
 
     public int indexOf(String text)
     {
+        return indexOf(text, 0);
+    }
+
+    public int indexOf(String text, int from)
+    {
         if (text == null)
         {
             return -1;
@@ -308,9 +340,9 @@ public class StringBuilder implements CharSequence
         int n = text.length();
         if (n == 0)
         {
-            return 0;
+            return from < 0 ? 0 : (from > count ? count : from);
         }
-        int i = 0;
+        int i = from < 0 ? 0 : from;
         while (i + n <= count)
         {
             int j = 0;
@@ -323,6 +355,35 @@ public class StringBuilder implements CharSequence
                 return i;
             }
             i = i + 1;
+        }
+        return -1;
+    }
+
+    public int lastIndexOf(String text)
+    {
+        return lastIndexOf(text, count);
+    }
+
+    public int lastIndexOf(String text, int from)
+    {
+        if (text == null)
+        {
+            return -1;
+        }
+        int n = text.length();
+        int i = from > count - n ? count - n : from;
+        while (i >= 0)
+        {
+            int j = 0;
+            while (j < n && value[i + j] == text.charAt(j))
+            {
+                j = j + 1;
+            }
+            if (j == n)
+            {
+                return i;
+            }
+            i = i - 1;
         }
         return -1;
     }
