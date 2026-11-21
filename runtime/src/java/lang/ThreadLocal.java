@@ -9,11 +9,20 @@ public class ThreadLocal<T>
 {
     private static int nextKey;
 
+    // InheritableThreadLocal instances indexed by key, so a new Thread can copy
+    // the values its parent had at creation time (JLS 17.12).
+    private static InheritableThreadLocal<?>[] inheritable =
+        new InheritableThreadLocal<?>[8];
+
     private final int key;
 
     public ThreadLocal()
     {
         key = allocateKey();
+        if (this instanceof InheritableThreadLocal)
+        {
+            registerInheritable((InheritableThreadLocal<?>) this);
+        }
     }
 
     private static synchronized int allocateKey()
@@ -21,6 +30,55 @@ public class ThreadLocal<T>
         int k = nextKey;
         nextKey = k + 1;
         return k;
+    }
+
+    private static synchronized void registerInheritable(InheritableThreadLocal<?> local)
+    {
+        int k = ((ThreadLocal<?>) local).key;
+        if (k >= inheritable.length)
+        {
+            int n = inheritable.length;
+            while (k >= n)
+            {
+                n = n * 2;
+            }
+            InheritableThreadLocal<?>[] grown = new InheritableThreadLocal<?>[n];
+            for (int i = 0; i < inheritable.length; i++)
+            {
+                grown[i] = inheritable[i];
+            }
+            inheritable = grown;
+        }
+        inheritable[k] = local;
+    }
+
+    // Builds the child thread's storage from the parent table, applying
+    // childValue() to every inheritable slot.  Called from Thread.init().
+    @SuppressWarnings("unchecked")
+    static synchronized Object[] inherit(Object[] parent)
+    {
+        if (parent == null)
+        {
+            return null;
+        }
+        Object[] child = null;
+        int limit = parent.length < inheritable.length
+            ? parent.length : inheritable.length;
+        for (int k = 0; k < limit; k++)
+        {
+            if (inheritable[k] == null || parent[k] == null)
+            {
+                continue;
+            }
+            if (child == null)
+            {
+                child = new Object[parent.length];
+            }
+            InheritableThreadLocal<Object> local =
+                (InheritableThreadLocal<Object>) inheritable[k];
+            child[k] = local.childValue(parent[k]);
+        }
+        return child;
     }
 
     private Object[] table(boolean create)

@@ -688,13 +688,21 @@ JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_defineClass0(JNIEnv *env,
 	// Classes defined through a Java class loader (Spring Boot's nested jar
 	// loader) must run <clinit> like classes resolved through the native
 	// loader; otherwise static state stays at its default values.
+	bool initialized = false;
 	try
 	{
-		clazz->initialize(true);
+		initialized = clazz->initialize(true);
 	}
 	catch (VMException *error)
 	{
 		delete error;
+	}
+	if (!initialized)
+	{
+		// Leave the initialization error pending so the Java frame that called
+		// defineClass observes it; returning a mirror would let the caller
+		// continue with a class whose static state is only half built.
+		return NULL;
 	}
 	jobject mirror = JniClassMirror(reinterpret_cast<jclass>(clazz));
 	JniAddLocalRef(env, mirror);

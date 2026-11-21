@@ -32,6 +32,7 @@ Class::Class()
 	super_class = NULL;
 	component_class = NULL;
 	initialized_state = false;
+	initialization_failed = false;
 	inner_classes = NULL;
 	bootstrap_methods = NULL;
 	major_version = 0;
@@ -61,6 +62,7 @@ Class::Class(ClassType class_type)
 	super_class = NULL;
 	component_class = NULL;
 	initialized_state = false;
+	initialization_failed = false;
 	inner_classes = NULL;
 	bootstrap_methods = NULL;
 	major_version = 0;
@@ -134,12 +136,39 @@ bool Class::initialize(bool load_super)
 {
 	if (initialized_state)
 	{
+		if (initialization_failed)
+		{
+			if (!VMContext::pending_exception)
+			{
+				std::string binary = thisClass && thisClass->GetName()
+					? thisClass->GetName() : "?";
+				for (size_t i = 0; i < binary.size(); i++)
+				{
+					if (binary[i] == '/')
+					{
+						binary[i] = '.';
+					}
+				}
+				std::string message = "Could not initialize class ";
+				message += binary;
+				VMContext::pending_exception = CreateJavaException(
+					"java/lang/NoClassDefFoundError", message.c_str());
+			}
+			return false;
+		}
 		return true;
 	}
 	initialized_state = true;
-	if (load_super)
+	initialization_failed = false;
+	if (load_super && !LoadSuperClass())
 	{
-		LoadSuperClass();
+		// The superclass failed to initialize.  Its exception (JVMS 5.5: the
+		// same ExceptionInInitializerError for a first attempt, or the
+		// NoClassDefFoundError for an already erroneous superclass) is already
+		// pending; this class is erroneous as well and its own <clinit> does
+		// not run.
+		initialization_failed = true;
+		return false;
 	}
 	if (!clinitMethod)
 	{
@@ -147,26 +176,81 @@ bool Class::initialize(bool load_super)
 	}
 	lpVMExecutor exec = new VMExecutor();
 	exec->Initialize();
-	exec->Execute(this, clinitMethod);
-	if (VMContext::pending_exception)
+	try
 	{
-		VMContext::pending_exception = NULL;
+		exec->Execute(this, clinitMethod);
 	}
-	if (exec)
+	catch (...)
 	{
 		delete exec;
-		exec = NULL;
+		initialization_failed = true;
+		throw;
+	}
+	delete exec;
+	LPOBJECT_REF thrown = VMContext::pending_exception;
+	if (thrown)
+	{
+		initialization_failed = true;
+		// Errors thrown by <clinit> propagate unchanged; every other Throwable
+		// is wrapped in ExceptionInInitializerError with the throwable as cause
+		// (JVMS 5.5, second bullet of step 11).  The throwable stays reachable
+		// through pending_exception while the wrapper is allocated.
+		lpObject obj = NULL;
+		bool is_error = false;
+		if (VMContext::object_heap && VMContext::object_heap->GetObject(thrown, obj) && obj)
+		{
+			for (lpClass c = obj->obj_class; c; c = c->super_class)
+			{
+				const char *name = c->thisClass ? c->thisClass->GetName() : NULL;
+				if (name && strcmp(name, "java/lang/Error") == 0)
+				{
+					is_error = true;
+					break;
+				}
+			}
+		}
+		if (!is_error)
+		{
+			LPOBJECT_REF wrapper = CreateJavaExceptionWithCause(
+				"java/lang/ExceptionInInitializerError", NULL, thrown);
+			if (wrapper)
+			{
+				VMContext::pending_exception = wrapper;
+			}
+		}
+		return false;
 	}
 	return true;
 }
 
-void Class::LoadSuperClass()
+bool Class::LoadSuperClass()
 {
 	if (!superClass || !classloader)
 	{
-		return;
+		return true;
 	}
-	classloader->FindClass(superClass->GetName(), super_class);
+	if (!super_class)
+	{
+		try
+		{
+			if (!classloader->FindClass(superClass->GetName(), super_class, true) ||
+			    !super_class)
+			{
+				return false;
+			}
+			return true;
+		}
+		catch (VMException *error)
+		{
+			delete error;
+			return false;
+		}
+		catch (...)
+		{
+			return false;
+		}
+	}
+	return super_class->initialize(true);
 }
 
 int Class::EnsureInstanceLayout()

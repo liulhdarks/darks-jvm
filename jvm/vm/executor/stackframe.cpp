@@ -344,7 +344,13 @@ bool FindClassOrError(lpClassLoader loader, const char *name, lpClass &out,
 	catch (...)
 	{
 	}
-	VMContext::pending_exception = CreateJavaException(error_class, name);
+	// Resolution may fail because the class itself is in the erroneous state
+	// (its <clinit> already failed).  In that case FindClass left the real
+	// initialization error pending; do not mask it with a generic NCDFE.
+	if (!VMContext::pending_exception)
+	{
+		VMContext::pending_exception = CreateJavaException(error_class, name);
+	}
 	return false;
 }
 

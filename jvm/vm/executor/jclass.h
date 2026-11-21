@@ -48,6 +48,10 @@ public:
 	// Set once <clinit> has run (or when the class has none); guards against
 	// repeated initialisation from JNI GetStaticMethodID/GetStaticFieldID.
 	bool initialized_state;
+	// Set when <clinit> or the initialization of a superclass terminated
+	// abruptly.  JVMS 5.5 keeps the class in the erroneous state forever:
+	// later active uses throw NoClassDefFoundError instead of retrying <clinit>.
+	bool initialization_failed;
 
 	// Instance field layout: instance fields of the superclass chain occupy
 	// slots [0, instance_field_total).  Fields declared by this class start at
@@ -66,7 +70,7 @@ public:
 
 public:
 
-	void LoadSuperClass();
+	bool LoadSuperClass();
 	bool initialize(bool load_super = true);
 	bool FindMethod(LPSTR method_name, lpMethod& method);
 	bool FindMethodByParams(LPCSTR name, LPCSTR params, lpMethod& method);
