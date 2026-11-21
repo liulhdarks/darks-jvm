@@ -85,6 +85,15 @@ public class SdkMathTest
         check("decimal-scale", new BigDecimal("1.2500").scale() == 4);
         check("decimal-int", new BigDecimal("42.9").intValue() == 42);
 
+        check("float-nan", Float.isNaN(0.0f / 0.0f));
+        check("float-not-nan", !Float.isNaN(1.5f));
+        check("float-infinite", Float.isInfinite(1.0f / 0.0f));
+        check("float-finite", Float.isFinite(1.5f));
+        check("float-not-finite", !Float.isFinite(1.0f / 0.0f));
+        check("int-highest-one-bit", Integer.highestOneBit(20) == 16);
+        check("int-highest-one-bit-zero", Integer.highestOneBit(0) == 0);
+        check("int-lowest-one-bit", Integer.lowestOneBit(20) == 4);
+
         System.out.println("math checks=" + checks + " failures=" + failures);
         System.out.println("sdk math: ok");
     }

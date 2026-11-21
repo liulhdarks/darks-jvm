@@ -3,6 +3,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -23,6 +24,17 @@ public class ConcurrentCollectionsTest {
     }
 
     public static void main(String[] args) throws Exception {
+        ConcurrentMap<String, Integer> concurrentMap =
+            new ConcurrentHashMap<String, Integer>();
+        check(concurrentMap.putIfAbsent("cm", Integer.valueOf(1)) == null,
+              "ConcurrentMap putIfAbsent");
+        check(concurrentMap.putIfAbsent("cm", Integer.valueOf(2)) != null,
+              "ConcurrentMap putIfAbsent existing");
+        check(concurrentMap.replace("cm", Integer.valueOf(1),
+                                    Integer.valueOf(3)),
+              "ConcurrentMap replace");
+        check(concurrentMap.get("cm").intValue() == 3, "ConcurrentMap get");
+
         final ConcurrentHashMap<String, Integer> map = new ConcurrentHashMap<String, Integer>();
         Thread[] putters = new Thread[8];
         for (int t = 0; t < putters.length; t++) {

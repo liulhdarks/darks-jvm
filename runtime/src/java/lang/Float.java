@@ -39,6 +39,21 @@ public final class Float extends Number implements Comparable<Float>
         return (long)value;
     }
 
+    public static boolean isNaN(float v)
+    {
+        return v != v;
+    }
+
+    public static boolean isInfinite(float v)
+    {
+        return v > MAX_VALUE || v < -MAX_VALUE;
+    }
+
+    public static boolean isFinite(float v)
+    {
+        return !isNaN(v) && !isInfinite(v);
+    }
+
     public boolean equals(Object other)
     {
         return (other instanceof Float) && ((Float)other).value == value;

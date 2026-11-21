@@ -14,7 +14,7 @@ import java.util.Set;
  * without CAS or volatile field semantics; per-bin locking would require both.
  * Bulk views ({@code keySet}, {@code values}, {@code entrySet}) are snapshots.
  */
-public class ConcurrentHashMap<K, V> implements Map<K, V>
+public class ConcurrentHashMap<K, V> implements ConcurrentMap<K, V>
 {
     private final HashMap<K, V> map;
     private final Object lock = new Object();

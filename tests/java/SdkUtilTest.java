@@ -5,6 +5,8 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Deque;
+import java.util.EventListener;
+import java.util.EventObject;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -436,6 +438,24 @@ public class SdkUtilTest
         check("logger-remove-handler", log.getHandlers().length == 0);
     }
 
+    static void eventTests()
+    {
+        EventListener listener = new EventListener() { };
+        EventObject event = new EventObject(listener);
+        check("event-source", event.getSource() == listener);
+        check("event-to-string", event.toString().indexOf("EventObject") >= 0);
+        boolean rejected = false;
+        try
+        {
+            new EventObject(null);
+        }
+        catch (IllegalArgumentException expected)
+        {
+            rejected = true;
+        }
+        check("event-null-source", rejected);
+    }
+
     public static void main(String[] args)
     {
         optionalTests();
@@ -443,6 +463,7 @@ public class SdkUtilTest
         mapTests();
         dequeTests();
         collectionTests();
+        eventTests();
         loggingTests();
 
         System.out.println("util checks=" + checks + " failures=" + failures);
