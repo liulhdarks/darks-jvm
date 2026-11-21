@@ -481,8 +481,12 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
 
     public Package getPackage()
     {
+        if (isArray() || isPrimitive())
+        {
+            return null;
+        }
         String packageName = packageName();
-        if (packageName == null)
+        if (packageName == null || packageName.length() == 0)
         {
             return null;
         }
@@ -495,7 +499,16 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
         {
             return null;
         }
-        return loader.getPackage(packageName);
+        synchronized (loader)
+        {
+            Package pkg = loader.getPackage(packageName);
+            if (pkg == null)
+            {
+                pkg = loader.definePackage(packageName, null, null, null,
+                    null, null, null, null);
+            }
+            return pkg;
+        }
     }
 
     private native ClassLoader getClassLoader0();

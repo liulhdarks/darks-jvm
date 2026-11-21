@@ -415,6 +415,14 @@ public class P0Checks
         rt.gc();
         mark("runtime-gc", true);
 
+        mark("vmerror-hierarchy",
+            new OutOfMemoryError() instanceof VirtualMachineError &&
+            new StackOverflowError() instanceof VirtualMachineError);
+
+        mark("threaddeath-error",
+            Throwable.class.isAssignableFrom(ThreadDeath.class) &&
+            new ThreadDeath() instanceof Error);
+
         mark("simple-class", P0Checks.class.getSimpleName().equals("P0Checks"));
         mark("simple-inner", Base.class.getSimpleName().equals("Base"));
         mark("simple-int-array", int[].class.getSimpleName().equals("int[]"));

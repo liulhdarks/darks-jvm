@@ -4,6 +4,10 @@ import java.io.FileInputStream;
 import java.io.FileWriter;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.nio.ByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.attribute.FileAttribute;
 
 public class FileIoDemo
 {
@@ -22,6 +26,20 @@ public class FileIoDemo
 
     public static void main(String[] args) throws Exception
     {
+        ByteBuffer buffer = ByteBuffer.allocate(8);
+        buffer.put(new byte[] {1, 2, 3});
+        check("bytebuffer-covariant", buffer.flip() == buffer && buffer.get() == 1);
+
+        Path tempDir = Files.createTempDirectory("darks-temp-",
+            new FileAttribute<?>[0]);
+        check("temp-directory", Files.isDirectory(tempDir));
+        tempDir.toFile().delete();
+
+        check("file-separator",
+            File.separatorChar == System.getProperty("file.separator").charAt(0));
+        check("path-separator",
+            File.pathSeparatorChar == System.getProperty("path.separator").charAt(0));
+
         String base = System.getProperty("java.io.tmpdir");
         File dir = new File(base + "/darks-fileio-demo");
         check("mkdirs", dir.mkdirs() || dir.isDirectory());

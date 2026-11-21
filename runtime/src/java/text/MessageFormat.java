@@ -1,5 +1,7 @@
 package java.text;
 
+import java.util.Locale;
+
 /**
  * Minimal MessageFormat: {n}, {n,number}, {n,number,pattern}, {n,date} and
  * {n,time}.  Single quotes quote literal text; '' produces one quote.
@@ -7,10 +9,21 @@ package java.text;
 public class MessageFormat
 {
     private String pattern;
+    private Locale locale = Locale.getDefault();
 
     public MessageFormat(String pattern)
     {
         applyPattern(pattern);
+    }
+
+    public void setLocale(Locale locale)
+    {
+        this.locale = locale;
+    }
+
+    public Locale getLocale()
+    {
+        return locale;
     }
 
     public void applyPattern(String pattern)
@@ -35,6 +48,13 @@ public class MessageFormat
     public final String format(Object argument)
     {
         return format(new Object[] {argument});
+    }
+
+    public StringBuffer format(Object[] arguments, StringBuffer result,
+        FieldPosition position)
+    {
+        result.append(format(arguments));
+        return result;
     }
 
     public final String format(Object[] arguments)

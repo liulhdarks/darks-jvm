@@ -1,6 +1,6 @@
 package java.lang;
 
-public class OutOfMemoryError extends Error
+public class OutOfMemoryError extends VirtualMachineError
 {
     public OutOfMemoryError()
     {

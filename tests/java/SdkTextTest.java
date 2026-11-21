@@ -1,4 +1,5 @@
 import java.text.DecimalFormat;
+import java.text.FieldPosition;
 import java.text.MessageFormat;
 import java.text.NumberFormat;
 import java.text.ParseException;
@@ -67,6 +68,17 @@ public class SdkTextTest
         check("message-number",
               MessageFormat.format("total={0,number,#,##0.00}", new Double(1234.5))
                   .equals("total=1,234.50"));
+        MessageFormat localized = new MessageFormat("{0}");
+        localized.setLocale(Locale.ENGLISH);
+        check("message-locale", localized.getLocale() == Locale.ENGLISH);
+
+        MessageFormat buffered = new MessageFormat("{0}-{1}");
+        StringBuffer buffer = new StringBuffer();
+        StringBuffer formatted = buffered.format(new Object[] {"a", "b"}, buffer,
+            new FieldPosition(0));
+        check("message-format-buffer",
+              formatted == buffer && "a-b".equals(buffer.toString()));
+
         check("message-repeat",
               MessageFormat.format("{0}-{0}-{1}", "a", "b").equals("a-a-b"));
 

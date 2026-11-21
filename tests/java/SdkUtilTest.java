@@ -433,6 +433,14 @@ public class SdkUtilTest
         eq("logger-parent", child.getParent().getName(), "sdk.util.test");
         check("logger-anonymous", Logger.getAnonymousLogger().getName().length() == 0);
         check("logger-global", Logger.getGlobal() == Logger.global);
+        log.logp(Level.INFO, "SdkUtilTest", "loggingTests", "logp-message");
+        log.logp(Level.INFO, "SdkUtilTest", "loggingTests", "logp-param {0}", "x");
+        log.logp(Level.INFO, "SdkUtilTest", "loggingTests", "logp-params {0}",
+            new Object[] {"y"});
+        log.logp(Level.FINE, "SdkUtilTest", "loggingTests", "logp-throwable",
+            new IllegalStateException("expected"));
+        check("logger-logp", log.isLoggable(Level.INFO));
+
         Logger.getLogger("sdk.util.root").info("log-root-info");
         log.removeHandler(handler);
         check("logger-remove-handler", log.getHandlers().length == 0);

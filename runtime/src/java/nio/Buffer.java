@@ -26,7 +26,7 @@ public abstract class Buffer
         return position;
     }
 
-    public final Buffer position(int newPosition)
+    public Buffer position(int newPosition)
     {
         if (newPosition < 0 || newPosition > limit)
         {
@@ -45,7 +45,7 @@ public abstract class Buffer
         return limit;
     }
 
-    public final Buffer limit(int newLimit)
+    public Buffer limit(int newLimit)
     {
         if (newLimit < 0 || newLimit > capacity)
         {
@@ -63,13 +63,13 @@ public abstract class Buffer
         return this;
     }
 
-    public final Buffer mark()
+    public Buffer mark()
     {
         mark = position;
         return this;
     }
 
-    public final Buffer reset()
+    public Buffer reset()
     {
         if (mark < 0)
         {
@@ -79,7 +79,7 @@ public abstract class Buffer
         return this;
     }
 
-    public final Buffer clear()
+    public Buffer clear()
     {
         position = 0;
         limit = capacity;
@@ -87,7 +87,7 @@ public abstract class Buffer
         return this;
     }
 
-    public final Buffer flip()
+    public Buffer flip()
     {
         limit = position;
         position = 0;
@@ -95,7 +95,7 @@ public abstract class Buffer
         return this;
     }
 
-    public final Buffer rewind()
+    public Buffer rewind()
     {
         position = 0;
         mark = -1;

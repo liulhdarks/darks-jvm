@@ -4,6 +4,7 @@ import java.beans.IntrospectionException;
 import java.beans.Introspector;
 import java.beans.MethodDescriptor;
 import java.beans.PropertyDescriptor;
+import java.beans.Transient;
 import java.beans.SimpleBeanInfo;
 import java.lang.reflect.Method;
 
@@ -81,6 +82,21 @@ public class BeansDemo
     {
     }
 
+    public static class Secret
+    {
+        @Transient
+        public String getHidden()
+        {
+            return "hidden";
+        }
+
+        @Transient(false)
+        public String getVisible()
+        {
+            return "visible";
+        }
+    }
+
     private static int checks;
     private static int failures;
 
@@ -122,6 +138,15 @@ public class BeansDemo
 
     public static void main(String[] args) throws Exception
     {
+        Package stringPackage = String.class.getPackage();
+        check("package-name",
+            stringPackage != null && "java.lang".equals(stringPackage.getName()));
+        check("package-cached",
+            stringPackage != null && stringPackage == Object.class.getPackage());
+        check("package-default-null", BeansDemo.class.getPackage() == null);
+        check("package-array-null", String[].class.getPackage() == null);
+        check("package-primitive-null", int.class.getPackage() == null);
+
         check("decapitalize-name", "name".equals(Introspector.decapitalize("Name")));
         check("decapitalize-url", "URL".equals(Introspector.decapitalize("URL")));
         check("decapitalize-lower", "x".equals(Introspector.decapitalize("x")));
@@ -196,6 +221,12 @@ public class BeansDemo
 
         BeanInfo empty = Introspector.getBeanInfo(Empty.class);
         check("empty-properties", empty.getPropertyDescriptors().length == 0);
+
+        check("transient-default",
+            Secret.class.getMethod("getHidden").isAnnotationPresent(Transient.class) &&
+            Secret.class.getMethod("getHidden").getAnnotation(Transient.class).value());
+        check("transient-false",
+            !Secret.class.getMethod("getVisible").getAnnotation(Transient.class).value());
 
         SimpleBeanInfo simple = new SimpleBeanInfo();
         check("simple-bean-descriptor", simple.getBeanDescriptor() == null);

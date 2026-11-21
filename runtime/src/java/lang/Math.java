@@ -92,6 +92,50 @@ public final class Math
         return value;
     }
 
+    public static int addExact(int a, int b)
+    {
+        int result = a + b;
+        if (((a ^ result) & (b ^ result)) < 0)
+        {
+            throw new ArithmeticException("integer overflow");
+        }
+        return result;
+    }
+
+    public static long addExact(long a, long b)
+    {
+        long result = a + b;
+        if (((a ^ result) & (b ^ result)) < 0)
+        {
+            throw new ArithmeticException("long overflow");
+        }
+        return result;
+    }
+
+    public static int multiplyExact(int a, int b)
+    {
+        long result = (long) a * (long) b;
+        if ((int) result != result)
+        {
+            throw new ArithmeticException("integer overflow");
+        }
+        return (int) result;
+    }
+
+    public static long multiplyExact(long a, long b)
+    {
+        if (a == Long.MIN_VALUE && b == -1)
+        {
+            throw new ArithmeticException("long overflow");
+        }
+        long result = a * b;
+        if (a != 0 && (result / a != b))
+        {
+            throw new ArithmeticException("long overflow");
+        }
+        return result;
+    }
+
     public static int toIntExact(long value)
     {
         if (value < -2147483648L || value > 2147483647L)

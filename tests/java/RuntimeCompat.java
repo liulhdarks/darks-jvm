@@ -23,6 +23,18 @@ public class RuntimeCompat
 
     public static void main(String[] args)
     {
+        check("math-add-exact", Math.addExact(2, 3) == 5 && Math.addExact(2L, 3L) == 5L);
+        check("math-multiply-exact",
+            Math.multiplyExact(6, 7) == 42 && Math.multiplyExact(6L, 7L) == 42L);
+        boolean overflow = false;
+        try { Math.multiplyExact(Long.MAX_VALUE, 2L); }
+        catch (ArithmeticException expected) { overflow = true; }
+        check("math-multiply-overflow", overflow);
+        overflow = false;
+        try { Math.addExact(Integer.MAX_VALUE, 1); }
+        catch (ArithmeticException expected) { overflow = true; }
+        check("math-add-overflow", overflow);
+
         // ---- String -----------------------------------------------------
         String padded = "  Hello, JVM World  ";
         check("trim", padded.trim().equals("Hello, JVM World"));

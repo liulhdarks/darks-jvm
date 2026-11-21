@@ -16,6 +16,48 @@ public class ByteBuffer extends Buffer
         this.offset = offset;
     }
 
+    public ByteBuffer position(int newPosition)
+    {
+        super.position(newPosition);
+        return this;
+    }
+
+    public ByteBuffer limit(int newLimit)
+    {
+        super.limit(newLimit);
+        return this;
+    }
+
+    public ByteBuffer mark()
+    {
+        super.mark();
+        return this;
+    }
+
+    public ByteBuffer reset()
+    {
+        super.reset();
+        return this;
+    }
+
+    public ByteBuffer clear()
+    {
+        super.clear();
+        return this;
+    }
+
+    public ByteBuffer flip()
+    {
+        super.flip();
+        return this;
+    }
+
+    public ByteBuffer rewind()
+    {
+        super.rewind();
+        return this;
+    }
+
     public static ByteBuffer allocate(int capacity)
     {
         if (capacity < 0)

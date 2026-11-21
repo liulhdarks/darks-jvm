@@ -1,6 +1,6 @@
 package java.lang;
 
-public class StackOverflowError extends Error
+public class StackOverflowError extends VirtualMachineError
 {
     public StackOverflowError()
     {

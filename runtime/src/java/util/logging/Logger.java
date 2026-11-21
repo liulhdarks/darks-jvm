@@ -215,6 +215,30 @@ public class Logger
         publish(record);
     }
 
+    public void logp(Level level, String sourceClass, String sourceMethod,
+        String message)
+    {
+        log(level, message);
+    }
+
+    public void logp(Level level, String sourceClass, String sourceMethod,
+        String message, Object parameter)
+    {
+        log(level, message, parameter);
+    }
+
+    public void logp(Level level, String sourceClass, String sourceMethod,
+        String message, Object[] parameters)
+    {
+        log(level, message, parameters);
+    }
+
+    public void logp(Level level, String sourceClass, String sourceMethod,
+        String message, Throwable thrown)
+    {
+        log(level, message, thrown);
+    }
+
     public void log(LogRecord record)
     {
         if (record == null)

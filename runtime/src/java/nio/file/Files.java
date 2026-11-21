@@ -119,6 +119,18 @@ public final class Files
         return createTempFile(null, prefix, suffix);
     }
 
+    public static Path createTempFile(String prefix, String suffix,
+        FileAttribute<?>... attrs) throws IOException
+    {
+        return createTempFile(null, prefix, suffix);
+    }
+
+    public static Path createTempFile(Path dir, String prefix, String suffix,
+        FileAttribute<?>... attrs) throws IOException
+    {
+        return createTempFile(dir, prefix, suffix);
+    }
+
     public static Path createTempFile(Path dir, String prefix, String suffix) throws IOException
     {
         File directory = dir == null ? new File(System.getProperty("java.io.tmpdir", ".")) : dir.toFile();
@@ -134,6 +146,18 @@ public final class Files
     public static Path createTempDirectory(String prefix) throws IOException
     {
         return createTempDirectory(null, prefix);
+    }
+
+    public static Path createTempDirectory(String prefix,
+        FileAttribute<?>... attrs) throws IOException
+    {
+        return createTempDirectory(prefix);
+    }
+
+    public static Path createTempDirectory(Path dir, String prefix,
+        FileAttribute<?>... attrs) throws IOException
+    {
+        return createTempDirectory(dir, prefix);
     }
 
     public static Path createTempDirectory(Path dir, String prefix) throws IOException
