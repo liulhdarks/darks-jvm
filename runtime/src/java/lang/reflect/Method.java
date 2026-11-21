@@ -2,17 +2,27 @@ package java.lang.reflect;
 
 import java.lang.annotation.Annotation;
 
-public final class Method extends AccessibleObject
-    implements GenericDeclaration, AnnotatedElement
+public final class Method extends Executable implements Member
 {
     private Class declaringClass;
     private String name;
     private String descriptor;
     private int modifiers;
     private TypeVariable<Method>[] typeParametersCache;
+    private boolean accessible;
 
     Method()
     {
+    }
+
+    public boolean isAccessible()
+    {
+        return accessible;
+    }
+
+    public void setAccessible(boolean flag)
+    {
+        accessible = flag;
     }
 
     public String getName()
@@ -30,7 +40,106 @@ public final class Method extends AccessibleObject
         return modifiers;
     }
 
+    public boolean isBridge()
+    {
+        return (modifiers & 0x0040) != 0;
+    }
+
+    public int getParameterCount()
+    {
+        Class[] types = getParameterTypes();
+        return types == null ? 0 : types.length;
+    }
+
+    public boolean isVarArgs()
+    {
+        return (modifiers & 0x0080) != 0;
+    }
+
+    public boolean isSynthetic()
+    {
+        return (modifiers & 0x1000) != 0;
+    }
+
+    public boolean isDefault()
+    {
+        return declaringClass != null && declaringClass.isInterface()
+            && (modifiers & 0x0001) != 0 && (modifiers & 0x0400) == 0
+            && (modifiers & 0x0008) == 0;
+    }
+
     public native Class getReturnType();
+
+    void specificToGenericStringHeader(StringBuilder sb)
+    {
+    }
+
+    void specificToStringHeader(StringBuilder sb)
+    {
+    }
+
+    byte[] getAnnotationBytes()
+    {
+        return null;
+    }
+
+    boolean hasGenericInformation()
+    {
+        return false;
+    }
+
+    sun.reflect.generics.repository.MethodRepository getGenericInfo()
+    {
+        return null;
+    }
+
+    Class<?>[] getSharedParameterTypes()
+    {
+        return getParameterTypes();
+    }
+
+    Class<?>[] getSharedExceptionTypes()
+    {
+        return getExceptionTypes();
+    }
+
+    public String toGenericString()
+    {
+        return toString();
+    }
+
+    public java.lang.annotation.Annotation[][] getParameterAnnotations()
+    {
+        Class[] types = getParameterTypes();
+        int count = types == null ? 0 : types.length;
+        java.lang.annotation.Annotation[][] result =
+            new java.lang.annotation.Annotation[count][];
+        for (int i = 0; i < count; i++)
+        {
+            result[i] = new java.lang.annotation.Annotation[0];
+        }
+        return result;
+    }
+
+    boolean handleParameterNumberMismatch(int resultLength, Class<?>[] actual)
+    {
+        return false;
+    }
+
+    public java.lang.reflect.AnnotatedType getAnnotatedReturnType()
+    {
+        return null;
+    }
+
+    public java.lang.reflect.AnnotatedType[] getAnnotatedParameterTypes()
+    {
+        return new java.lang.reflect.AnnotatedType[0];
+    }
+
+    public java.lang.reflect.AnnotatedType[] getAnnotatedExceptionTypes()
+    {
+        return new java.lang.reflect.AnnotatedType[0];
+    }
 
     public native Class[] getParameterTypes();
 
@@ -78,6 +187,8 @@ public final class Method extends AccessibleObject
     }
 
     public native Annotation[] getDeclaredAnnotations0();
+
+    public native Object getDefaultValue();
 
     public Annotation[] getDeclaredAnnotations()
     {
@@ -135,5 +246,41 @@ public final class Method extends AccessibleObject
     public String toString()
     {
         return declaringClass.getName() + "." + name;
+    }
+
+    public boolean equals(Object other)
+    {
+        if (this == other)
+        {
+            return true;
+        }
+        if (!(other instanceof Method))
+        {
+            return false;
+        }
+        Method value = (Method)other;
+        if (declaringClass != value.declaringClass || !name.equals(value.name))
+        {
+            return false;
+        }
+        Class[] mine = getParameterTypes();
+        Class[] theirs = value.getParameterTypes();
+        if (mine.length != theirs.length)
+        {
+            return false;
+        }
+        for (int i = 0; i < mine.length; i++)
+        {
+            if (mine[i] != theirs[i])
+            {
+                return false;
+            }
+        }
+        return getReturnType() == value.getReturnType();
+    }
+
+    public int hashCode()
+    {
+        return declaringClass.getName().hashCode() ^ name.hashCode();
     }
 }

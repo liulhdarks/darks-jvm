@@ -30,6 +30,45 @@ public class File
         this(parent == null ? null : parent.getPath(), child);
     }
 
+    public File(java.net.URI uri)
+    {
+        if (uri == null)
+        {
+            throw new NullPointerException("uri");
+        }
+        String value = uri.getPath();
+        if (value == null)
+        {
+            value = uri.getSchemeSpecificPart();
+        }
+        this.path = value;
+    }
+
+    public java.net.URI toURI()
+    {
+        String absolute = getAbsolutePath();
+        if (isDirectory() && !absolute.endsWith("/"))
+        {
+            absolute = absolute + "/";
+        }
+        return java.net.URI.create("file:" + absolute);
+    }
+
+    public File getAbsoluteFile()
+    {
+        return new File(getAbsolutePath());
+    }
+
+    public String getCanonicalPath() throws java.io.IOException
+    {
+        return getAbsolutePath();
+    }
+
+    public File getCanonicalFile() throws java.io.IOException
+    {
+        return getAbsoluteFile();
+    }
+
     public String getPath()
     {
         return path;
@@ -103,9 +142,35 @@ public class File
         return mkdirs0();
     }
 
+    public boolean mkdir()
+    {
+        return mkdir0();
+    }
+
     public String[] list()
     {
         return list0();
+    }
+
+    public boolean createNewFile() throws java.io.IOException
+    {
+        if (exists())
+        {
+            return false;
+        }
+        java.io.FileOutputStream stream = new java.io.FileOutputStream(this);
+        stream.close();
+        return true;
+    }
+
+    public java.nio.file.Path toPath()
+    {
+        return java.nio.file.Paths.get(path);
+    }
+
+    public void deleteOnExit()
+    {
+        deleteOnExit0();
     }
 
     public String toString()
@@ -139,5 +204,9 @@ public class File
 
     private native boolean mkdirs0();
 
+    private native boolean mkdir0();
+
     private native String[] list0();
+
+    private native void deleteOnExit0();
 }

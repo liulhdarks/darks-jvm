@@ -174,6 +174,90 @@ public class CopyOnWriteArrayList<E> implements List<E>
         }
     }
 
+    public boolean removeAll(Collection<?> values)
+    {
+        if (values == null)
+        {
+            throw new NullPointerException("values");
+        }
+        synchronized (lock)
+        {
+            Object[] kept = new Object[array.length];
+            int count = 0;
+            for (int i = 0; i < array.length; i++)
+            {
+                if (!values.contains(array[i]))
+                {
+                    kept[count++] = array[i];
+                }
+            }
+            if (count == array.length)
+            {
+                return false;
+            }
+            Object[] copy = new Object[count];
+            System.arraycopy(kept, 0, copy, 0, count);
+            array = copy;
+            return true;
+        }
+    }
+
+    public boolean retainAll(Collection<?> values)
+    {
+        if (values == null)
+        {
+            throw new NullPointerException("values");
+        }
+        synchronized (lock)
+        {
+            Object[] kept = new Object[array.length];
+            int count = 0;
+            for (int i = 0; i < array.length; i++)
+            {
+                if (values.contains(array[i]))
+                {
+                    kept[count++] = array[i];
+                }
+            }
+            if (count == array.length)
+            {
+                return false;
+            }
+            Object[] copy = new Object[count];
+            System.arraycopy(kept, 0, copy, 0, count);
+            array = copy;
+            return true;
+        }
+    }
+
+    public boolean removeIf(java.util.function.Predicate<? super E> filter)
+    {
+        if (filter == null)
+        {
+            throw new NullPointerException("filter");
+        }
+        synchronized (lock)
+        {
+            Object[] kept = new Object[array.length];
+            int count = 0;
+            for (int i = 0; i < array.length; i++)
+            {
+                if (!filter.test((E)array[i]))
+                {
+                    kept[count++] = array[i];
+                }
+            }
+            if (count == array.length)
+            {
+                return false;
+            }
+            Object[] copy = new Object[count];
+            System.arraycopy(kept, 0, copy, 0, count);
+            array = copy;
+            return true;
+        }
+    }
+
     public boolean remove(Object value)
     {
         synchronized (lock)

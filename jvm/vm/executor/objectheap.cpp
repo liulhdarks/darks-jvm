@@ -268,27 +268,32 @@ void ObjectHeap::MarkStaticRoots()
 
 void ObjectHeap::MarkConstantPoolRoots()
 {
-	if (!VMContext::bootstrap_classloader)
+	const std::vector<ClassLoader *> &loaders = DarksVM_AllClassLoaders();
+	for (size_t li = 0; li < loaders.size(); li++)
 	{
-		return;
-	}
-	const std::map<string, lpClass> &classes = VMContext::bootstrap_classloader->GetClasses();
-	for (std::map<string, lpClass>::const_iterator it = classes.begin();
-	     it != classes.end(); ++it)
-	{
-		lpClass clazz = it->second;
-		if (!clazz || !clazz->const_pool)
+		ClassLoader *loader = loaders[li];
+		if (!loader)
 		{
 			continue;
 		}
-		int size = clazz->const_pool->size();
-		for (int i = 1; i <= size; i++)
+		const std::map<string, lpClass> &classes = loader->GetClasses();
+		for (std::map<string, lpClass>::const_iterator it = classes.begin();
+		     it != classes.end(); ++it)
 		{
-			lpConstant constant = clazz->const_pool->GetConstant(i);
-			if (constant && constant->tag == STRING_CONSTANT)
+			lpClass clazz = it->second;
+			if (!clazz || !clazz->const_pool)
 			{
-				StringConstant *string_constant = static_cast<StringConstant *>(constant);
-				MarkObjectRef(string_constant->string_ref);
+				continue;
+			}
+			int size = clazz->const_pool->size();
+			for (int i = 1; i <= size; i++)
+			{
+				lpConstant constant = clazz->const_pool->GetConstant(i);
+				if (constant && constant->tag == STRING_CONSTANT)
+				{
+					StringConstant *string_constant = static_cast<StringConstant *>(constant);
+					MarkObjectRef(string_constant->string_ref);
+				}
 			}
 		}
 	}

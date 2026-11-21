@@ -80,6 +80,33 @@ public class StringBuilder implements CharSequence
         return this;
     }
 
+    public StringBuilder append(CharSequence sequence)
+    {
+        if (sequence == null)
+        {
+            return append("null");
+        }
+        return append(sequence, 0, sequence.length());
+    }
+
+    public StringBuilder append(CharSequence sequence, int start, int end)
+    {
+        if (sequence == null)
+        {
+            sequence = "null";
+        }
+        int n = end - start;
+        ensure(count + n);
+        int i = 0;
+        while (i < n)
+        {
+            value[count + i] = sequence.charAt(start + i);
+            i = i + 1;
+        }
+        count = count + n;
+        return this;
+    }
+
     public StringBuilder append(char[] chars)
     {
         if (chars == null)

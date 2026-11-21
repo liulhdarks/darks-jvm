@@ -32,6 +32,14 @@ public final class DateTimeFormatter
         new DateTimeFormatter("yyyy-MM-dd'T'HH:mm:ssXXX", true, false);
     public static final DateTimeFormatter BASIC_ISO_DATE =
         new DateTimeFormatter("yyyyMMdd", true, false);
+    public static final DateTimeFormatter ISO_DATE =
+        new DateTimeFormatter("yyyy-MM-dd", true, false);
+    public static final DateTimeFormatter ISO_TIME =
+        new DateTimeFormatter("HH:mm:ss", true, false);
+    public static final DateTimeFormatter ISO_DATE_TIME =
+        new DateTimeFormatter("yyyy-MM-dd'T'HH:mm:ss", true, false);
+    public static final DateTimeFormatter RFC_1123_DATE_TIME =
+        new DateTimeFormatter("EEE, dd MMM yyyy HH:mm:ss zzz", true, false);
 
     private static final String[] MONTHS_SHORT = {
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -60,6 +68,42 @@ public final class DateTimeFormatter
         this.instantOnly = instantOnly;
     }
 
+    public static DateTimeFormatter ofLocalizedDate(FormatStyle dateStyle)
+    {
+        if (dateStyle == null)
+        {
+            throw new NullPointerException("dateStyle");
+        }
+        return ISO_LOCAL_DATE;
+    }
+
+    public static DateTimeFormatter ofLocalizedTime(FormatStyle timeStyle)
+    {
+        if (timeStyle == null)
+        {
+            throw new NullPointerException("timeStyle");
+        }
+        return ISO_LOCAL_TIME;
+    }
+
+    public static DateTimeFormatter ofLocalizedDateTime(FormatStyle dateTimeStyle)
+    {
+        if (dateTimeStyle == null)
+        {
+            throw new NullPointerException("dateTimeStyle");
+        }
+        return ISO_LOCAL_DATE_TIME;
+    }
+
+    public static DateTimeFormatter ofLocalizedDateTime(FormatStyle dateStyle, FormatStyle timeStyle)
+    {
+        if (dateStyle == null || timeStyle == null)
+        {
+            throw new NullPointerException("style");
+        }
+        return ISO_LOCAL_DATE_TIME;
+    }
+
     public static DateTimeFormatter ofPattern(String pattern)
     {
         if (pattern == null)
@@ -73,6 +117,25 @@ public final class DateTimeFormatter
     public static DateTimeFormatter ofPattern(String pattern, Locale locale)
     {
         return ofPattern(pattern);
+    }
+
+    public DateTimeFormatter withZone(ZoneId zone)
+    {
+        return this;
+    }
+
+    public DateTimeFormatter withChronology(java.time.chrono.Chronology chronology)
+    {
+        return this;
+    }
+
+    public DateTimeFormatter withResolverStyle(ResolverStyle resolverStyle)
+    {
+        if (resolverStyle == null)
+        {
+            throw new NullPointerException("resolverStyle");
+        }
+        return this;
     }
 
     public DateTimeFormatter withLocale(Locale locale)

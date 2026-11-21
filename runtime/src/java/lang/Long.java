@@ -19,6 +19,11 @@ public final class Long extends Number implements Comparable<Long>
         return new Long(value);
     }
 
+    public static Long valueOf(String s)
+    {
+        return new Long(parseLong(s));
+    }
+
     public long longValue()
     {
         return value;

@@ -44,7 +44,11 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/concurrent/atomic/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/concurrent/locks/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/reflect/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/invoke/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/ref/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/annotation/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/management/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/org/xml/sax/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/beans/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/regex/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/stream/*.java"
@@ -54,7 +58,15 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/format/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/temporal/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/chrono/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/charset/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/file/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/file/attribute/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/security/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/security/cert/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/zip/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/jar/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/darks/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/darks/concurrent/*.java"
     )
@@ -87,6 +99,9 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/BeansDemo.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/JitWorkload.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/CollectionsAdvanced.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/CollectionsCompat.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/BitSetTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/ProtectionDomainTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/RuntimeCompat.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/LongArrayInit.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/P0Checks.java"
@@ -265,6 +280,21 @@ if(JAVAC)
                     "-DARGS=-cp;${CLASSES_DIR};CollectionsAdvanced" -DEXPECT_RC=0
                     "-DEXPECT_TEXT=collections\ checks=.*\ failures=0"
                     "-DEXPECT_TEXT2=collections\ advanced:\ ok" -P "${CHECK}")
+
+        add_test(NAME collections_compat
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};CollectionsCompat" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=collections-compat:\ ok" -P "${CHECK}")
+
+        add_test(NAME bitset
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};BitSetTest" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=bitset:\ ok" -P "${CHECK}")
+
+        add_test(NAME protection_domain
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};ProtectionDomainTest" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=protectiondomain:\ ok" -P "${CHECK}")
 
         add_test(NAME jit_off
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
@@ -1179,6 +1209,18 @@ if(JAVAC)
                     -DTODO_FILE=${EX_ROOT}/todo.txt
                     -DLIB_DIR=$<TARGET_FILE_DIR:e2eadd>
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/e2e_examples.cmake")
+
+        # Opt-in smoke test for the real, unmodified Spring Boot 2.7.18
+        # launcher: point DARKS_SPRING_PROBE_JAR at the application jar (the
+        # jar must contain its own runtime classes or use a manifest
+        # Class-Path; the VM's runtime classes come from the build tree).
+        if(DEFINED ENV{DARKS_SPRING_PROBE_JAR} AND EXISTS "$ENV{DARKS_SPRING_PROBE_JAR}")
+            add_test(NAME spring_boot_loader_probe
+                COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                        "-DARGS=-cp;${CLASSES_DIR};-jar;$ENV{DARKS_SPRING_PROBE_JAR}"
+                        -DEXPECT_RC=0 "-DEXPECT_TEXT=PROBE-OK"
+                        -DTIMEOUT=900 -P "${CHECK}")
+        endif()
     endif()
 
 else()

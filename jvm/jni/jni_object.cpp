@@ -406,8 +406,8 @@ jvalue JniInvokeMethod(JNIEnv *env, jobject receiver, jclass clazz,
 		PushValue(vars, type, args ? args[i] : DefaultValue(type));
 	}
 
-	EventNotify ev = stack->execute(declaring, target, vars.empty() ? NULL : &vars[0],
-	                                static_cast<int>(vars.size()));
+	EventNotify ev = stack->executeNested(declaring, target, vars.empty() ? NULL : &vars[0],
+	                                      static_cast<int>(vars.size()));
 	if (ev == EN_EXCEPTION || VMContext::pending_exception)
 	{
 		return DefaultValue(result_desc.data_type);
@@ -1270,6 +1270,9 @@ jobject JniClassMirror(jclass clazz)
 	{
 		return NULL;
 	}
+	// Creating the name string can trigger a collection; keep the freshly
+	// allocated mirror reachable in the meantime.
+	GCRootScope mirror_root(VMContext::object_heap, &ref);
 	jobject mirror = JniObject(ref);
 	// Dotted class name, as java.lang.Class.getName() reports it.
 	std::string name = c->thisClass && c->thisClass->GetName() ? c->thisClass->GetName() : "";
@@ -1281,6 +1284,7 @@ jobject JniClassMirror(jclass clazz)
 		}
 	}
 	LPOBJECT_REF name_ref = NULL;
+	GCRootScope name_root(VMContext::object_heap, &name_ref);
 	if (VMContext::object_heap->NewStringObject(const_cast<char *>(name.c_str()),
 			static_cast<int>(name.size()), name_ref))
 	{

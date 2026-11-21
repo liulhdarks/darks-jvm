@@ -1,5 +1,8 @@
 #include "stdafx.h"
 #include "threadstack.h"
+#include <cstdio>
+#include <cstring>
+#include <execinfo.h>
 #include "exec_common.h"
 #include "objectheap.h"
 #include "scheduler.h"
@@ -191,7 +194,12 @@ void ThreadStack::CollectHeldMonitors(
 
 void ThreadStack::AddFrame(lpClass clazz, lpMethod method, lpStackFrame &frame)
 {
-	frame = new StackFrame(this, clazz, method, class_loader);
+	// Constant-pool resolution in a frame must use the defining loader of its
+	// class, not the thread's initial (bootstrap) loader: a class loaded by a
+	// Java class loader (for example Spring Boot's LaunchedURLClassLoader)
+	// resolves its own class references through that loader.
+	lpClassLoader loader = (clazz && clazz->classloader) ? clazz->classloader : class_loader;
+frame = new StackFrame(this, clazz, method, loader);
 	frames.push(frame);
 	frame->jni_env = jni_env;
 }
@@ -223,8 +231,68 @@ EventNotify ThreadStack::execute(lpClass clazz, lpMethod method, lpVariant vars,
 	return result;
 }
 
+EventNotify ThreadStack::executeNested(lpClass clazz, lpMethod method, lpVariant vars, int count)
+{
+	lpStackFrame frame = NULL;
+	AddFrame(clazz, method, frame);
+	frame->init(vars, count);
+	size_t saved_depth = unwind_stop_depth;
+	unwind_stop_depth = frames.size() - 1;
+	has_return = false;
+	yield_pending = false;
+	EventNotify result = start();
+	// A blocking primitive suspended the coroutine while the native frame
+	// (Method.invoke, JNI Call*Method) is still on the C stack.  Keep the
+	// native alive: park, let other coroutines run and resume the invocation
+	// so that its return value and exception semantics stay intact.
+	Scheduler &sched = Scheduler::Instance();
+	while (result == EN_YIELD || result == EN_SAFEPOINT)
+	{
+		// Other coroutines (including GC) must be able to run while this
+		// invocation is parked, so the carrier thread is not "in native"
+		// during the wait.
+		sched.ExitNative();
+		bool progressed = (result == EN_SAFEPOINT)
+			? sched.CompleteSafepoint()
+			: sched.AwaitCurrentResume(this);
+		sched.EnterNative();
+		if (!progressed)
+		{
+			break;
+		}
+		result = start();
+	}
+	unwind_stop_depth = saved_depth;
+	return result;
+}
+
+namespace {
+
+thread_local ThreadStack *t_active_stack = NULL;
+
+struct ActiveStackScope
+{
+	ThreadStack *saved;
+	explicit ActiveStackScope(ThreadStack *ts) : saved(t_active_stack)
+	{
+		t_active_stack = ts;
+	}
+	~ActiveStackScope()
+	{
+		t_active_stack = saved;
+	}
+};
+
+} // namespace
+
+ThreadStack *DarksVM_ActiveThreadStack()
+{
+	return t_active_stack;
+}
+
 EventNotify ThreadStack::start()
 {
+	ActiveStackScope active_scope(this);
 	while (LOOP_TRUE)
 	{
 		if (frames.empty())

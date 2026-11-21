@@ -19,6 +19,11 @@ public final class Integer extends Number implements Comparable<Integer>
         return new Integer(value);
     }
 
+    public static Integer valueOf(String s)
+    {
+        return new Integer(parseInt(s));
+    }
+
     public int intValue()
     {
         return value;
@@ -67,6 +72,67 @@ public final class Integer extends Number implements Comparable<Integer>
     public static int parseInt(String s)
     {
         return (int)parseLong(s);
+    }
+
+    public static int parseInt(String s, int radix)
+    {
+        return (int)parseLong(s, radix);
+    }
+
+    public static long parseLong(String s, int radix)
+    {
+        if (s == null || s.length() == 0)
+        {
+            throw new NumberFormatException("empty string");
+        }
+        if (radix < 2 || radix > 36)
+        {
+            throw new NumberFormatException("radix " + radix);
+        }
+        int i = 0;
+        boolean negative = false;
+        if (s.charAt(0) == '-')
+        {
+            negative = true;
+            i = 1;
+        }
+        else if (s.charAt(0) == '+')
+        {
+            i = 1;
+        }
+        if (i >= s.length())
+        {
+            throw new NumberFormatException(s);
+        }
+        long result = 0;
+        while (i < s.length())
+        {
+            char c = s.charAt(i);
+            int digit;
+            if (c >= '0' && c <= '9')
+            {
+                digit = c - '0';
+            }
+            else if (c >= 'a' && c <= 'z')
+            {
+                digit = c - 'a' + 10;
+            }
+            else if (c >= 'A' && c <= 'Z')
+            {
+                digit = c - 'A' + 10;
+            }
+            else
+            {
+                throw new NumberFormatException(s);
+            }
+            if (digit >= radix)
+            {
+                throw new NumberFormatException(s);
+            }
+            result = result * radix + digit;
+            i = i + 1;
+        }
+        return negative ? -result : result;
     }
 
     public static long parseLong(String s)

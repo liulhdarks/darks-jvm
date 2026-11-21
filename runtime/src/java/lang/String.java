@@ -339,6 +339,15 @@ public final class String implements Comparable<String>, CharSequence
         return indexOf(s) >= 0;
     }
 
+    public boolean contains(CharSequence s)
+    {
+        if (s == null)
+        {
+            throw new NullPointerException("s");
+        }
+        return indexOf(s.toString()) >= 0;
+    }
+
     public CharSequence subSequence(int begin, int end)
     {
         return substring(begin, end);
@@ -377,6 +386,58 @@ public final class String implements Comparable<String>, CharSequence
         return new String(result);
     }
 
+    public int codePointAt(int index)
+    {
+        if (index < 0 || index >= value.length)
+        {
+            throw new StringIndexOutOfBoundsException(index);
+        }
+        char first = value[index];
+        if (first >= 0xD800 && first <= 0xDBFF && index + 1 < value.length)
+        {
+            char second = value[index + 1];
+            if (second >= 0xDC00 && second <= 0xDFFF)
+            {
+                return 0x10000 + ((first - 0xD800) << 10) + (second - 0xDC00);
+            }
+        }
+        return first;
+    }
+
+    public java.util.stream.IntStream chars()
+    {
+        int[] result = new int[value.length];
+        for (int i = 0; i < value.length; i++)
+        {
+            result[i] = value[i];
+        }
+        return java.util.stream.IntStream.of(result);
+    }
+
+    public java.util.stream.IntStream codePoints()
+    {
+        int[] result = new int[value.length];
+        int count = 0;
+        int i = 0;
+        while (i < value.length)
+        {
+            int codePoint = codePointAt(i);
+            result[count++] = codePoint;
+            i += java.lang.Character.charCount(codePoint);
+        }
+        int[] trimmed = new int[count];
+        for (int j = 0; j < count; j++)
+        {
+            trimmed[j] = result[j];
+        }
+        return java.util.stream.IntStream.of(trimmed);
+    }
+
+    public String toUpperCase(java.util.Locale locale)
+    {
+        return toUpperCase();
+    }
+
     public String toLowerCase()
     {
         char[] result = new char[value.length];
@@ -387,6 +448,11 @@ public final class String implements Comparable<String>, CharSequence
             i = i + 1;
         }
         return new String(result);
+    }
+
+    public String toLowerCase(java.util.Locale locale)
+    {
+        return toLowerCase();
     }
 
     public String trim()
@@ -424,6 +490,52 @@ public final class String implements Comparable<String>, CharSequence
             j = j + 1;
         }
         return new String(result);
+    }
+
+    public boolean regionMatches(int toffset, String other, int ooffset, int length)
+    {
+        return regionMatches(false, toffset, other, ooffset, length);
+    }
+
+    public boolean regionMatches(boolean ignoreCase, int toffset, String other,
+                                 int ooffset, int length)
+    {
+        if (other == null)
+        {
+            throw new NullPointerException("other");
+        }
+        if (toffset < 0 || ooffset < 0)
+        {
+            return false;
+        }
+        if (toffset + length > value.length || ooffset + length > other.value.length)
+        {
+            return false;
+        }
+        for (int i = 0; i < length; i++)
+        {
+            char a = value[toffset + i];
+            char b = other.value[ooffset + i];
+            if (a == b)
+            {
+                continue;
+            }
+            if (!ignoreCase)
+            {
+                return false;
+            }
+            char upperA = Character.toUpperCase(a);
+            char upperB = Character.toUpperCase(b);
+            if (upperA == upperB)
+            {
+                continue;
+            }
+            if (Character.toLowerCase(upperA) != Character.toLowerCase(upperB))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     public boolean startsWith(String s)
@@ -924,6 +1036,11 @@ public final class String implements Comparable<String>, CharSequence
 
     // A deliberately small printf: %s %d %f %x %X %c %b %%, optional '-'/'0'
     // flags and a width/precision for %s and numeric conversions.
+    public static String format(java.util.Locale locale, String format, Object... args)
+    {
+        return format(format, args);
+    }
+
     public static String format(String format, Object... args)
     {
         if (format == null)

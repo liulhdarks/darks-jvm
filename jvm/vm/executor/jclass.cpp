@@ -2,6 +2,12 @@
 #include "jclass.h"
 #include "executor.h"
 #include "methodarea.h"
+#include "scheduler.h"
+#include "threadstack.h"
+#include "context.h"
+#include "javaexception.h"
+#include <map>
+#include <string>
 #include "utils/DebugUtils.h"
 
 Class::Class()
@@ -19,6 +25,7 @@ Class::Class()
 	clinitMethod = NULL;
 	classloader = NULL;
 	super_class = NULL;
+	component_class = NULL;
 	initialized_state = false;
 	inner_classes = NULL;
 	bootstrap_methods = NULL;
@@ -47,6 +54,7 @@ Class::Class(ClassType class_type)
 	clinitMethod = NULL;
 	classloader = NULL;
 	super_class = NULL;
+	component_class = NULL;
 	initialized_state = false;
 	inner_classes = NULL;
 	bootstrap_methods = NULL;
@@ -135,6 +143,10 @@ bool Class::initialize(bool load_super)
 	lpVMExecutor exec = new VMExecutor();
 	exec->Initialize();
 	exec->Execute(this, clinitMethod);
+	if (VMContext::pending_exception)
+	{
+		VMContext::pending_exception = NULL;
+	}
 	if (exec)
 	{
 		delete exec;
@@ -187,11 +199,130 @@ int Class::EnsureInstanceLayout()
 	return instance_field_total;
 }
 
+static bool MethodParamsMatch(lpMethod method, LPCSTR name, LPCSTR params)
+{
+	if (!method || !method->methodName || !method->methodDesc ||
+	    !method->methodName->GetName() || !method->methodDesc->GetName())
+	{
+		return false;
+	}
+	if (strcmp(method->methodName->GetName(), name) != 0)
+	{
+		return false;
+	}
+	if (method->isStatic() || method->isSpecial())
+	{
+		return false;
+	}
+	const char *desc = method->methodDesc->GetName();
+	size_t length = strlen(params);
+	return strncmp(desc, params, length) == 0;
+}
+
+// Method keys include the return type, so an override that narrows a
+// covariant return type is invisible to FindMethod.  Interface dispatch needs
+// it: Spring's IterableConfigurationPropertySource overrides
+// ConfigurationPropertySource.filter with a narrower return type.
+//
+// Class methods are searched before interface defaults, and the receiver's
+// own interfaces before those inherited from superclasses: a class that
+// implements ConfigurationPropertySource through a superclass and
+// IterableConfigurationPropertySource directly must select the latter.
+static bool FindDeclaredMethodByParams(lpClass clazz, LPCSTR name, LPCSTR params,
+                                       lpMethod& method)
+{
+	for (lpClass c = clazz; c; c = c->super_class)
+	{
+		if (!c->methods)
+		{
+			continue;
+		}
+		for (U2 i = 0; i < c->methodCount; i++)
+		{
+			if (MethodParamsMatch(c->methods[i], name, params))
+			{
+				method = c->methods[i];
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static bool FindInterfaceMethodByParams(lpClass iface, LPCSTR name, LPCSTR params,
+                                        lpMethod& method)
+{
+	if (!iface)
+	{
+		return false;
+	}
+	if (iface->methods)
+	{
+		for (U2 i = 0; i < iface->methodCount; i++)
+		{
+			if (MethodParamsMatch(iface->methods[i], name, params))
+			{
+				method = iface->methods[i];
+				return true;
+			}
+		}
+	}
+	for (U2 i = 0; i < iface->interfaceCount; i++)
+	{
+		lpClassConstant ic = iface->interfaces ? iface->interfaces[i] : NULL;
+		if (!ic || !ic->GetName() || !iface->classloader)
+		{
+			continue;
+		}
+		lpClass parent = NULL;
+		if (iface->classloader->FindClass(ic->GetName(), parent) && parent &&
+		    FindInterfaceMethodByParams(parent, name, params, method))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool Class::FindMethodByParams(LPCSTR name, LPCSTR params, lpMethod& method)
+{
+	if (FindDeclaredMethodByParams(this, name, params, method))
+	{
+		return true;
+	}
+	for (lpClass c = this; c; c = c->super_class)
+	{
+		for (U2 i = 0; i < c->interfaceCount; i++)
+		{
+			lpClassConstant ic = c->interfaces ? c->interfaces[i] : NULL;
+			if (!ic || !ic->GetName() || !c->classloader)
+			{
+				continue;
+			}
+			lpClass iface = NULL;
+			if (c->classloader->FindClass(ic->GetName(), iface) && iface &&
+			    FindInterfaceMethodByParams(iface, name, params, method))
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 bool Class::FindMethod(LPSTR method_name, lpMethod& method)
 {
-	method = MethodArea::GetMethod(this, method_name);
+method = MethodArea::GetMethod(this, method_name);
 	if (method)
 	{
+		return true;
+	}
+	// A class method inherited from the superclass chain always wins over an
+	// interface declaration (including abstract ones), so walk the superclass
+	// first and only then fall back to interface default/static methods.
+	if (super_class && super_class->FindMethod(method_name, method))
+	{
+		MethodArea::AddMethod(this, method);
 		return true;
 	}
 	// Interface default/static methods are inherited by implementing classes,
@@ -212,11 +343,6 @@ bool Class::FindMethod(LPSTR method_name, lpMethod& method)
 			MethodArea::AddMethod(this, method);
 			return true;
 		}
-	}
-	if (super_class && super_class->FindMethod(method_name, method))
-	{
-		MethodArea::AddMethod(this, method);
-		return true;
 	}
 	return false;
 }

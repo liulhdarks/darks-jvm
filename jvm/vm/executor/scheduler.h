@@ -159,6 +159,10 @@ public:
 	static lpCoroutine Current();
 	static ThreadStack *CurrentStack();
 	static bool InCoroutine();
+	// Java Thread object of the coroutine that owns this OS thread.  Unlike
+	// Current(), this stays valid inside a nested executor (<clinit>), so
+	// Thread.currentThread() keeps returning the enclosing Java thread.
+	static LPOBJECT_REF CurrentThreadObject();
 
 	// ---- interpreter hooks ------------------------------------------------
 	// Blocking primitives implemented as native calls are intercepted before
@@ -169,6 +173,12 @@ public:
 	bool JoinCurrent(ThreadStack *ts, LPOBJECT_REF target, int64_t millis);
 	bool WaitCurrent(ThreadStack *ts, LPOBJECT_REF obj, int64_t millis);
 	bool NotifyCurrent(ThreadStack *ts, LPOBJECT_REF obj, bool all);
+	// Keeps a nested invocation (JNI Call*Method) alive across a suspension:
+	// runs other ready coroutines until the current one is runnable again.
+	// Returns false when the scheduler stopped or the coroutine terminated.
+	bool AwaitCurrentResume(ThreadStack *ts);
+	// Finishes the stop-the-world handshake begun by PollSafepoint.
+	bool CompleteSafepoint();
 
 	// Monitors.  MonitorEnter returns false when the coroutine must suspend
 	// and re-execute the instruction (the caller resets pc to last_pc).

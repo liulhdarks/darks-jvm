@@ -1,6 +1,7 @@
 package java.util;
 
 import java.util.function.Function;
+import java.util.function.ToIntFunction;
 
 public interface Comparator<T>
 {
@@ -68,6 +69,18 @@ public interface Comparator<T>
             public int compare(T a, T b)
             {
                 return comparator.compare(key.apply(a), key.apply(b));
+            }
+        };
+    }
+
+    static <T> Comparator<T> comparingInt(ToIntFunction<? super T> keyExtractor)
+    {
+        final ToIntFunction<? super T> key = keyExtractor;
+        return new Comparator<T>()
+        {
+            public int compare(T a, T b)
+            {
+                return Integer.compare(key.applyAsInt(a), key.applyAsInt(b));
             }
         };
     }

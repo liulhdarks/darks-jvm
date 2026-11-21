@@ -17,6 +17,11 @@ public final class Double extends Number implements Comparable<Double>
         this.value = value;
     }
 
+    public static Double valueOf(String s)
+    {
+        return new Double(parseDouble(s));
+    }
+
     public static Double valueOf(double value)
     {
         return new Double(value);
@@ -42,6 +47,24 @@ public final class Double extends Number implements Comparable<Double>
         return (float)value;
     }
 
+
+    public static native long doubleToRawLongBits(double value);
+
+    public static native double longBitsToDouble(long bits);
+
+    public static long doubleToLongBits(double value)
+    {
+        if (isNaN(value))
+        {
+            return 0x7ff8000000000000L;
+        }
+        return doubleToRawLongBits(value);
+    }
+
+    public static boolean equals(double a, double b)
+    {
+        return (a == b) && (a != 0.0d || doubleToLongBits(a) == doubleToLongBits(b));
+    }
     public static boolean isNaN(double v)
     {
         return v != v;

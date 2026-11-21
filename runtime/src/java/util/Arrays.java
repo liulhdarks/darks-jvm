@@ -11,6 +11,119 @@ public class Arrays
         return new ArrayAsList<T>(values);
     }
 
+    public static <T> java.util.stream.Stream<T> stream(T[] values)
+    {
+        return java.util.stream.Stream.of(values);
+    }
+
+    public static <T> java.util.stream.Stream<T> stream(T[] values, int start, int end)
+    {
+        int length = end - start;
+        if (length < 0)
+        {
+            throw new IllegalArgumentException("start > end");
+        }
+        T[] slice = (T[])new Object[length];
+        for (int i = 0; i < length; i++)
+        {
+            slice[i] = values[start + i];
+        }
+        return java.util.stream.Stream.of(slice);
+    }
+
+    public static java.util.stream.IntStream stream(int[] values)
+    {
+        return java.util.stream.IntStream.of(values);
+    }
+
+    public static void fill(Object[] values, Object value)
+    {
+        for (int i = 0; i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(Object[] values, int start, int end, Object value)
+    {
+        for (int i = start; i < end && i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(boolean[] values, boolean value)
+    {
+        for (int i = 0; i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(byte[] values, byte value)
+    {
+        for (int i = 0; i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(char[] values, char value)
+    {
+        for (int i = 0; i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(short[] values, short value)
+    {
+        for (int i = 0; i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(int[] values, int value)
+    {
+        for (int i = 0; i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(int[] values, int start, int end, int value)
+    {
+        for (int i = start; i < end && i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(long[] values, long value)
+    {
+        for (int i = 0; i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(float[] values, float value)
+    {
+        for (int i = 0; i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(double[] values, double value)
+    {
+        for (int i = 0; i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
     public static String toString(Object[] values)
     {
         if (values == null)
@@ -195,7 +308,10 @@ public class Arrays
 
     public static Object[] copyOf(Object[] values, int length)
     {
-        Object[] result = new Object[length];
+        // Keep the source array's component type: callers like
+        // AttributeMethods depend on getting Method[] back.
+        Object[] result = (Object[]) java.lang.reflect.Array.newInstance(
+            values.getClass().getComponentType(), length);
         int limit = values.length < length ? values.length : length;
         for (int i = 0; i < limit; i++)
         {
@@ -327,6 +443,195 @@ public class Arrays
             }
         }
         return true;
+    }
+
+    public static int hashCode(Object[] values)
+    {
+        if (values == null)
+        {
+            return 0;
+        }
+        int result = 1;
+        for (int i = 0; i < values.length; i++)
+        {
+            Object value = values[i];
+            result = 31 * result + (value == null ? 0 : value.hashCode());
+        }
+        return result;
+    }
+
+    public static int hashCode(int[] values)
+    {
+        if (values == null)
+        {
+            return 0;
+        }
+        int result = 1;
+        for (int i = 0; i < values.length; i++)
+        {
+            result = 31 * result + values[i];
+        }
+        return result;
+    }
+
+    public static int hashCode(long[] values)
+    {
+        if (values == null)
+        {
+            return 0;
+        }
+        int result = 1;
+        for (int i = 0; i < values.length; i++)
+        {
+            long value = values[i];
+            result = 31 * result + (int)(value ^ (value >>> 32));
+        }
+        return result;
+    }
+
+    public static int hashCode(byte[] values)
+    {
+        if (values == null)
+        {
+            return 0;
+        }
+        int result = 1;
+        for (int i = 0; i < values.length; i++)
+        {
+            result = 31 * result + values[i];
+        }
+        return result;
+    }
+
+    public static int hashCode(char[] values)
+    {
+        if (values == null)
+        {
+            return 0;
+        }
+        int result = 1;
+        for (int i = 0; i < values.length; i++)
+        {
+            result = 31 * result + values[i];
+        }
+        return result;
+    }
+
+    public static int hashCode(short[] values)
+    {
+        if (values == null)
+        {
+            return 0;
+        }
+        int result = 1;
+        for (int i = 0; i < values.length; i++)
+        {
+            result = 31 * result + values[i];
+        }
+        return result;
+    }
+
+    public static int hashCode(boolean[] values)
+    {
+        if (values == null)
+        {
+            return 0;
+        }
+        int result = 1;
+        for (int i = 0; i < values.length; i++)
+        {
+            result = 31 * result + (values[i] ? 1231 : 1237);
+        }
+        return result;
+    }
+
+    public static int hashCode(float[] values)
+    {
+        if (values == null)
+        {
+            return 0;
+        }
+        int result = 1;
+        for (int i = 0; i < values.length; i++)
+        {
+            result = 31 * result + Float.floatToIntBits(values[i]);
+        }
+        return result;
+    }
+
+    public static int hashCode(double[] values)
+    {
+        if (values == null)
+        {
+            return 0;
+        }
+        int result = 1;
+        for (int i = 0; i < values.length; i++)
+        {
+            long bits = Double.doubleToLongBits(values[i]);
+            result = 31 * result + (int)(bits ^ (bits >>> 32));
+        }
+        return result;
+    }
+
+    public static int deepHashCode(Object[] values)
+    {
+        if (values == null)
+        {
+            return 0;
+        }
+        int result = 1;
+        for (int i = 0; i < values.length; i++)
+        {
+            Object value = values[i];
+            int elementHash;
+            if (value == null)
+            {
+                elementHash = 0;
+            }
+            else if (value instanceof Object[])
+            {
+                elementHash = deepHashCode((Object[])value);
+            }
+            else if (value instanceof int[])
+            {
+                elementHash = hashCode((int[])value);
+            }
+            else if (value instanceof long[])
+            {
+                elementHash = hashCode((long[])value);
+            }
+            else if (value instanceof byte[])
+            {
+                elementHash = hashCode((byte[])value);
+            }
+            else if (value instanceof char[])
+            {
+                elementHash = hashCode((char[])value);
+            }
+            else if (value instanceof short[])
+            {
+                elementHash = hashCode((short[])value);
+            }
+            else if (value instanceof boolean[])
+            {
+                elementHash = hashCode((boolean[])value);
+            }
+            else if (value instanceof float[])
+            {
+                elementHash = hashCode((float[])value);
+            }
+            else if (value instanceof double[])
+            {
+                elementHash = hashCode((double[])value);
+            }
+            else
+            {
+                elementHash = value.hashCode();
+            }
+            result = 31 * result + elementHash;
+        }
+        return result;
     }
 
     public static boolean equals(long[] a, long[] b)
@@ -584,5 +889,71 @@ public class Arrays
                 throw new UnsupportedOperationException();
             }
         }
+    }
+
+    public static int binarySearch(int[] values, int key)
+    {
+        return binarySearch(values, 0, values.length, key);
+    }
+
+    public static int binarySearch(int[] values, int fromIndex, int toIndex, int key)
+    {
+        if (fromIndex > toIndex)
+        {
+            throw new IllegalArgumentException("fromIndex(" + fromIndex + ") > toIndex(" + toIndex + ")");
+        }
+        int low = fromIndex;
+        int high = toIndex - 1;
+        while (low <= high)
+        {
+            int mid = (low + high) >>> 1;
+            int midValue = values[mid];
+            if (midValue < key)
+            {
+                low = mid + 1;
+            }
+            else if (midValue > key)
+            {
+                high = mid - 1;
+            }
+            else
+            {
+                return mid;
+            }
+        }
+        return -(low + 1);
+    }
+
+    public static int binarySearch(long[] values, long key)
+    {
+        return binarySearch(values, 0, values.length, key);
+    }
+
+    public static int binarySearch(long[] values, int fromIndex, int toIndex, long key)
+    {
+        if (fromIndex > toIndex)
+        {
+            throw new IllegalArgumentException("fromIndex(" + fromIndex + ") > toIndex(" + toIndex + ")");
+        }
+        int low = fromIndex;
+        int high = toIndex - 1;
+        while (low <= high)
+        {
+            int mid = (low + high) >>> 1;
+            long midValue = values[mid];
+            if (midValue < key)
+            {
+                low = mid + 1;
+            }
+            else if (midValue > key)
+            {
+                high = mid - 1;
+            }
+            else
+            {
+                return mid;
+            }
+        }
+        return -(low + 1);
     }
 }

@@ -52,6 +52,35 @@ public final class Collectors
             });
     }
 
+    public static <T, C extends java.util.Collection<T>> Collector<T, ?, C>
+        toCollection(final Supplier<C> collectionFactory)
+    {
+        return new CollectorImpl<T, C, C>(
+            collectionFactory,
+            new BiConsumer<C, T>()
+            {
+                public void accept(C collection, T value)
+                {
+                    collection.add(value);
+                }
+            },
+            new BinaryOperator<C>()
+            {
+                public C apply(C first, C second)
+                {
+                    first.addAll(second);
+                    return first;
+                }
+            },
+            new Function<C, C>()
+            {
+                public C apply(C collection)
+                {
+                    return collection;
+                }
+            });
+    }
+
     public static <T> Collector<T, ?, Set<T>> toSet()
     {
         return new CollectorImpl<T, Set<T>, Set<T>>(
@@ -187,6 +216,22 @@ public final class Collectors
                 public Map<K, U> apply(Map<K, U> map)
                 {
                     return map;
+                }
+            });
+    }
+
+    public static <T, A, R, RR> Collector<T, A, RR> collectingAndThen(
+        final Collector<T, A, R> downstream, final Function<R, RR> finisher)
+    {
+        return new CollectorImpl<T, A, RR>(
+            downstream.supplier(),
+            downstream.accumulator(),
+            downstream.combiner(),
+            new Function<A, RR>()
+            {
+                public RR apply(A value)
+                {
+                    return finisher.apply(downstream.finisher().apply(value));
                 }
             });
     }

@@ -159,6 +159,24 @@ public class Throwable
         printStackTrace0(formatStackTrace());
     }
 
+    public void printStackTrace(java.io.PrintStream stream)
+    {
+        if (stream == null)
+        {
+            throw new NullPointerException("s");
+        }
+        stream.print(formatStackTrace());
+    }
+
+    public void printStackTrace(java.io.PrintWriter writer)
+    {
+        if (writer == null)
+        {
+            throw new NullPointerException("s");
+        }
+        writer.print(formatStackTrace());
+    }
+
     private String formatStackTrace()
     {
         StringBuilder buffer = new StringBuilder();

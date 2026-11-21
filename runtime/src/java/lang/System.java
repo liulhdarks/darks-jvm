@@ -71,6 +71,16 @@ public final class System
         return getenv0(name);
     }
 
+    public static SecurityManager getSecurityManager()
+    {
+        return null;
+    }
+
+    public static java.util.Map<String, String> getenv()
+    {
+        return getenvMap0();
+    }
+
     public static native java.util.Properties initProperties(java.util.Properties target);
 
     public static native String mapLibraryName(String name);
@@ -85,6 +95,8 @@ public final class System
     private static native void loadLibrary0(String name, String libraryPath);
 
     private static native String getenv0(String name);
+
+    private static native java.util.Map<String, String> getenvMap0();
 
     private System()
     {

@@ -29,6 +29,25 @@ JVM_API bool DarksVM_FindResourceBytes(const std::string &name,
 JVM_API bool DarksVM_FindResourceUrls(const std::string &name,
                                       std::vector<std::string> &urls);
 
+// Associates a VM loader created for a Java java.lang.ClassLoader with the
+// corresponding Java object (held as a global reference by the caller).  When
+// a class cannot be found on the VM class path, resolution is delegated to
+// that Java loader so classes defined by custom loaders (for example Spring
+// Boot's nested-jar LaunchedURLClassLoader) can be linked from constant-pool
+// references.
+JVM_API void DarksVM_RegisterJavaClassLoader(ClassLoader *loader,
+                                            LPOBJECT_REF java_loader);
+
+// Every VM class loader created in this process.  Constant pools of classes
+// defined by custom (Java) loaders also cache java/lang/String objects for
+// string literals, so the collector has to trace all of them.
+JVM_API const std::vector<ClassLoader *> &DarksVM_AllClassLoaders();
+
+// Finds or defines a class through the registered Java class loaders without
+// running its static initializer.  Reflection uses this for lookups such as
+// Class.getComponentType() that must not trigger <clinit>.
+JVM_API bool DarksVM_LoadClassWithoutInitializing(const std::string &name, lpClass &out);
+
 class JVM_API ClassLoader
 {
 

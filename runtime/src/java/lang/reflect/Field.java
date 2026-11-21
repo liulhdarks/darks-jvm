@@ -2,7 +2,7 @@ package java.lang.reflect;
 
 import java.lang.annotation.Annotation;
 
-public final class Field extends AccessibleObject implements AnnotatedElement
+public final class Field extends AccessibleObject implements Member, AnnotatedElement
 {
     private Class declaringClass;
     private String name;
@@ -27,6 +27,16 @@ public final class Field extends AccessibleObject implements AnnotatedElement
     public int getModifiers()
     {
         return modifiers;
+    }
+
+    public boolean isSynthetic()
+    {
+        return (modifiers & 0x1000) != 0;
+    }
+
+    public boolean isEnumConstant()
+    {
+        return (modifiers & 0x4000) != 0;
     }
 
     public native Class getType();
@@ -114,5 +124,25 @@ public final class Field extends AccessibleObject implements AnnotatedElement
     public String toString()
     {
         return declaringClass.getName() + "." + name;
+    }
+
+    public boolean equals(Object other)
+    {
+        if (this == other)
+        {
+            return true;
+        }
+        if (!(other instanceof Field))
+        {
+            return false;
+        }
+        Field value = (Field)other;
+        return declaringClass == value.declaringClass && name.equals(value.name)
+            && getType() == value.getType();
+    }
+
+    public int hashCode()
+    {
+        return declaringClass.getName().hashCode() ^ name.hashCode();
     }
 }

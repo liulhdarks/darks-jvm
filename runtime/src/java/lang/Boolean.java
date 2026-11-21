@@ -34,6 +34,11 @@ public final class Boolean implements Comparable<Boolean>
         return s != null && s.equalsIgnoreCase("true");
     }
 
+    public static boolean getBoolean(String name)
+    {
+        return parseBoolean(System.getProperty(name));
+    }
+
     public static String toString(boolean b)
     {
         return b ? "true" : "false";
@@ -49,6 +54,11 @@ public final class Boolean implements Comparable<Boolean>
     }
 
     public int hashCode()
+    {
+        return value ? 1231 : 1237;
+    }
+
+    public static int hashCode(boolean value)
     {
         return value ? 1231 : 1237;
     }

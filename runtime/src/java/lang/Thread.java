@@ -15,8 +15,8 @@ import java.util.concurrent.ThreadFactory;
  * so that isVirtual()/diagnostics behave like the JDK API, while platform
  * threads can be bound to a dedicated carrier later without changing callers.
  *
- * Not provided: ThreadGroup, thread stacks/traces, timed join nanoseconds
- * precision, inheritable thread locals.
+ * Not provided: thread stacks/traces, timed join nanoseconds precision,
+ * inheritable thread locals.
  */
 public class Thread implements Runnable
 {
@@ -80,7 +80,12 @@ public class Thread implements Runnable
         TERMINATED
     }
 
+    public static final int MIN_PRIORITY = 1;
+    public static final int NORM_PRIORITY = 5;
+    public static final int MAX_PRIORITY = 10;
+
     private String name;
+    private ThreadGroup group;
     private Runnable target;
     private boolean daemon;
     private boolean alive;
@@ -101,6 +106,8 @@ public class Thread implements Runnable
         threadSeq = threadSeq + 1;
         return threadSeq;
     }
+
+    private static final ThreadGroup MAIN_GROUP = new ThreadGroup("main");
 
     private void init(Runnable target, String name)
     {
@@ -132,6 +139,35 @@ public class Thread implements Runnable
     public Thread(Runnable target, String name)
     {
         init(target, name);
+    }
+
+    public Thread(ThreadGroup group, Runnable target)
+    {
+        init(target, null);
+        this.group = group;
+    }
+
+    public Thread(ThreadGroup group, String name)
+    {
+        init(null, name);
+        this.group = group;
+    }
+
+    public Thread(ThreadGroup group, Runnable target, String name)
+    {
+        init(target, name);
+        this.group = group;
+    }
+
+    public Thread(ThreadGroup group, Runnable target, String name, long stackSize)
+    {
+        init(target, name);
+        this.group = group;
+    }
+
+    public final ThreadGroup getThreadGroup()
+    {
+        return group != null ? group : MAIN_GROUP;
     }
 
     private Thread(Runnable target, String name, boolean virtual, boolean daemon,

@@ -12,6 +12,7 @@ public class ClassLoader
     private static ClassLoader system;
 
     private HashMap<String, Class<?>> loadedClasses;
+    private HashMap<String, Package> packages;
     private ClassLoader parent;
     private long vmLoader;
 
@@ -41,6 +42,50 @@ public class ClassLoader
     public ClassLoader getParent()
     {
         return parent;
+    }
+
+    protected Package getPackage(String name)
+    {
+        if (packages == null || name == null)
+        {
+            return null;
+        }
+        return packages.get(name);
+    }
+
+    protected Package[] getPackages()
+    {
+        if (packages == null)
+        {
+            return new Package[0];
+        }
+        Package[] result = new Package[packages.size()];
+        int index = 0;
+        java.util.Iterator<java.util.Map.Entry<String, Package>> iterator =
+            packages.entrySet().iterator();
+        while (iterator.hasNext())
+        {
+            result[index++] = iterator.next().getValue();
+        }
+        return result;
+    }
+
+    protected Package definePackage(String name, String specTitle,
+        String specVersion, String specVendor, String implTitle,
+        String implVersion, String implVendor, URL sealBase)
+    {
+        if (packages == null)
+        {
+            packages = new HashMap<String, Package>();
+        }
+        if (packages.get(name) != null)
+        {
+            throw new IllegalArgumentException(name);
+        }
+        Package pkg = new Package(name, specTitle, specVersion, specVendor,
+            implTitle, implVersion, implVendor);
+        packages.put(name, pkg);
+        return pkg;
     }
 
     protected static boolean registerAsParallelCapable()
@@ -91,11 +136,27 @@ public class ClassLoader
 
     protected final Class<?> findLoadedClass(String name)
     {
-        if (loadedClasses == null)
+        if (loadedClasses != null)
         {
-            return null;
+            Class<?> cached = loadedClasses.get(name);
+            if (cached != null)
+            {
+                return cached;
+            }
         }
-        return loadedClasses.get(name);
+        if (vmLoader != 0)
+        {
+            // Classes are registered in the native loader during defineClass,
+            // before their static initializer runs, so a <clinit> that asks for
+            // its own class (cglib's generated methods do) resolves here.
+            Class<?> defined = findLoadedClass0(vmLoader, name);
+            if (defined != null)
+            {
+                cacheClass(name, defined);
+                return defined;
+            }
+        }
+        return null;
     }
 
     protected Class<?> findClass(String name) throws ClassNotFoundException
@@ -120,6 +181,13 @@ public class ClassLoader
     protected final Class<?> defineClass(String name, byte[] bytes, int offset,
         int length) throws ClassFormatError
     {
+        return defineClass(name, bytes, offset, length, null);
+    }
+
+    protected final Class<?> defineClass(String name, byte[] bytes, int offset,
+        int length, java.security.ProtectionDomain protectionDomain)
+        throws ClassFormatError
+    {
         if (bytes == null)
         {
             throw new NullPointerException("bytes");
@@ -141,7 +209,19 @@ public class ClassLoader
         {
             throw new ClassFormatError(name);
         }
+        if (name != null)
+        {
+            // Record the definition so findLoadedClass (and therefore
+            // Class.forName with this loader) sees it before delegating.
+            cacheClass(name, clazz);
+        }
         return clazz;
+    }
+
+    protected final Class<?> defineClass(String name, byte[] bytes,
+        java.security.ProtectionDomain protectionDomain) throws ClassFormatError
+    {
+        return defineClass(name, bytes, 0, bytes.length, protectionDomain);
     }
 
     public URL getResource(String name)
@@ -154,18 +234,40 @@ public class ClassLoader
         {
             return null;
         }
-        String[] specs = resourceUrls0(name);
-        for (int i = 0; i < specs.length; i++)
+        if (parent != null)
         {
-            try
+            URL fromParent = parent.getResource(name);
+            if (fromParent != null)
             {
-                return new URL(specs[i]);
-            }
-            catch (java.net.MalformedURLException ignored)
-            {
+                return fromParent;
             }
         }
+        if (this == system)
+        {
+            String[] specs = resourceUrls0(name);
+            for (int i = 0; i < specs.length; i++)
+            {
+                try
+                {
+                    return new URL(specs[i]);
+                }
+                catch (java.net.MalformedURLException ignored)
+                {
+                }
+            }
+            return null;
+        }
+        return findResource(name);
+    }
+
+    protected URL findResource(String name)
+    {
         return null;
+    }
+
+    protected Enumeration<URL> findResources(String name) throws java.io.IOException
+    {
+        return Collections.enumeration(new ArrayList<URL>());
     }
 
     public InputStream getResourceAsStream(String name)
@@ -178,8 +280,19 @@ public class ClassLoader
         {
             return null;
         }
-        byte[] data = getResourceBytes0(name);
-        return data == null ? null : new java.io.ByteArrayInputStream(data);
+        URL resource = getResource(name);
+        if (resource == null)
+        {
+            return null;
+        }
+        try
+        {
+            return resource.openStream();
+        }
+        catch (java.io.IOException e)
+        {
+            return null;
+        }
     }
 
     public Enumeration<URL> getResources(String name) throws java.io.IOException
@@ -193,10 +306,29 @@ public class ClassLoader
         {
             return Collections.enumeration(urls);
         }
-        String[] specs = resourceUrls0(name);
-        for (int i = 0; i < specs.length; i++)
+        if (parent != null)
         {
-            urls.add(new URL(specs[i]));
+            Enumeration<URL> fromParent = parent.getResources(name);
+            while (fromParent != null && fromParent.hasMoreElements())
+            {
+                urls.add(fromParent.nextElement());
+            }
+        }
+        if (this == system)
+        {
+            String[] specs = resourceUrls0(name);
+            for (int i = 0; i < specs.length; i++)
+            {
+                urls.add(new URL(specs[i]));
+            }
+        }
+        else
+        {
+            Enumeration<URL> own = findResources(name);
+            while (own != null && own.hasMoreElements())
+            {
+                urls.add(own.nextElement());
+            }
         }
         return Collections.enumeration(urls);
     }
@@ -227,6 +359,8 @@ public class ClassLoader
     }
 
     private static native Class<?> loadClass0(String name);
+
+    private static native Class<?> findLoadedClass0(long handle, String name);
 
     private static native byte[] findClassBytes0(String name);
 

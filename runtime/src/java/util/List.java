@@ -17,4 +17,11 @@ public interface List<E> extends Collection<E>
     boolean addAll(int index, Collection<? extends E> values);
 
     int lastIndexOf(Object value);
+
+    Object[] toArray();
+
+    default void sort(Comparator<? super E> comparator)
+    {
+        Collections.sort(this, comparator);
+    }
 }

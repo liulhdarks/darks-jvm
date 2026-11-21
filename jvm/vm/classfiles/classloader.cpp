@@ -9,8 +9,14 @@
 #include "platform/platform.h"
 #include "vm/io/zipreader.h"
 #include "utils/DebugUtils.h"
+#include "vm/executor/scheduler.h"
+#include "vm/executor/threadstack.h"
+#include "jni/jni_impl.h"
 
 #include <map>
+#include <cstdio>
+#if defined(__linux__)
+#endif
 
 namespace {
 
@@ -18,6 +24,13 @@ namespace {
 // for the process lifetime.  The map itself is heap allocated so that the
 // cached ZipFile objects remain reachable at exit; otherwise the static
 // destructor would run and LeakSanitizer would report them as leaks.
+std::map<ClassLoader*, LPOBJECT_REF> &JavaLoaders()
+{
+	static std::map<ClassLoader*, LPOBJECT_REF> *loaders =
+		new std::map<ClassLoader*, LPOBJECT_REF>();
+	return *loaders;
+}
+
 std::map<std::string, ZipFile*> &ArchiveCache()
 {
 	static std::map<std::string, ZipFile*> *cache = new std::map<std::string, ZipFile*>();
@@ -216,14 +229,68 @@ JVM_API bool DarksVM_FindResourceUrls(const std::string &resource_name,
 	return !urls.empty();
 }
 
+namespace {
+
+std::vector<ClassLoader *> &AllLoaders()
+{
+	static std::vector<ClassLoader *> *loaders = new std::vector<ClassLoader *>();
+	return *loaders;
+}
+
+}
+
+const std::vector<ClassLoader *> &DarksVM_AllClassLoaders()
+{
+	return AllLoaders();
+}
+
+namespace {
+bool FindClassThroughJava(ClassLoader *loader, LPCSTR classname, lpClass &out);
+}
+
+// Defines (or finds) a class through the registered Java loaders without
+// running its static initializer.  Reflection uses this for lookups such as
+// Class.getComponentType() that must not trigger <clinit>.
+bool DarksVM_LoadClassWithoutInitializing(const std::string &name, lpClass &out)
+{
+	out = NULL;
+	if (name.empty())
+	{
+		return false;
+	}
+	for (std::map<ClassLoader*, LPOBJECT_REF>::iterator it = JavaLoaders().begin();
+	     it != JavaLoaders().end(); ++it)
+	{
+		lpClass loaded = NULL;
+		if (it->first && it->first->GetLoadedClass(name.c_str(), loaded) && loaded)
+		{
+			out = loaded;
+			return true;
+		}
+	}
+	for (std::map<ClassLoader*, LPOBJECT_REF>::iterator it = JavaLoaders().begin();
+	     it != JavaLoaders().end(); ++it)
+	{
+		lpClass found = NULL;
+		if (FindClassThroughJava(it->first, name.c_str(), found) && found)
+		{
+			out = found;
+			return true;
+		}
+	}
+	return false;
+}
+
 ClassLoader::ClassLoader()
 {
 	parent = NULL;
+	AllLoaders().push_back(this);
 }
 
 ClassLoader::ClassLoader(ClassLoader *parent)
 {
 	this->parent = parent;
+	AllLoaders().push_back(this);
 }
 
 ClassLoader::~ClassLoader()
@@ -255,6 +322,87 @@ bool ClassLoader::GetClass(LPCSTR classname, lpClass &jclass)
 	return false;
 }
 
+void DarksVM_RegisterJavaClassLoader(ClassLoader *loader, LPOBJECT_REF java_loader)
+{
+	if (loader)
+	{
+		JavaLoaders()[loader] = java_loader;
+	}
+}
+
+namespace {
+
+// Resolves a class through the Java java.lang.ClassLoader associated with this
+// VM loader.  Returns false when no association exists or the Java loader
+// cannot find the class (a pending ClassNotFoundException is discarded so the
+// caller can report the failure through the usual VM error path).
+bool FindClassThroughJava(ClassLoader *loader, LPCSTR classname, lpClass &out)
+{
+	out = NULL;
+	std::map<ClassLoader*, LPOBJECT_REF>::iterator it = JavaLoaders().find(loader);
+	if (it == JavaLoaders().end() || !it->second)
+	{
+		return false;
+	}
+	ThreadStack *ts = Scheduler::CurrentStack();
+	if (!ts)
+	{
+		ts = DarksVM_ActiveThreadStack();
+	}
+	if (!ts || !ts->jni_env)
+	{
+		return false;
+	}
+	JNIEnv *env = ts->jni_env;
+	lpClass loader_class = JniFindClass(env, "java/lang/ClassLoader");
+	if (!loader_class)
+	{
+		return false;
+	}
+	lpMethod method = JniFindMethod(loader_class, "loadClass",
+		"(Ljava/lang/String;)Ljava/lang/Class;", false);
+	if (!method)
+	{
+		return false;
+	}
+	std::string dotted(classname);
+	for (size_t i = 0; i < dotted.size(); i++)
+	{
+		if (dotted[i] == '/')
+		{
+			dotted[i] = '.';
+		}
+	}
+	jstring name = JniMakeString(env, dotted.c_str());
+	if (!name)
+	{
+		return false;
+	}
+	jvalue arg;
+	memset(&arg, 0, sizeof(arg));
+	arg.l = name;
+	jvalue result = JniInvokeMethod(env, JniObject(it->second),
+		reinterpret_cast<jclass>(loader_class),
+		reinterpret_cast<jmethodID>(method), &arg, false, false);
+	if (!result.l || VMContext::pending_exception)
+	{
+		VMContext::pending_exception = NULL;
+		return false;
+	}
+	// The Java loadClass call returns a java.lang.Class mirror object, not a
+	// raw VM Class pointer: read the vmClass field that JniClassMirror fills.
+	jlong vm_class = JniGetLongFieldByName(result.l, "vmClass");
+	lpClass found = reinterpret_cast<lpClass>(static_cast<intptr_t>(vm_class));
+	if (!found)
+	{
+		return false;
+	}
+	out = found;
+	return true;
+}
+
+} // namespace
+
 bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool load_super)
 {
 	// The heap mutex must not be held while <clinit> runs: class initialisation
@@ -274,9 +422,19 @@ bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool load_super)
 
 		if (parent)
 		{
-			if (parent->FindClass(classname, jclass))
+			try
 			{
-				return true;
+				if (parent->FindClass(classname, jclass))
+				{
+					return true;
+				}
+			}
+			catch (VMException *error)
+			{
+				// A parent loader that cannot find the class must not abort the
+				// child lookup: custom loaders (URLClassLoader subclasses) fall
+				// back to their own sources after parent delegation fails.
+				delete error;
 			}
 		}
 
@@ -295,6 +453,10 @@ bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool load_super)
 		LoadClass(classname, bytes, len);
 		if (!bytes)
 		{
+			if (FindClassThroughJava(this, classname, jclass))
+			{
+				return jclass->initialize(load_super);
+			}
 			DebugUtils::trace("class bytes not found for %s\n", classname);
 			throw new VMException((LPSTR)"Fail to load class bytes");
 		}
@@ -358,6 +520,7 @@ bool ClassLoader::DefineArrayClass(LPCSTR classname, lpClass &jclass)
 	// of leaking it when the Class is destroyed.
 	jclass->const_pool->init(1);
 	jclass->const_pool->AddConstant(jclass->thisClass);
+	jclass->classloader = this;
 	classMap[string(jclass->thisClass->GetName())] = jclass;
 	return true;
 }

@@ -674,6 +674,50 @@ jstring JNICALL Java_java_lang_System_mapLibraryName
 	return env->NewStringUTF(mapped.c_str());
 }
 
+JNIEXPORT jobject JNICALL Java_java_lang_System_getenvMap0
+	(JNIEnv *env, jclass)
+{
+	jclass map_class = env->FindClass("java/util/HashMap");
+	if (!map_class)
+	{
+		return NULL;
+	}
+	jmethodID ctor = env->GetMethodID(map_class, "<init>", "()V");
+	jmethodID put = env->GetMethodID(map_class, "put",
+		"(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;");
+	if (!ctor || !put)
+	{
+		return NULL;
+	}
+	jobject map = env->NewObject(map_class, ctor);
+	if (!map)
+	{
+		return NULL;
+	}
+	extern char **environ;
+	for (char **entry = environ; entry && *entry; ++entry)
+	{
+		const char *text = *entry;
+		const char *equals = strchr(text, '=');
+		if (!equals)
+		{
+			continue;
+		}
+		std::string key(text, equals - text);
+		jstring jkey = env->NewStringUTF(key.c_str());
+		jstring jvalue = env->NewStringUTF(equals + 1);
+		if (jkey && jvalue)
+		{
+			env->CallObjectMethod(map, put, jkey, jvalue);
+		}
+		if (env->ExceptionCheck())
+		{
+			env->ExceptionClear();
+		}
+	}
+	return map;
+}
+
 jstring JNICALL Java_java_lang_System_getenv0
 	(JNIEnv *env, jclass, jstring name)
 {

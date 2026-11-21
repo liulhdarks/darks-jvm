@@ -7,6 +7,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -19,6 +20,12 @@ public interface Stream<T>
     Stream<T> filter(Predicate<? super T> predicate);
 
     <R> Stream<R> map(Function<? super T, ? extends R> mapper);
+
+    <R> Stream<R> flatMap(Function<? super T, ? extends Stream<? extends R>> mapper);
+
+    Stream<T> peek(Consumer<? super T> action);
+
+    void forEachOrdered(Consumer<? super T> action);
 
     Stream<T> sorted();
 
@@ -46,6 +53,12 @@ public interface Stream<T>
 
     Object[] toArray();
 
+    Iterator<T> iterator();
+
+    Optional<T> findFirst();
+
+    Optional<T> findAny();
+
     static <T> Stream<T> of(T... values)
     {
         ArrayList<T> list = new ArrayList<T>(values.length > 0 ? values.length : 1);
@@ -59,6 +72,28 @@ public interface Stream<T>
     static <T> Stream<T> empty()
     {
         return new ArrayListStream<T>(new ArrayList<T>());
+    }
+
+    static <T> Stream<T> ofNullable(T value)
+    {
+        return value == null ? Stream.<T>empty() : Stream.<T>of(value);
+    }
+
+    static <T> Stream<T> concat(Stream<? extends T> first,
+        Stream<? extends T> second)
+    {
+        ArrayList<T> list = new ArrayList<T>();
+        Iterator<? extends T> a = first.iterator();
+        while (a.hasNext())
+        {
+            list.add(a.next());
+        }
+        Iterator<? extends T> b = second.iterator();
+        while (b.hasNext())
+        {
+            list.add(b.next());
+        }
+        return new ArrayListStream<T>(list);
     }
 
     static <T> Stream<T> from(Collection<? extends T> values)
@@ -114,6 +149,39 @@ final class ArrayListStream<T> implements Stream<T>
             result.add(mapper.apply(elements.get(i)));
         }
         return new ArrayListStream<R>(result);
+    }
+
+    public <R> Stream<R> flatMap(Function<? super T, ? extends Stream<? extends R>> mapper)
+    {
+        ArrayList<R> result = new ArrayList<R>();
+        for (int i = 0; i < elements.size(); i++)
+        {
+            Stream<? extends R> part = mapper.apply(elements.get(i));
+            if (part == null)
+            {
+                continue;
+            }
+            Iterator<? extends R> it = part.iterator();
+            while (it.hasNext())
+            {
+                result.add(it.next());
+            }
+        }
+        return new ArrayListStream<R>(result);
+    }
+
+    public Stream<T> peek(Consumer<? super T> action)
+    {
+        for (int i = 0; i < elements.size(); i++)
+        {
+            action.accept(elements.get(i));
+        }
+        return this;
+    }
+
+    public void forEachOrdered(Consumer<? super T> action)
+    {
+        forEach(action);
     }
 
     public Stream<T> sorted()
@@ -241,5 +309,20 @@ final class ArrayListStream<T> implements Stream<T>
             result[i] = elements.get(i);
         }
         return result;
+    }
+
+    public Iterator<T> iterator()
+    {
+        return copy().iterator();
+    }
+
+    public Optional<T> findFirst()
+    {
+        return elements.isEmpty() ? Optional.<T>empty() : Optional.of(elements.get(0));
+    }
+
+    public Optional<T> findAny()
+    {
+        return findFirst();
     }
 }
