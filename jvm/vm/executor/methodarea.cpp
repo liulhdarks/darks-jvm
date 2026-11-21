@@ -67,3 +67,28 @@ lpMethod MethodArea::GetMethod(lpClass clazz, LPSTR method_name)
 	LPSTR namePtr = method_full_name;
 	return methods_map[string(namePtr)];
 }
+
+void MethodArea::RemoveMethodsOf(lpClass clazz)
+{
+	if (!clazz || !clazz->thisClass || !clazz->thisClass->GetName())
+	{
+		return;
+	}
+	string prefix(clazz->thisClass->GetName());
+	prefix += ".";
+	VMLock lk;
+	for (map<string, lpMethod>::iterator it = methods_map.begin();
+	     it != methods_map.end();)
+	{
+		bool owned = it->second && it->second->clazz == clazz;
+		bool keyed = it->first.compare(0, prefix.size(), prefix) == 0;
+		if (owned || keyed)
+		{
+			methods_map.erase(it++);
+		}
+		else
+		{
+			++it;
+		}
+	}
+}

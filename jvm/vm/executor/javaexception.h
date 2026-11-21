@@ -12,6 +12,13 @@
 // detailMessage field. Returns NULL when the class cannot be loaded.
 LPOBJECT_REF CreateJavaException(const char *class_name, const char *message);
 
+// Same as CreateJavaException, but also stores cause in Throwable.cause and
+// marks it initialized (used for NoClassDefFoundError caused by a missing
+// superclass: ClassNotFoundException cause).
+LPOBJECT_REF CreateJavaExceptionWithCause(const char *class_name,
+                                          const char *message,
+                                          LPOBJECT_REF cause);
+
 // True when an object of class src can be assigned to a variable of class
 // target (class hierarchy plus the direct interface list).
 bool ClassIsAssignable(lpClass target, lpClass src);

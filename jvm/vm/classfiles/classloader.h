@@ -62,7 +62,10 @@ public:
 
 	~ClassLoader();
 
-	bool FindClass(LPCSTR classname, lpClass &jclass, bool load_super = true);
+	// Loads (and links) the named class.  initialize mirrors
+	// java.lang.Class.forName: false stops after superclass and superinterface
+	// resolution, true additionally runs <clinit> on first active use.
+	bool FindClass(LPCSTR classname, lpClass &jclass, bool initialize = true);
 
 	bool FindBootClass(LPCSTR classname, lpClass &jclass);
 
@@ -73,4 +76,13 @@ public:
 	bool DefineArrayClass(LPCSTR classname, lpClass &jclass);
 
 	void StoreClass(lpClass &jclass);
+
+	// Resolves the superclass and every superinterface without running
+	// <clinit>.  Throws ClassLinkageException when a referenced type is missing.
+	void LinkClass(lpClass clazz);
+
+	// Removes a freshly defined class that failed linking: its method index
+	// entries are dropped and the Class object (with its methods and constant
+	// pool) is destroyed so a later load starts from clean bytes.
+	void DiscardClass(lpClass clazz);
 };

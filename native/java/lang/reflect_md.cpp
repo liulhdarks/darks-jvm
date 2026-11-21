@@ -1865,6 +1865,39 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getDeclaredAnnotations0(
 	return AnnotationsToArray(env, declaring, method ? method->rt_visible_attr : NULL);
 }
 
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getDefaultValue(JNIEnv *env,
+	jobject thiz)
+{
+	lpObject method_obj = JniResolveObject(thiz);
+	if (!method_obj)
+	{
+		return NULL;
+	}
+	lpClass declaring = MirrorClass(ObjectFieldRef(method_obj, "declaringClass"));
+	std::string name = ObjectFieldString(env, method_obj, "name");
+	std::string desc = ObjectFieldString(env, method_obj, "descriptor");
+	lpMethod method = FindMethodByDescriptor(declaring, name.c_str(), desc.c_str(), false);
+	if (!method || !method->annotation_default || !method->annotation_default->bytes ||
+	    method->annotation_default->attr_length <= 0)
+	{
+		return NULL;
+	}
+	lpClass owner = method->clazz ? method->clazz : declaring;
+	if (!owner || !owner->const_pool)
+	{
+		return NULL;
+	}
+	std::string return_desc = AnnotationElementDescriptor(method);
+	ByteReader reader(method->annotation_default->bytes,
+	                  method->annotation_default->attr_length);
+	Variant value;
+	if (!ReadElementValue(env, owner->const_pool, reader, return_desc.c_str(), value))
+	{
+		return NULL;
+	}
+	return AnnotationValueObject(env, value, return_desc.c_str());
+}
+
 // ---------------------------------------------------------------------------
 // java.lang.reflect.Field
 // ---------------------------------------------------------------------------

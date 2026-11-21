@@ -201,6 +201,16 @@ lpClass DarksVM_FindProxyClass(const std::vector<std::string> &interfaces,
 		memcpy(synth->interfaces[i]->name, interfaces[i].c_str(),
 		       interfaces[i].size() + 1);
 	}
+	// The synthetic constants are owned by the constant pool so destroying the
+	// proxy Class releases them; otherwise every annotation proxy leaks one
+	// ClassConstant per interface.
+	synth->const_pool->init(static_cast<int>(2 + interfaces.size()));
+	synth->const_pool->AddConstant(synth->thisClass);
+	synth->const_pool->AddConstant(synth->superClass);
+	for (size_t i = 0; i < interfaces.size(); i++)
+	{
+		synth->const_pool->AddConstant(synth->interfaces[i]);
+	}
 	// ACC_PUBLIC | ACC_FINAL
 	synth->accFlag = 0x0001 | 0x0010;
 	synth->major_version = 52;

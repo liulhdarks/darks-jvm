@@ -22,6 +22,11 @@ public:
 
 	static lpMethod GetMethod(lpClass clazz, LPSTR method_name);
 
+	// Drops every declared-method index entry owned by clazz.  Used when a
+	// class is discarded after a linking failure so the table cannot keep
+	// pointers to freed Method objects.
+	static void RemoveMethodsOf(lpClass clazz);
+
 	static void AddStaticField(LPSTR field_full_name, lpFieldValue fv);
 
 	static lpFieldValue GetStaticField(LPSTR field_full_name);

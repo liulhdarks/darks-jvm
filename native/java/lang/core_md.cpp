@@ -5,8 +5,10 @@
 
 #include "platform/platform.h"
 #include "env/env.h"
+#include "vm/executor/javaexception.h"
 #include "vm/executor/threadstack.h"
 #include "vm/executor/vmmutex.h"
+#include "vm/exceptions.h"
 
 #include <cmath>
 #include <cstdio>
@@ -37,6 +39,27 @@ void ReleaseManagedLoaders()
 lpClass ClassPointer(jobject mirror)
 {
 	return reinterpret_cast<lpClass>(static_cast<intptr_t>(JniGetLongFieldByName(mirror, "vmClass")));
+}
+
+// Reports a failed superclass/superinterface resolution the way HotSpot does:
+// NoClassDefFoundError whose cause is a ClassNotFoundException naming the
+// missing type.
+void ThrowClassLinkageError(ClassLinkageException *error)
+{
+	if (!error)
+	{
+		return;
+	}
+	std::string missing = error->missing;
+	delete error;
+	LPOBJECT_REF cause = CreateJavaException("java/lang/ClassNotFoundException",
+	                                         missing.c_str());
+	LPOBJECT_REF thrown = CreateJavaExceptionWithCause("java/lang/NoClassDefFoundError",
+	                                                   missing.c_str(), cause);
+	if (thrown)
+	{
+		DarksVM_SetPendingException(JniObject(thrown));
+	}
 }
 
 bool IsPrimitiveName(const char *name)
@@ -315,6 +338,13 @@ JNIEXPORT jboolean JNICALL Java_java_lang_Class_isPrimitive(JNIEnv *env, jobject
 	return IsPrimitiveName(name) ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jboolean JNICALL Java_java_lang_Class_isAnnotation(JNIEnv *env, jobject thiz)
+{
+	(void)env;
+	lpClass clazz = ClassPointer(thiz);
+	return (clazz && clazz->isAnnotation()) ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT jobject JNICALL Java_java_lang_Class_getPrimitiveClass(JNIEnv *env,
 	jclass unused, jstring name)
 {
@@ -544,6 +574,21 @@ JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_defineClass0(JNIEnv *env,
 		return NULL;
 	}
 	clazz->classloader = loader;
+	try
+	{
+		loader->LinkClass(clazz);
+	}
+	catch (ClassLinkageException *error)
+	{
+		loader->DiscardClass(clazz);
+		ThrowClassLinkageError(error);
+		return NULL;
+	}
+	catch (...)
+	{
+		loader->DiscardClass(clazz);
+		return NULL;
+	}
 	jobject mirror = JniClassMirror(reinterpret_cast<jclass>(clazz));
 	JniAddLocalRef(env, mirror);
 	return mirror;
@@ -553,7 +598,35 @@ JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_loadClass0(JNIEnv *env,
 	jclass, jstring name)
 {
 	std::string requested = JStringToUtf8(env, name);
-	lpClass clazz = JniFindClass(env, requested.c_str());
+	lpClass clazz = NULL;
+	try
+	{
+		// ClassLoader.loadClass links but does not initialize: <clinit> only
+		// runs on first active use (or via Class.forName(..., true, ...)).
+		if (!VMContext::bootstrap_classloader->FindClass(requested.c_str(), clazz, false))
+		{
+			return NULL;
+		}
+	}
+	catch (ClassLinkageException *error)
+	{
+		ThrowClassLinkageError(error);
+		return NULL;
+	}
+	catch (MissingClassException *error)
+	{
+		delete error;
+		return NULL;
+	}
+	catch (VMException *error)
+	{
+		delete error;
+		return NULL;
+	}
+	catch (...)
+	{
+		return NULL;
+	}
 	if (!clazz)
 	{
 		return NULL;

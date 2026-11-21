@@ -115,6 +115,14 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/sdkcl/Plugin.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/sdkcl/PluginImpl.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkUtilTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/M2InitLog.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/M2InitTarget.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/M2InitTarget2.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/M2Base.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/M2GoodChild.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/M2LoadingChecks.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/M2AnnotationChecks.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/M2DefaultMethodChecks.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
     add_custom_command(
@@ -141,6 +149,35 @@ if(JAVAC)
     add_custom_target(java_classes ALL DEPENDS "${CLASS_STAMP}")
     add_dependencies(unit_tests java_classes)
     add_dependencies(gc_tests java_classes)
+
+    # Classes whose superclass/superinterface is deliberately absent at run
+    # time.  They are compiled together with the missing base types, then the
+    # base classes are removed from the output directory so that loading
+    # exercises the missing-linkage path.
+    set(M2_BROKEN_DIR "${CLASSES_DIR}/m2broken")
+    set(M2_BROKEN_STAMP "${M2_BROKEN_DIR}/.stamp")
+    set(M2_BROKEN_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/broken/M2MissingBase.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/broken/M2MissingIface.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/broken/M2BadSuper.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/broken/M2BadChild.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/broken/M2BadImpl.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/broken/M2BrokenChecks.java"
+    )
+    add_custom_command(
+        OUTPUT "${M2_BROKEN_STAMP}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${M2_BROKEN_DIR}"
+        COMMAND "${JAVAC}" -source 8 -target 8 -cp "${CLASSES_DIR}"
+                -d "${M2_BROKEN_DIR}" ${M2_BROKEN_SOURCES}
+        COMMAND "${CMAKE_COMMAND}" -E rm -f
+                "${M2_BROKEN_DIR}/M2MissingBase.class"
+                "${M2_BROKEN_DIR}/M2MissingIface.class"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${M2_BROKEN_STAMP}"
+        DEPENDS ${M2_BROKEN_SOURCES} "${CLASS_STAMP}"
+        COMMENT "Compiling the missing-linkage fixtures"
+        VERBATIM)
+    add_custom_target(m2_broken_classes ALL DEPENDS "${M2_BROKEN_STAMP}")
+    add_dependencies(m2_broken_classes java_classes)
 
     # Virtual-thread tests call Java 21-era APIs (Thread.ofVirtual,
     # Executors.newVirtualThreadPerTaskExecutor) that are not part of the
@@ -244,6 +281,43 @@ if(JAVAC)
                     "-DARGS=-cp;${CLASSES_DIR};AnnotationDemo" -DEXPECT_RC=0
                     "-DEXPECT_TEXT=annotation\ checks=.*\ failures=0"
                     "-DEXPECT_TEXT2=annotations:\ ok" -P "${CHECK}")
+
+        # M2 class-loading and annotation semantics, run with both scheduler
+        # modes so class metadata stays stable under 1 and 4 OS threads.
+        foreach(mp 1 4)
+            add_test(NAME m2_loading_semantics_mp${mp}
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DPROG=${CMAKE_COMMAND}"
+                    "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};M2LoadingChecks"
+                    -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=m2\ loading\ checks=[0-9]+\ failures=0"
+                    "-DEXPECT_TEXT2=m2\ loading:\ ok" -P "${CHECK}")
+
+            add_test(NAME m2_annotation_semantics_mp${mp}
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DPROG=${CMAKE_COMMAND}"
+                    "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};M2AnnotationChecks"
+                    -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=m2\ annotation\ checks=[0-9]+\ failures=0"
+                    "-DEXPECT_TEXT2=m2\ annotations:\ ok" -P "${CHECK}")
+
+            add_test(NAME m2_default_methods_mp${mp}
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DPROG=${CMAKE_COMMAND}"
+                    "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};M2DefaultMethodChecks"
+                    -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=m2\ default-method\ checks=[0-9]+\ failures=0"
+                    "-DEXPECT_TEXT2=m2\ default\ methods:\ ok" -P "${CHECK}")
+
+            add_test(NAME m2_missing_linkage_mp${mp}
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DPROG=${CMAKE_COMMAND}"
+                    "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR}:${M2_BROKEN_DIR};M2BrokenChecks"
+                    -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=m2\ broken-load\ checks=[0-9]+\ failures=0"
+                    "-DEXPECT_TEXT2=m2\ broken\ loads:\ ok" -P "${CHECK}")
+        endforeach()
+
 
         add_test(NAME reflect_proxy
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
