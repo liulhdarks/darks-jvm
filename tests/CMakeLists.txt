@@ -37,6 +37,7 @@ if(JAVAC)
     file(GLOB RUNTIME_JAVA_SOURCES
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/io/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/net/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/function/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/concurrent/*.java"
@@ -105,6 +106,12 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkTextTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkRegexTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkCharsetTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkClassLoaderTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkServiceLoaderTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkStackTraceTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkJarResourceTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/sdkcl/Plugin.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/sdkcl/PluginImpl.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkUtilTest.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
@@ -116,6 +123,14 @@ if(JAVAC)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/resources/compat/message.txt"
                 "${CLASSES_DIR}/compat/message.txt"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CLASSES_DIR}/sdkcl"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/resources/sdkcl/resource.txt"
+                "${CLASSES_DIR}/sdkcl/resource.txt"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CLASSES_DIR}/META-INF/services"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/resources/services/META-INF/services/sdkcl.Plugin"
+                "${CLASSES_DIR}/META-INF/services/sdkcl.Plugin"
         COMMAND "${CMAKE_COMMAND}" -E touch "${CLASS_STAMP}"
         DEPENDS ${JAVA_SOURCES}
         COMMENT "Compiling the minimal Java runtime and test classes"
@@ -414,6 +429,12 @@ if(JAVAC)
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
                     "-DARGS=-cp;${TEST_APP_JAR};pkg.Main" -DEXPECT_RC=0
                     "-DEXPECT_TEXT=module main" -P "${CHECK}")
+
+        add_test(NAME sdk_jar_resource
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${TEST_APP_JAR};SdkJarResourceTest" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=jar\ resource\ checks=[0-9]+\ failures=0"
+                    "-DEXPECT_TEXT2=sdk\ jar\ resource:\ ok" -P "${CHECK}")
     endif()
 
     add_test(NAME unit_tests
@@ -498,6 +519,25 @@ if(JAVAC)
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
                 "-DARGS=-cp;${CLASSES_DIR};RuntimeCompat" -DEXPECT_RC=0
                 "-DEXPECT_TEXT=runtime-compat\ checks=[0-9]+\ failures=0" -P "${CHECK}")
+
+    add_test(NAME sdk_classloader
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};SdkClassLoaderTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=classloader\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=sdk\ classloader:\ ok" -P "${CHECK}")
+
+    add_test(NAME sdk_service_loader
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};SdkServiceLoaderTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=service\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=sdk\ service\ loader:\ ok" -P "${CHECK}")
+
+    add_test(NAME sdk_stack_trace
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};SdkStackTraceTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=stack\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=at\ SdkStackTraceTest.failure\\(SdkStackTraceTest.java:[0-9]+\\)"
+                "-DEXPECT_TEXT3=sdk\ stack\ trace:\ ok" -P "${CHECK}")
 
     add_test(NAME sdk_time
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}

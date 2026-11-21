@@ -5,6 +5,8 @@
 
 #include "platform/platform.h"
 #include "env/env.h"
+#include "vm/executor/threadstack.h"
+#include "vm/executor/vmmutex.h"
 
 #include <cmath>
 #include <cstdio>
@@ -15,6 +17,22 @@
 #include <vector>
 
 namespace {
+
+std::map<lpClassLoader, jobject> &ManagedLoaders()
+{
+	static std::map<lpClassLoader, jobject> *loaders = new std::map<lpClassLoader, jobject>();
+	return *loaders;
+}
+
+void ReleaseManagedLoaders()
+{
+	for (std::map<lpClassLoader, jobject>::iterator it = ManagedLoaders().begin();
+	     it != ManagedLoaders().end(); ++it)
+	{
+		delete it->first;
+	}
+	ManagedLoaders().clear();
+}
 
 lpClass ClassPointer(jobject mirror)
 {
@@ -161,8 +179,64 @@ JNIEXPORT void JNICALL Java_java_lang_Throwable_printStackTrace0(JNIEnv *env, jo
 {
 	(void)thiz;
 	std::string message = JStringToUtf8(env, text);
-	fprintf(stderr, "%s\n\tat <darks-jvm native frame>\n", message.c_str());
+	fprintf(stderr, "%s", message.c_str());
 	fflush(stderr);
+}
+
+JNIEXPORT jobjectArray JNICALL Java_java_lang_Throwable_captureStack0(JNIEnv *env,
+	jclass)
+{
+	jclass string_class = reinterpret_cast<jclass>(JniFindClass(env, "java/lang/String"));
+	if (!string_class)
+	{
+		return NULL;
+	}
+	std::vector<ThreadStack::FrameInfo> frames;
+	lpThreadStack stack = env->thread_stack
+		? reinterpret_cast<lpThreadStack>(env->thread_stack) : NULL;
+	if (stack)
+	{
+		stack->DescribeJavaFrames(frames);
+	}
+	// Drop the exception construction chain: Throwable and its subclass
+	// constructors end with fillInStackTrace, so the first frame created by
+	// the throw site is the first non-constructor below them.
+	std::vector<ThreadStack::FrameInfo> visible;
+	for (size_t i = 0; i < frames.size(); i++)
+	{
+		const ThreadStack::FrameInfo &frame = frames[i];
+		if (frame.declaring_class == "java.lang.Throwable" &&
+		    (frame.method_name == "<init>" || frame.method_name == "fillInStackTrace"))
+		{
+			continue;
+		}
+		visible.push_back(frame);
+	}
+	while (!visible.empty() &&
+	       (visible[0].method_name == "<init>" ||
+	        visible[0].method_name == "fillInStackTrace"))
+	{
+		visible.erase(visible.begin());
+	}
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(visible.size()),
+		string_class, NULL);
+	if (!result)
+	{
+		return NULL;
+	}
+	for (size_t i = 0; i < visible.size(); i++)
+	{
+		char line[32];
+		snprintf(line, sizeof(line), "%d", visible[i].line_number);
+		std::string entry = visible[i].declaring_class + "\t" + visible[i].method_name +
+			"\t" + visible[i].file_name + "\t" + line;
+		jstring text = env->NewStringUTF(entry.c_str());
+		if (text)
+		{
+			env->SetObjectArrayElement(result, static_cast<jsize>(i), text);
+		}
+	}
+	return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +357,37 @@ JNIEXPORT jboolean JNICALL Java_java_lang_Class_isInstance(JNIEnv *env, jobject 
 	return IsInstanceOfClass(object, clazz) ? JNI_TRUE : JNI_FALSE;
 }
 
+JNIEXPORT jobject JNICALL Java_java_lang_Class_getClassLoader0(JNIEnv *env,
+	jobject thiz)
+{
+	lpClass clazz = ClassPointer(thiz);
+	if (!clazz || !clazz->classloader || clazz->classloader == VMContext::bootstrap_classloader)
+	{
+		return NULL;
+	}
+	jobject loader = NULL;
+	{
+		VMLock lk;
+		std::map<lpClassLoader, jobject>::iterator it =
+			ManagedLoaders().find(clazz->classloader);
+		if (it != ManagedLoaders().end())
+		{
+			loader = it->second;
+		}
+	}
+	JniAddLocalRef(env, loader);
+	return loader;
+}
+
+JNIEXPORT void JNICALL Java_java_lang_Class_initialize0(JNIEnv *, jclass, jobject mirror)
+{
+	lpClass clazz = ClassPointer(mirror);
+	if (clazz)
+	{
+		DarksVM_EnsureInitialized(clazz);
+	}
+}
+
 JNIEXPORT jobject JNICALL Java_java_lang_Class_forName(JNIEnv *env, jclass clazz,
 	jstring name)
 {
@@ -380,6 +485,129 @@ JNIEXPORT jbyteArray JNICALL Java_java_lang_ClassLoader_getResourceBytes0(JNIEnv
 	jclass, jstring name)
 {
 	return ResourceBytes(env, name);
+}
+
+// ---------------------------------------------------------------------------
+// ClassLoader lite: custom loaders and class-path resources
+// ---------------------------------------------------------------------------
+
+JNIEXPORT jlong JNICALL Java_java_lang_ClassLoader_createLoader0(JNIEnv *env, jobject thiz)
+{
+	static bool cleanup_registered = false;
+	lpClassLoader loader = new ClassLoader(VMContext::bootstrap_classloader);
+	if (!loader)
+	{
+		return 0;
+	}
+	jobject global = env->NewGlobalRef(thiz);
+	{
+		VMLock lk;
+		ManagedLoaders()[loader] = global;
+	}
+	if (!cleanup_registered)
+	{
+		cleanup_registered = true;
+		atexit(ReleaseManagedLoaders);
+	}
+	return reinterpret_cast<jlong>(loader);
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_defineClass0(JNIEnv *env,
+	jclass, jlong handle, jstring name, jbyteArray bytes, jint offset, jint length)
+{
+	lpClassLoader loader = reinterpret_cast<lpClassLoader>(static_cast<intptr_t>(handle));
+	(void)name;
+	if (!loader || !bytes || offset < 0 || length <= 0)
+	{
+		return NULL;
+	}
+	jsize array_length = env->GetArrayLength(bytes);
+	if (offset + length > array_length)
+	{
+		return NULL;
+	}
+	LPBYTE data = new BYTE[static_cast<size_t>(length)];
+	env->GetByteArrayRegion(bytes, offset, length, reinterpret_cast<jbyte*>(data));
+	lpClass clazz = NULL;
+	bool defined = false;
+	try
+	{
+		VMLock lk;
+		defined = loader->DefineClass(data, static_cast<int>(length), clazz);
+	}
+	catch (...)
+	{
+		defined = false;
+	}
+	if (!defined || !clazz)
+	{
+		return NULL;
+	}
+	clazz->classloader = loader;
+	jobject mirror = JniClassMirror(reinterpret_cast<jclass>(clazz));
+	JniAddLocalRef(env, mirror);
+	return mirror;
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_loadClass0(JNIEnv *env,
+	jclass, jstring name)
+{
+	std::string requested = JStringToUtf8(env, name);
+	lpClass clazz = JniFindClass(env, requested.c_str());
+	if (!clazz)
+	{
+		return NULL;
+	}
+	jobject mirror = JniClassMirror(reinterpret_cast<jclass>(clazz));
+	JniAddLocalRef(env, mirror);
+	return mirror;
+}
+
+JNIEXPORT jbyteArray JNICALL Java_java_lang_ClassLoader_findClassBytes0(JNIEnv *env,
+	jclass, jstring name)
+{
+	std::string requested = JStringToUtf8(env, name);
+	std::vector<uint8_t> bytes;
+	if (!DarksVM_FindClassBytes(requested, bytes, NULL) || bytes.empty())
+	{
+		return NULL;
+	}
+	jbyteArray result = env->NewByteArray(static_cast<jsize>(bytes.size()));
+	if (!result)
+	{
+		return NULL;
+	}
+	env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytes.size()),
+		reinterpret_cast<const jbyte*>(bytes.data()));
+	return result;
+}
+
+JNIEXPORT jobjectArray JNICALL Java_java_lang_ClassLoader_resourceUrls0(JNIEnv *env,
+	jclass, jstring name)
+{
+	jclass string_class = reinterpret_cast<jclass>(JniFindClass(env, "java/lang/String"));
+	if (!string_class)
+	{
+		return NULL;
+	}
+	std::string requested = JStringToUtf8(env, name);
+	std::vector<std::string> urls;
+	DarksVM_FindResourceUrls(requested, urls);
+	jobjectArray result = env->NewObjectArray(static_cast<jsize>(urls.size()),
+		string_class, NULL);
+	if (!result)
+	{
+		return NULL;
+	}
+	for (size_t i = 0; i < urls.size(); i++)
+	{
+		jstring text = env->NewStringUTF(urls[i].c_str());
+		if (text)
+		{
+			env->SetObjectArrayElement(result, static_cast<jsize>(i), text);
+		}
+	}
+	return result;
 }
 
 // JDK-style java.lang.Object.<clinit> calls registerNatives; accepting it

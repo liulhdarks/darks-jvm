@@ -108,6 +108,11 @@ public class Collections
         return best;
     }
 
+    public static <T> Enumeration<T> enumeration(Collection<T> values)
+    {
+        return new ArrayEnumeration<T>(values);
+    }
+
     private static final class UnmodifiableList<E> implements List<E>
     {
         private final List<? extends E> list;

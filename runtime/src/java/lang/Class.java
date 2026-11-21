@@ -149,8 +149,11 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
 
     public ClassLoader getClassLoader()
     {
-        return ClassLoader.getSystemClassLoader();
+        ClassLoader loader = getClassLoader0();
+        return loader != null ? loader : ClassLoader.getSystemClassLoader();
     }
+
+    private native ClassLoader getClassLoader0();
 
     public java.io.InputStream getResourceAsStream(String name)
     {
@@ -170,8 +173,9 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
             String pkg = dot < 0 ? "" : own.substring(0, dot + 1).replace('.', '/');
             absolute = pkg + name;
         }
-        byte[] data = getResourceBytes0(absolute);
-        return data == null ? null : new java.io.ByteArrayInputStream(data);
+        ClassLoader loader = getClassLoader();
+        return loader == null ? ClassLoader.getSystemResourceAsStream(absolute)
+            : loader.getResourceAsStream(absolute);
     }
 
     private static native byte[] getResourceBytes0(String name);
@@ -455,4 +459,22 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
     static native Class getPrimitiveClass(String name);
 
     public static native Class forName(String name) throws ClassNotFoundException;
+
+    public static Class<?> forName(String name, boolean initialize,
+        ClassLoader loader) throws ClassNotFoundException
+    {
+        if (name == null)
+        {
+            throw new NullPointerException("name");
+        }
+        ClassLoader effective = loader != null ? loader : ClassLoader.getSystemClassLoader();
+        Class<?> clazz = effective.loadClass(name);
+        if (initialize)
+        {
+            initialize0(clazz);
+        }
+        return clazz;
+    }
+
+    private static native void initialize0(Class clazz);
 }

@@ -22,6 +22,13 @@ JVM_API bool DarksVM_FindResourceBytes(const std::string &name,
                                        std::vector<uint8_t> &out,
                                        std::string *source);
 
+// Enumerates every class-path occurrence of a resource as a URL string.
+// Directory entries produce "file:<path>"; archive entries produce
+// "jar:file:<archive>!/<name>".  Used by ClassLoader.getResources and
+// ServiceLoader; the URL layer owns the jar protocol handler.
+JVM_API bool DarksVM_FindResourceUrls(const std::string &name,
+                                      std::vector<std::string> &urls);
+
 class JVM_API ClassLoader
 {
 

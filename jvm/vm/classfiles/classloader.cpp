@@ -172,6 +172,50 @@ JVM_API bool DarksVM_FindResourceBytes(const std::string &resource_name,
 	return false;
 }
 
+JVM_API bool DarksVM_FindResourceUrls(const std::string &resource_name,
+                                      std::vector<std::string> &urls)
+{
+	urls.clear();
+	std::string name = resource_name;
+	while (!name.empty() && name[0] == '/')
+	{
+		name.erase(name.begin());
+	}
+	if (name.empty())
+	{
+		return false;
+	}
+	std::vector<std::string> classpath;
+	Environment::GetClassPath(&classpath);
+	if (classpath.empty())
+	{
+		classpath.push_back(".");
+	}
+	for (size_t i = 0; i < classpath.size(); i++)
+	{
+		const std::string &entry = classpath[i];
+		if (dk::IsDirectory(entry))
+		{
+			std::string candidate = dk::JoinPath(entry, name);
+			if (dk::FileExists(candidate))
+			{
+				urls.push_back("file:" + candidate);
+			}
+			continue;
+		}
+		if (!dk::FileExists(entry))
+		{
+			continue;
+		}
+		ZipFile *zip = OpenArchive(entry);
+		if (zip && zip->HasEntry(name))
+		{
+			urls.push_back("jar:file:" + entry + "!/" + name);
+		}
+	}
+	return !urls.empty();
+}
+
 ClassLoader::ClassLoader()
 {
 	parent = NULL;

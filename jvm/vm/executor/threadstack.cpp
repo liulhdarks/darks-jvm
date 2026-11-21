@@ -103,6 +103,65 @@ bool ThreadStack::DescribeTopFrame(std::string &out) const
 	return true;
 }
 
+void ThreadStack::DescribeJavaFrames(std::vector<FrameInfo> &out) const
+{
+	out.clear();
+	std::stack<lpStackFrame> copy = frames;
+	std::vector<lpStackFrame> ordered;
+	while (!copy.empty())
+	{
+		ordered.push_back(copy.top());
+		copy.pop();
+	}
+	for (size_t i = 0; i < ordered.size(); i++)
+	{
+		lpStackFrame frame = ordered[i];
+		if (!frame)
+		{
+			continue;
+		}
+		lpMethod method = frame->GetMethod();
+		lpClass clazz = frame->GetDeclaringClass();
+		if (!method || !method->methodName)
+		{
+			continue;
+		}
+		FrameInfo info;
+		info.declaring_class = (clazz && clazz->thisClass && clazz->thisClass->GetName())
+			? clazz->thisClass->GetName() : "";
+		for (size_t c = 0; c < info.declaring_class.size(); c++)
+		{
+			if (info.declaring_class[c] == '/')
+			{
+				info.declaring_class[c] = '.';
+			}
+		}
+		info.method_name = method->methodName->GetName();
+		info.file_name = (clazz && clazz->source_file && clazz->source_file->source_file)
+			? clazz->source_file->source_file->GetName() : "";
+		int line = -1;
+		if (method->code_attr && method->code_attr->line_number_table &&
+		    method->code_attr->line_number_table->line_table_count > 0)
+		{
+			int pc = frame->GetInstructionPc();
+			lpLineNumberTable table = method->code_attr->line_number_table;
+			for (U2 n = 0; n < table->line_table_count; n++)
+			{
+				if (static_cast<int>(table->line_number_infos[n].start_pc) <= pc)
+				{
+					line = table->line_number_infos[n].line_number;
+				}
+			}
+		}
+		else if (method->isNative())
+		{
+			line = -2;
+		}
+		info.line_number = line;
+		out.push_back(info);
+	}
+}
+
 void ThreadStack::CollectHeldMonitors(
 	std::vector<std::pair<LPOBJECT_REF, lpClass> > &out) const
 {

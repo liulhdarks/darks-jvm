@@ -83,6 +83,17 @@ public:
 	// class name).  Returns false when the stack is empty.
 	bool DescribeTopFrame(std::string &out) const;
 
+	// One entry per Java frame, innermost first.  line_number is -1 when the
+	// class has no line table and -2 for native methods (JDK conventions).
+	struct FrameInfo
+	{
+		std::string declaring_class;
+		std::string method_name;
+		std::string file_name;
+		int line_number;
+	};
+	void DescribeJavaFrames(std::vector<FrameInfo> &out) const;
+
 	// Diagnostics: appends every monitor held by a frame, outermost first.
 	void CollectHeldMonitors(std::vector<std::pair<LPOBJECT_REF, lpClass> > &out) const;
 };
