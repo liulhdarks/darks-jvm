@@ -79,6 +79,8 @@ public final class Method extends AccessibleObject
 
     public native Annotation[] getDeclaredAnnotations0();
 
+    public native Object getDefaultValue();
+
     public Annotation[] getDeclaredAnnotations()
     {
         return getDeclaredAnnotations0();

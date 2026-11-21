@@ -48,6 +48,33 @@ public:
 	}
 };
 
+// The class itself could not be located.  JNI boundaries translate this into
+// java.lang.ClassNotFoundException.
+class MissingClassException : public VMException
+{
+public:
+	std::string missing;
+
+	explicit MissingClassException(const std::string &name)
+		: VMException(const_cast<LPSTR>(name.c_str())), missing(name)
+	{
+	}
+};
+
+// A superclass or superinterface could not be resolved while linking a class
+// that was found itself.  The JVM reports this as NoClassDefFoundError with a
+// ClassNotFoundException cause naming the missing type (JVMS 5.3.5).
+class ClassLinkageException : public VMException
+{
+public:
+	std::string missing;
+
+	explicit ClassLinkageException(const std::string &name)
+		: VMException(const_cast<LPSTR>(name.c_str())), missing(name)
+	{
+	}
+};
+
 class BytesException : public VMException
 {
 

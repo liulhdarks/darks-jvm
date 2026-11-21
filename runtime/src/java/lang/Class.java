@@ -132,6 +132,8 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
 
     public native boolean isPrimitive();
 
+    public native boolean isAnnotation();
+
     public native Class getComponentType();
 
     public native Class getSuperclass();
@@ -458,7 +460,10 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
 
     static native Class getPrimitiveClass(String name);
 
-    public static native Class forName(String name) throws ClassNotFoundException;
+    public static Class<?> forName(String name) throws ClassNotFoundException
+    {
+        return forName(name, true, null);
+    }
 
     public static Class<?> forName(String name, boolean initialize,
         ClassLoader loader) throws ClassNotFoundException

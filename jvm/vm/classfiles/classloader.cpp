@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "classloader.h"
 #include "vm/executor/vmmutex.h"
+#include "vm/executor/methodarea.h"
 #include "vm/exceptions.h"
 #include "env/env.h"
 #include "utils/CommonUtils.h"
@@ -255,7 +256,7 @@ bool ClassLoader::GetClass(LPCSTR classname, lpClass &jclass)
 	return false;
 }
 
-bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool load_super)
+bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool initialize)
 {
 	// The heap mutex must not be held while <clinit> runs: class initialisation
 	// executes Java code, which may suspend at a coroutine blocking point or
@@ -267,44 +268,152 @@ bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool load_super)
 		{
 			throw new VMException((LPSTR)"Class name is null.");
 		}
+		jclass = NULL;
 		if (GetClass(classname, jclass))
 		{
-			return true;
+			// Already loaded: initialization is still due on first active use.
 		}
-
-		if (parent)
+		else if (parent && parent->FindClass(classname, jclass, false))
 		{
-			if (parent->FindClass(classname, jclass))
+			// Found in the parent loader.
+		}
+		else if (FindBootClass(classname, jclass))
+		{
+		}
+		else if (classname[0] == '[')
+		{
+			if (!DefineArrayClass(classname, jclass))
 			{
-				return true;
+				return false;
 			}
 		}
-
-		if (FindBootClass(classname, jclass))
+		else
 		{
-			return true;
+			LPBYTE bytes = NULL;
+			int len = 0;
+			LoadClass(classname, bytes, len);
+			if (!bytes)
+			{
+				DebugUtils::trace("class bytes not found for %s\n", classname);
+				throw new MissingClassException(classname);
+			}
+			if (!DefineClass(bytes, len, jclass))
+			{
+				return false;
+			}
+			jclass->classloader = this;
+			try
+			{
+				LinkClass(jclass);
+			}
+			catch (...)
+			{
+				DiscardClass(jclass);
+				jclass = NULL;
+				throw;
+			}
 		}
-
-		if (classname[0] == '[')
-		{
-			return DefineArrayClass(classname, jclass);
-		}
-
-		LPBYTE bytes = NULL;
-		int len = 0;
-		LoadClass(classname, bytes, len);
-		if (!bytes)
-		{
-			DebugUtils::trace("class bytes not found for %s\n", classname);
-			throw new VMException((LPSTR)"Fail to load class bytes");
-		}
-		if (!DefineClass(bytes, len, jclass))
-		{
-			return false;
-		}
-		jclass->classloader = this;
 	}
-	return jclass->initialize(load_super);
+	if (!jclass)
+	{
+		return false;
+	}
+	if (initialize)
+	{
+		return jclass->initialize(true);
+	}
+	return true;
+}
+
+void ClassLoader::LinkClass(lpClass clazz)
+{
+	if (!clazz)
+	{
+		return;
+	}
+	if (clazz->superClass && clazz->superClass->GetName())
+	{
+		const char *name = clazz->superClass->GetName();
+		lpClass super = NULL;
+		try
+		{
+			if (!FindClass(name, super, false) || !super)
+			{
+				throw new ClassLinkageException(name);
+			}
+		}
+		catch (ClassLinkageException *)
+		{
+			throw;
+		}
+		catch (MissingClassException *error)
+		{
+			std::string missing = error->missing;
+			delete error;
+			throw new ClassLinkageException(missing);
+		}
+		catch (VMException *)
+		{
+			throw new ClassLinkageException(name);
+		}
+		catch (...)
+		{
+			throw new ClassLinkageException(name);
+		}
+		clazz->super_class = super;
+	}
+	for (U2 i = 0; i < clazz->interfaceCount; i++)
+	{
+		lpClassConstant ic = clazz->interfaces ? clazz->interfaces[i] : NULL;
+		const char *name = ic ? ic->GetName() : NULL;
+		if (!name)
+		{
+			continue;
+		}
+		lpClass iface = NULL;
+		try
+		{
+			if (!FindClass(name, iface, false) || !iface)
+			{
+				throw new ClassLinkageException(name);
+			}
+		}
+		catch (ClassLinkageException *)
+		{
+			throw;
+		}
+		catch (MissingClassException *error)
+		{
+			std::string missing = error->missing;
+			delete error;
+			throw new ClassLinkageException(missing);
+		}
+		catch (VMException *)
+		{
+			throw new ClassLinkageException(name);
+		}
+		catch (...)
+		{
+			throw new ClassLinkageException(name);
+		}
+	}
+}
+
+void ClassLoader::DiscardClass(lpClass clazz)
+{
+	if (!clazz)
+	{
+		return;
+	}
+	MethodArea::RemoveMethodsOf(clazz);
+	{
+		VMLock lk;
+		if (clazz->thisClass && clazz->thisClass->GetName())
+		{
+			classMap.erase(string(clazz->thisClass->GetName()));
+		}
+	}
+	delete clazz;
 }
 
 bool ClassLoader::FindBootClass(LPCSTR classname, lpClass &jclass)

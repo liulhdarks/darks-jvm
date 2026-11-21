@@ -93,6 +93,36 @@ LPOBJECT_REF CreateJavaException(const char *class_name, const char *message)
 	return ref;
 }
 
+LPOBJECT_REF CreateJavaExceptionWithCause(const char *class_name,
+                                          const char *message,
+                                          LPOBJECT_REF cause)
+{
+	LPOBJECT_REF ref = CreateJavaException(class_name, message);
+	if (!ref || !VMContext::object_heap)
+	{
+		return ref;
+	}
+	GCRootScope root(VMContext::object_heap, &ref);
+	GCRootScope cause_root(VMContext::object_heap, &cause);
+	lpObject obj = NULL;
+	if (!VMContext::object_heap->GetObject(ref, obj) || !obj)
+	{
+		return ref;
+	}
+	std::map<std::string, lpFieldValue>::iterator it =
+		obj->varants.find(std::string("cause:Ljava/lang/Throwable;"));
+	if (it != obj->varants.end() && it->second)
+	{
+		it->second->field_value.heapPtr = cause;
+	}
+	it = obj->varants.find(std::string("causeInitialized:Z"));
+	if (it != obj->varants.end() && it->second)
+	{
+		it->second->field_value.blValue = 1;
+	}
+	return ref;
+}
+
 bool ClassIsAssignable(lpClass target, lpClass src)
 {
 	if (!target || !src)
