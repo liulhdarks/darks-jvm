@@ -15,4 +15,9 @@ public interface Collection<E> extends Iterable<E>
     void clear();
 
     Object[] toArray();
+
+    default java.util.stream.Stream<E> stream()
+    {
+        return java.util.stream.Stream.from(this);
+    }
 }

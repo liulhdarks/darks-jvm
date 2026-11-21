@@ -44,6 +44,8 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/annotation/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/beans/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/regex/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/stream/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/logging/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/math/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/text/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/*.java"
@@ -103,6 +105,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkTextTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkRegexTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkCharsetTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkUtilTest.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
     add_custom_command(
@@ -525,6 +528,13 @@ if(JAVAC)
                 "-DARGS=-cp;${CLASSES_DIR};SdkCharsetTest" -DEXPECT_RC=0
                 "-DEXPECT_TEXT=charset\ checks=[0-9]+\ failures=0"
                 "-DEXPECT_TEXT2=sdk\ charset:\ ok" -P "${CHECK}")
+
+    add_test(NAME sdk_util
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};SdkUtilTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=util\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=sdk\ util:\ ok"
+                "-DEXPECT_TEXT3=WARNING:\ log-warning-42" -P "${CHECK}")
 
     add_test(NAME long_array_init
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}

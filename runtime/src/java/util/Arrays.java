@@ -8,12 +8,7 @@ public class Arrays
 
     public static <T> List<T> asList(T... values)
     {
-        ArrayList<T> list = new ArrayList<T>(values.length > 0 ? values.length : 1);
-        for (int i = 0; i < values.length; i++)
-        {
-            list.add(values[i]);
-        }
-        return list;
+        return new ArrayAsList<T>(values);
     }
 
     public static String toString(Object[] values)
@@ -429,5 +424,165 @@ public class Arrays
             result[i] = values[i];
         }
         return result;
+    }
+
+    // Fixed-size list view over an array.  Element writes are visible through
+    // the backing array; structural changes are rejected.
+    private static final class ArrayAsList<E> implements List<E>
+    {
+        private final Object[] values;
+
+        ArrayAsList(Object[] values)
+        {
+            this.values = values;
+        }
+
+        public int size()
+        {
+            return values.length;
+        }
+
+        public boolean isEmpty()
+        {
+            return values.length == 0;
+        }
+
+        public E get(int index)
+        {
+            if (index < 0 || index >= values.length)
+            {
+                throw new IndexOutOfBoundsException("index " + index + ", size " + values.length);
+            }
+            return (E)values[index];
+        }
+
+        public E set(int index, E value)
+        {
+            if (index < 0 || index >= values.length)
+            {
+                throw new IndexOutOfBoundsException("index " + index + ", size " + values.length);
+            }
+            E old = (E)values[index];
+            values[index] = value;
+            return old;
+        }
+
+        public boolean add(E value)
+        {
+            throw new UnsupportedOperationException();
+        }
+
+        public void add(int index, E value)
+        {
+            throw new UnsupportedOperationException();
+        }
+
+        public boolean addAll(Collection<? extends E> values)
+        {
+            throw new UnsupportedOperationException();
+        }
+
+        public boolean addAll(int index, Collection<? extends E> values)
+        {
+            throw new UnsupportedOperationException();
+        }
+
+        public E remove(int index)
+        {
+            throw new UnsupportedOperationException();
+        }
+
+        public boolean remove(Object value)
+        {
+            throw new UnsupportedOperationException();
+        }
+
+        public boolean contains(Object value)
+        {
+            return indexOf(value) >= 0;
+        }
+
+        public int indexOf(Object value)
+        {
+            for (int i = 0; i < values.length; i++)
+            {
+                if (value == null ? values[i] == null : value.equals(values[i]))
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        public int lastIndexOf(Object value)
+        {
+            for (int i = values.length - 1; i >= 0; i--)
+            {
+                if (value == null ? values[i] == null : value.equals(values[i]))
+                {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        public void clear()
+        {
+            throw new UnsupportedOperationException();
+        }
+
+        public Object[] toArray()
+        {
+            Object[] result = new Object[values.length];
+            for (int i = 0; i < values.length; i++)
+            {
+                result[i] = values[i];
+            }
+            return result;
+        }
+
+        public Iterator<E> iterator()
+        {
+            return new Itr();
+        }
+
+        public String toString()
+        {
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < values.length; i++)
+            {
+                if (i > 0)
+                {
+                    sb.append(", ");
+                }
+                sb.append(String.valueOf(values[i]));
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+
+        private class Itr implements Iterator<E>
+        {
+            private int cursor;
+
+            public boolean hasNext()
+            {
+                return cursor < values.length;
+            }
+
+            public E next()
+            {
+                if (cursor >= values.length)
+                {
+                    throw new NoSuchElementException();
+                }
+                return (E)values[cursor++];
+            }
+
+            public void remove()
+            {
+                throw new UnsupportedOperationException();
+            }
+        }
     }
 }

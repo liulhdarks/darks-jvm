@@ -12,6 +12,9 @@ extern "C" {
 JNIEXPORT void JNICALL Java_java_io_PrintStream_write0
   (JNIEnv *, jobject, jstring);
 
+JNIEXPORT void JNICALL Java_java_io_PrintStream_writeErr0
+  (JNIEnv *, jobject, jstring);
+
 JNIEXPORT void JNICALL Java_java_io_PrintStream_println
   (JNIEnv *, jobject, jstring);
 

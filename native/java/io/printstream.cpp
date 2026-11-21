@@ -7,7 +7,7 @@
 
 namespace {
 
-void write_jstring(JNIEnv *env, jstring str)
+void write_jstring(JNIEnv *env, jstring str, FILE *stream)
 {
 	if (!str)
 	{
@@ -18,8 +18,8 @@ void write_jstring(JNIEnv *env, jstring str)
 	{
 		return;
 	}
-	fwrite(chars, 1, strlen(chars), stdout);
-	fflush(stdout);
+	fwrite(chars, 1, strlen(chars), stream);
+	fflush(stream);
 	env->ReleaseStringUTFChars(str, chars);
 }
 
@@ -29,14 +29,21 @@ JNIEXPORT void JNICALL Java_java_io_PrintStream_write0
 	(JNIEnv *env, jobject thiz, jstring str)
 {
 	(void)thiz;
-	write_jstring(env, str);
+	write_jstring(env, str, stdout);
+}
+
+JNIEXPORT void JNICALL Java_java_io_PrintStream_writeErr0
+	(JNIEnv *env, jobject thiz, jstring str)
+{
+	(void)thiz;
+	write_jstring(env, str, stderr);
 }
 
 JNIEXPORT void JNICALL Java_java_io_PrintStream_println
 	(JNIEnv *env, jobject thiz, jstring str)
 {
 	(void)thiz;
-	write_jstring(env, str);
+	write_jstring(env, str, stdout);
 	fputc('\n', stdout);
 	fflush(stdout);
 }

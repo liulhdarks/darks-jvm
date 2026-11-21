@@ -88,6 +88,11 @@ public class Collections
         return best;
     }
 
+    public static <T> List<T> unmodifiableList(List<? extends T> list)
+    {
+        return new UnmodifiableList<T>(list);
+    }
+
     public static <T extends Object & Comparable<? super T>> T min(Collection<? extends T> values)
     {
         Iterator<? extends T> it = values.iterator();
@@ -101,5 +106,134 @@ public class Collections
             }
         }
         return best;
+    }
+
+    private static final class UnmodifiableList<E> implements List<E>
+    {
+        private final List<? extends E> list;
+
+        UnmodifiableList(List<? extends E> list)
+        {
+            if (list == null)
+            {
+                throw new NullPointerException("list");
+            }
+            this.list = list;
+        }
+
+        private static UnsupportedOperationException unsupported()
+        {
+            return new UnsupportedOperationException("unmodifiable list");
+        }
+
+        public int size()
+        {
+            return list.size();
+        }
+
+        public boolean isEmpty()
+        {
+            return list.isEmpty();
+        }
+
+        public E get(int index)
+        {
+            return list.get(index);
+        }
+
+        public E set(int index, E value)
+        {
+            throw unsupported();
+        }
+
+        public void add(int index, E value)
+        {
+            throw unsupported();
+        }
+
+        public boolean add(E value)
+        {
+            throw unsupported();
+        }
+
+        public boolean addAll(Collection<? extends E> values)
+        {
+            throw unsupported();
+        }
+
+        public boolean addAll(int index, Collection<? extends E> values)
+        {
+            throw unsupported();
+        }
+
+        public E remove(int index)
+        {
+            throw unsupported();
+        }
+
+        public boolean remove(Object value)
+        {
+            throw unsupported();
+        }
+
+        public boolean contains(Object value)
+        {
+            return list.contains(value);
+        }
+
+        public int indexOf(Object value)
+        {
+            return list.indexOf(value);
+        }
+
+        public int lastIndexOf(Object value)
+        {
+            return list.lastIndexOf(value);
+        }
+
+        public void clear()
+        {
+            throw unsupported();
+        }
+
+        public Object[] toArray()
+        {
+            return list.toArray();
+        }
+
+        public Iterator<E> iterator()
+        {
+            return new Itr(list.iterator());
+        }
+
+        public String toString()
+        {
+            return list.toString();
+        }
+
+        private static final class Itr<E> implements Iterator<E>
+        {
+            private final Iterator<? extends E> iterator;
+
+            Itr(Iterator<? extends E> iterator)
+            {
+                this.iterator = iterator;
+            }
+
+            public boolean hasNext()
+            {
+                return iterator.hasNext();
+            }
+
+            public E next()
+            {
+                return iterator.next();
+            }
+
+            public void remove()
+            {
+                throw new UnsupportedOperationException("unmodifiable list");
+            }
+        }
     }
 }

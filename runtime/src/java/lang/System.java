@@ -4,6 +4,8 @@ public final class System
 {
     public static java.io.PrintStream out;
 
+    public static java.io.PrintStream err;
+
     // Single system property table shared by getProperty / setProperty /
     // clearProperty / getProperties.  Defaults come from the native
     // initProperties (real process environment plus -D overrides).
@@ -12,6 +14,7 @@ public final class System
     static
     {
         out = new java.io.PrintStream();
+        err = new java.io.PrintStream(true);
         props = initProperties(new java.util.Properties());
     }
 

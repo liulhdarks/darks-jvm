@@ -216,8 +216,28 @@ public class HashMap<K, V> implements Map<K, V>
     }
 
     // Slot visit order.  Deterministic mode uses insertion order; the default
-    // keeps the historical bucket order.
-    private int[] visitOrder()
+    // keeps the historical bucket order.  LinkedHashMap overrides this.
+    protected int[] visitOrder()
+    {
+        if (darks.Deterministic.enabled())
+        {
+            return insertionOrder();
+        }
+        int[] indices = new int[count];
+        int n = 0;
+        for (int i = 0; i < keys.length; i++)
+        {
+            if (used[i])
+            {
+                indices[n++] = i;
+            }
+        }
+        return indices;
+    }
+
+    // Occupied slots sorted by insertion sequence, independent of the
+    // deterministic-mode switch.  Shared with LinkedHashMap.
+    protected int[] insertionOrder()
     {
         int[] indices = new int[count];
         int n = 0;
@@ -228,21 +248,33 @@ public class HashMap<K, V> implements Map<K, V>
                 indices[n++] = i;
             }
         }
-        if (darks.Deterministic.enabled())
+        for (int i = 1; i < n; i++)
         {
-            for (int i = 1; i < n; i++)
+            int value = indices[i];
+            int j = i - 1;
+            while (j >= 0 && order[indices[j]] > order[value])
             {
-                int value = indices[i];
-                int j = i - 1;
-                while (j >= 0 && order[indices[j]] > order[value])
-                {
-                    indices[j + 1] = indices[j];
-                    j--;
-                }
-                indices[j + 1] = value;
+                indices[j + 1] = indices[j];
+                j--;
             }
+            indices[j + 1] = value;
         }
         return indices;
+    }
+
+    protected Set<K> newKeySet()
+    {
+        return new HashSet<K>();
+    }
+
+    protected Collection<V> newValues()
+    {
+        return new ArrayList<V>(count > 0 ? count : 1);
+    }
+
+    protected Set<Map.Entry<K, V>> newEntrySet()
+    {
+        return new HashSet<Map.Entry<K, V>>(count * 2 + 1);
     }
 
     public boolean containsValue(Object value)
@@ -271,7 +303,7 @@ public class HashMap<K, V> implements Map<K, V>
 
     public Set<K> keySet()
     {
-        HashSet<K> result = new HashSet<K>();
+        Set<K> result = newKeySet();
         int[] indices = visitOrder();
         for (int i = 0; i < indices.length; i++)
         {
@@ -282,7 +314,7 @@ public class HashMap<K, V> implements Map<K, V>
 
     public Collection<V> values()
     {
-        ArrayList<V> result = new ArrayList<V>(count > 0 ? count : 1);
+        Collection<V> result = newValues();
         int[] indices = visitOrder();
         for (int i = 0; i < indices.length; i++)
         {
@@ -293,7 +325,7 @@ public class HashMap<K, V> implements Map<K, V>
 
     public Set<Map.Entry<K, V>> entrySet()
     {
-        HashSet<Map.Entry<K, V>> result = new HashSet<Map.Entry<K, V>>(count * 2 + 1);
+        Set<Map.Entry<K, V>> result = newEntrySet();
         int[] indices = visitOrder();
         for (int i = 0; i < indices.length; i++)
         {

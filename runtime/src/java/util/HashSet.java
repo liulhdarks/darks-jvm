@@ -104,7 +104,25 @@ public class HashSet<E> implements Set<E>
         }
     }
 
-    private int[] visitOrder()
+    protected int[] visitOrder()
+    {
+        if (darks.Deterministic.enabled())
+        {
+            return insertionOrder();
+        }
+        int[] indices = new int[count];
+        int n = 0;
+        for (int i = 0; i < elements.length; i++)
+        {
+            if (used[i])
+            {
+                indices[n++] = i;
+            }
+        }
+        return indices;
+    }
+
+    protected int[] insertionOrder()
     {
         int[] indices = new int[count];
         int n = 0;
@@ -115,19 +133,16 @@ public class HashSet<E> implements Set<E>
                 indices[n++] = i;
             }
         }
-        if (darks.Deterministic.enabled())
+        for (int i = 1; i < n; i++)
         {
-            for (int i = 1; i < n; i++)
+            int value = indices[i];
+            int j = i - 1;
+            while (j >= 0 && order[indices[j]] > order[value])
             {
-                int value = indices[i];
-                int j = i - 1;
-                while (j >= 0 && order[indices[j]] > order[value])
-                {
-                    indices[j + 1] = indices[j];
-                    j--;
-                }
-                indices[j + 1] = value;
+                indices[j + 1] = indices[j];
+                j--;
             }
+            indices[j + 1] = value;
         }
         return indices;
     }
