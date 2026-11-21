@@ -161,6 +161,9 @@ lpClass DarksVM_FindProxyClass(const std::vector<std::string> &interfaces,
                                lpClassLoader loader)
 {
 	std::string key;
+	char loader_key[32];
+	snprintf(loader_key, sizeof(loader_key), "%p:", static_cast<void *>(loader));
+	key += loader_key;
 	for (size_t i = 0; i < interfaces.size(); i++)
 	{
 		if (i)
@@ -308,8 +311,8 @@ jobject DarksVM_CreateAnnotationProxy(JNIEnv *env, lpClass annotationClass,
 	{
 		interfaces.push_back("java/lang/annotation/Annotation");
 	}
-	lpClass proxy_class = DarksVM_FindProxyClass(interfaces,
-		VMContext::bootstrap_classloader);
+	lpClassLoader annotation_loader = annotationClass->classloader
+		? annotationClass->classloader : VMContext::bootstrap_classloader;	lpClass proxy_class = DarksVM_FindProxyClass(interfaces, annotation_loader);
 	lpClass handler_class = JniFindClass(env,
 		"java/lang/reflect/AnnotationInvocationHandler");
 	if (!proxy_class || !handler_class)

@@ -6,6 +6,7 @@
 #include "executor.h"
 #include "threadstack.h"
 #include "stackframe.h"
+#include "descriptor.h"
 #include "vm/classfiles/classloader.h"
 #include "vm/classfiles/constant.h"
 #include "vm/exceptions.h"
@@ -796,7 +797,22 @@ bool ObjectHeap::NewObjectArrayObject(int size, lpClass clazz, LPOBJECT_REF &obj
 	}
 	lpObject obj = new JObject(clazz);
 	LPOBJECT_REF ref = NULL;
-	if (!Register(obj, ref) || !obj->newArrayInstance(DT_REF, size))
+	// An array whose component is itself an array stores references, so the
+	// element representation follows the descriptor depth: only a
+	// one-dimensional array has primitive slots.
+	DATA_TYPE element_type = DT_REF;
+	const char *class_name = (clazz && clazz->thisClass)
+		? clazz->thisClass->GetName() : NULL;
+	if (class_name)
+	{
+		TypeDesc type_desc;
+		parse_desc_type(class_name, type_desc, static_cast<int>(strlen(class_name)));
+		if (type_desc.array_level == 1 && type_desc.data_type != DT_ARRAY)
+		{
+			element_type = type_desc.data_type;
+		}
+	}
+	if (!Register(obj, ref) || !obj->newArrayInstance(element_type, size))
 	{
 		if (obj->index > 0 && static_cast<size_t>(obj->index) < objs.size())
 		{

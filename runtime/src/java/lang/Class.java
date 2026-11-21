@@ -322,6 +322,69 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
         return getName();
     }
 
+    public String toGenericString()
+    {
+        StringBuilder builder = new StringBuilder();
+        int mod = getModifiers();
+        if (mod != 0)
+        {
+            builder.append(java.lang.reflect.Modifier.toString(mod));
+            builder.append(' ');
+        }
+        if (isAnnotation())
+        {
+            builder.append("@interface");
+        }
+        else if (isInterface())
+        {
+            builder.append("interface");
+        }
+        else if (isEnum())
+        {
+            builder.append("enum");
+        }
+        else
+        {
+            builder.append("class");
+        }
+        builder.append(' ');
+        builder.append(getName());
+        TypeVariable<Class<T>>[] variables = getTypeParameters();
+        if (variables.length > 0)
+        {
+            builder.append('<');
+            for (int i = 0; i < variables.length; i++)
+            {
+                if (i > 0)
+                {
+                    builder.append(", ");
+                }
+                builder.append(variables[i].getName());
+            }
+            builder.append('>');
+        }
+        Type superclass = getGenericSuperclass();
+        if (superclass != null)
+        {
+            builder.append(" extends ");
+            builder.append(superclass.toString());
+        }
+        Type[] interfaces = getGenericInterfaces();
+        if (interfaces.length > 0)
+        {
+            builder.append(isInterface() ? " extends " : " implements ");
+            for (int i = 0; i < interfaces.length; i++)
+            {
+                if (i > 0)
+                {
+                    builder.append(", ");
+                }
+                builder.append(interfaces[i].toString());
+            }
+        }
+        return builder.toString();
+    }
+
     public String getCanonicalName()
     {
         String binary = getName();

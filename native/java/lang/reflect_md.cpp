@@ -2048,51 +2048,6 @@ JNIEXPORT jobject JNICALL Java_java_lang_Class_getDeclaredAnnotations0(JNIEnv *e
 		clazz ? clazz->rt_visible_attr : NULL);
 }
 
-JNIEXPORT jobject JNICALL Java_java_lang_Class_getDeclaredClasses0(JNIEnv *env,
-	jobject thiz)
-{
-	lpClass clazz = MirrorClass(thiz);
-	std::vector<jobject> items;
-	if (clazz && clazz->inner_classes && clazz->const_pool && clazz->thisClass)
-	{
-		std::string self = clazz->thisClass->GetName();
-		for (U2 i = 0; i < clazz->inner_classes->number_of_classes; i++)
-		{
-			InnerClassesInfo &info = clazz->inner_classes->inner_classes[i];
-			if (info.outer_class_info_index == 0 || info.inner_name_index == 0)
-			{
-				continue;
-			}
-			lpClassConstant outer = static_cast<lpClassConstant>(
-				clazz->const_pool->GetConstant(info.outer_class_info_index));
-			lpClassConstant inner = static_cast<lpClassConstant>(
-				clazz->const_pool->GetConstant(info.inner_class_info_index));
-			if (!outer || !inner || outer->tag != CLASS_CONSTANT ||
-			    inner->tag != CLASS_CONSTANT || !outer->utf8 ||
-			    !outer->utf8->bytes || !inner->utf8 || !inner->utf8->bytes)
-			{
-				continue;
-			}
-			if (self != outer->utf8->bytes)
-			{
-				continue;
-			}
-			lpClass inner_class = JniFindClass(env, inner->utf8->bytes);
-			if (!inner_class)
-			{
-				continue;
-			}
-			jobject mirror = JniClassMirror(reinterpret_cast<jclass>(inner_class));
-			if (mirror)
-			{
-				JniAddLocalRef(env, mirror);
-				items.push_back(mirror);
-			}
-		}
-	}
-	return MakeObjectArray(env, "[Ljava/lang/Class;", items);
-}
-
 JNIEXPORT jobject JNICALL Java_java_lang_Class_getEnclosingClass0(JNIEnv *env,
 	jobject thiz)
 {
@@ -2705,32 +2660,6 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getExceptionTypes(JNIEnv
 {
 	return ClassArrayFromExceptionAttribute(env,
 		ResolveMemberMethod(env, thiz));
-}
-
-JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getDefaultValue(JNIEnv *env,
-	jobject thiz)
-{
-	lpMethod method = ResolveMemberMethod(env, thiz);
-	if (!method || !method->clazz || !method->clazz->const_pool ||
-	    !method->annotation_default || !method->annotation_default->bytes ||
-	    !method->methodDesc || !method->methodDesc->GetName())
-	{
-		return NULL;
-	}
-	std::string return_desc = AnnotationElementDescriptor(method);
-	if (return_desc.empty())
-	{
-		return NULL;
-	}
-	ByteReader reader(method->annotation_default->bytes,
-	                  method->annotation_default->attr_length);
-	Variant value;
-	if (!ReadElementValue(env, method->clazz->const_pool, reader,
-	                      return_desc.c_str(), value))
-	{
-		return NULL;
-	}
-	return AnnotationValueObject(env, value, return_desc.c_str());
 }
 
 JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_getParameterTypes(JNIEnv *env,

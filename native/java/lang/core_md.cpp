@@ -738,12 +738,23 @@ JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_loadClass0(JNIEnv *env,
 	jclass, jstring name)
 {
 	std::string requested = JStringToUtf8(env, name);
+	// The Java API accepts binary names while the loader keys classes by
+	// internal (slash) names; without this conversion a second lookup defines
+	// the class again and the two Class mirrors stop being identical.
+	std::string internal = requested;
+	for (size_t i = 0; i < internal.size(); i++)
+	{
+		if (internal[i] == '.')
+		{
+			internal[i] = '/';
+		}
+	}
 	lpClass clazz = NULL;
 	try
 	{
 		// ClassLoader.loadClass links but does not initialize: <clinit> only
 		// runs on first active use (or via Class.forName(..., true, ...)).
-		if (!VMContext::bootstrap_classloader->FindClass(requested.c_str(), clazz, false))
+		if (!VMContext::bootstrap_classloader->FindClass(internal.c_str(), clazz, false))
 		{
 			return NULL;
 		}

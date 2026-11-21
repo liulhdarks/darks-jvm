@@ -181,8 +181,8 @@ bool ArrayAssignable(lpClass target, lpClass src, int depth)
 	{
 		return false;
 	}
-	lpClass tcomp = FindClassSafe(tc.c_str());
-	lpClass scomp = FindClassSafe(sc.c_str());
+	lpClass tcomp = FindClassAnywhere(tc.c_str());
+	lpClass scomp = FindClassAnywhere(sc.c_str());
 	if (!tcomp || !scomp)
 	{
 		return false;
@@ -239,7 +239,14 @@ bool ClassIsAssignableDepth(lpClass target, lpClass src, int depth)
 			{
 				return true;
 			}
-			lpClass iface = FindClassSafe(iname);
+			// Interfaces are parsed lazily and may be defined by an
+			// application loader, so resolve them through the defining
+			// class's own loader before falling back to the boot loader.
+			lpClass iface = ResolveInterface(c->classloader, iname);
+			if (!iface)
+			{
+				iface = FindClassSafe(iname);
+			}
 			if (iface && ClassIsAssignableDepth(target, iface, depth - 1))
 			{
 				return true;

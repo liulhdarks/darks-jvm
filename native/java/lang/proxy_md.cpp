@@ -28,6 +28,23 @@ void ThrowJava(JNIEnv *env, const char *class_name, const char *message)
 	}
 }
 
+// The proxy class must live in the loader that defines the interfaces it
+// implements.  Otherwise superinterface resolution (for example Annotation
+// on an application-loaded annotation type) cannot see them and checkcasts
+// against those superinterfaces fail.
+lpClassLoader LoaderFromMirror(jobject loader)
+{
+	if (loader)
+	{
+		jlong handle = JniGetLongFieldByName(loader, "vmLoader");
+		if (handle)
+		{
+			return reinterpret_cast<lpClassLoader>(static_cast<intptr_t>(handle));
+		}
+	}
+	return VMContext::bootstrap_classloader;
+}
+
 } // namespace
 
 extern "C" {
@@ -37,12 +54,12 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Proxy_newProxyInstance0(
 	jobject handler)
 {
 	(void)unused;
-	(void)loader;
 	if (!interfaces || !handler)
 	{
 		ThrowJava(env, "java/lang/NullPointerException", "null proxy argument");
 		return NULL;
 	}
+	lpClassLoader target_loader = LoaderFromMirror(loader);
 	lpObject array = JniResolveObject(reinterpret_cast<jobject>(interfaces));
 	if (!array || !array->array_var)
 	{
@@ -74,8 +91,7 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Proxy_newProxyInstance0(
 		return NULL;
 	}
 	GCNativeScope no_gc(VMContext::object_heap);
-	lpClass proxy_class = DarksVM_FindProxyClass(names,
-		VMContext::bootstrap_classloader);
+	lpClass proxy_class = DarksVM_FindProxyClass(names, target_loader);
 	if (!proxy_class)
 	{
 		ThrowJava(env, "java/lang/IllegalArgumentException", "cannot create proxy class");

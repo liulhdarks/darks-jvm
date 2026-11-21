@@ -329,6 +329,50 @@ void CollectInterfaceMethods(lpClass iface, const std::string &key,
 	}
 }
 
+// Call sites whose declared return type differs from a covariant override match
+// on name and parameters instead of the full key.  Keep the same precedence
+// rules there: a subinterface default must shadow the default it inherits,
+// otherwise `class C implements A, B` (B extends A) would silently run A's
+// body.
+bool SelectMaximallySpecific(
+	const std::vector<std::pair<lpClass, lpMethod> > &candidates,
+	lpMethod &method)
+{
+	lpMethod best = NULL;
+	lpClass bestOwner = NULL;
+	for (size_t i = 0; i < candidates.size(); i++)
+	{
+		bool superseded = false;
+		for (size_t j = 0; j < candidates.size() && !superseded; j++)
+		{
+			if (i == j || SameClass(candidates[i].first, candidates[j].first))
+			{
+				continue;
+			}
+			std::set<std::string> seen;
+			if (IsSubInterface(candidates[j].first, candidates[i].first, seen))
+			{
+				superseded = true;
+			}
+		}
+		if (!superseded)
+		{
+			if (best && !SameClass(bestOwner, candidates[i].first))
+			{
+				return false;
+			}
+			best = candidates[i].second;
+			bestOwner = candidates[i].first;
+		}
+	}
+	if (!best)
+	{
+		return false;
+	}
+	method = best;
+	return true;
+}
+
 
 static bool MethodParamsMatch(lpMethod method, LPCSTR name, LPCSTR params)
 {
@@ -350,70 +394,50 @@ static bool MethodParamsMatch(lpMethod method, LPCSTR name, LPCSTR params)
 	return strncmp(desc, params, length) == 0;
 }
 
-// Method keys include the return type, so an override that narrows a
-// covariant return type is invisible to FindMethod.  Interface dispatch needs
-// it: Spring's IterableConfigurationPropertySource overrides
-// ConfigurationPropertySource.filter with a narrower return type.
-static bool FindDeclaredMethodByParams(lpClass clazz, LPCSTR name, LPCSTR params,
-                                       lpMethod& method)
+lpMethod DeclaredMethodByParams(lpClass clazz, LPCSTR name, LPCSTR params)
 {
-	for (lpClass c = clazz; c; c = c->super_class)
+	if (!clazz || !clazz->methods)
 	{
-		if (!c->methods)
+		return NULL;
+	}
+	for (U2 i = 0; i < clazz->methodCount; i++)
+	{
+		if (MethodParamsMatch(clazz->methods[i], name, params))
 		{
-			continue;
-		}
-		for (U2 i = 0; i < c->methodCount; i++)
-		{
-			if (MethodParamsMatch(c->methods[i], name, params))
-			{
-				method = c->methods[i];
-				return true;
-			}
+			return clazz->methods[i];
 		}
 	}
-	return false;
+	return NULL;
 }
 
-static bool FindInterfaceMethodByParams(lpClass iface, LPCSTR name, LPCSTR params,
-                                        lpMethod& method)
+void CollectInterfaceMethodsByParams(lpClass iface, LPCSTR name, LPCSTR params,
+                                     std::vector<std::pair<lpClass, lpMethod> > &out,
+                                     std::set<std::string> &visited)
 {
 	if (!iface)
 	{
-		return false;
+		return;
 	}
-	if (iface->methods)
+	const char *iname = (iface->thisClass && iface->thisClass->GetName())
+		? iface->thisClass->GetName() : NULL;
+	if (iname && !visited.insert(std::string(iname)).second)
 	{
-		for (U2 i = 0; i < iface->methodCount; i++)
-		{
-			if (MethodParamsMatch(iface->methods[i], name, params))
-			{
-				method = iface->methods[i];
-				return true;
-			}
-		}
+		return;
+	}
+	lpMethod declared = DeclaredMethodByParams(iface, name, params);
+	if (declared && (declared->accFlag & ACM_STATIC) == 0 &&
+	    (declared->accFlag & ACM_PRIVATE) == 0)
+	{
+		out.push_back(std::make_pair(iface, declared));
 	}
 	for (U2 i = 0; i < iface->interfaceCount; i++)
 	{
-		lpClassConstant ic = iface->interfaces ? iface->interfaces[i] : NULL;
-		if (!ic || !ic->GetName() || !iface->classloader)
+		lpClass parent = ResolveInterface(iface, iface->interfaces ? iface->interfaces[i] : NULL);
+		if (parent)
 		{
-			continue;
-		}
-		lpClass parent = NULL;
-		try
-		{
-			if (iface->classloader->FindClass(ic->GetName(), parent, false) && parent &&
-			    FindInterfaceMethodByParams(parent, name, params, method))
-			{
-				return true;
-			}
-		}
-		catch (...)
-		{
+			CollectInterfaceMethodsByParams(parent, name, params, out, visited);
 		}
 	}
-	return false;
 }
 
 } // namespace
@@ -478,34 +502,7 @@ bool Class::FindMethod(LPSTR method_name, lpMethod& method)
 		}
 	}
 	lpMethod best = NULL;
-	lpClass bestOwner = NULL;
-	for (size_t i = 0; i < candidates.size(); i++)
-	{
-		bool superseded = false;
-		for (size_t j = 0; j < candidates.size() && !superseded; j++)
-		{
-			if (i == j || SameClass(candidates[i].first, candidates[j].first))
-			{
-				continue;
-			}
-			std::set<std::string> seen;
-			if (IsSubInterface(candidates[j].first, candidates[i].first, seen))
-			{
-				superseded = true;
-			}
-		}
-		if (!superseded)
-		{
-			if (best && !SameClass(bestOwner, candidates[i].first))
-			{
-				// Unrelated defaults: resolution is ambiguous.
-				return false;
-			}
-			best = candidates[i].second;
-			bestOwner = candidates[i].first;
-		}
-	}
-	if (best)
+	if (SelectMaximallySpecific(candidates, best))
 	{
 		method = best;
 		MethodArea::AddMethod(this, method);
@@ -523,32 +520,51 @@ bool Class::FindMethod(LPSTR method_name, lpMethod& method)
 bool Class::FindMethodByParams(LPCSTR name, LPCSTR params, lpMethod& method)
 {
 	method = NULL;
-	if (FindDeclaredMethodByParams(this, name, params, method))
+	lpMethod declared = DeclaredMethodByParams(this, name, params);
+	if (declared)
 	{
+		method = declared;
 		return true;
 	}
+	lpMethod abstractMatch = NULL;
+	for (lpClass c = super_class; c; c = c->super_class)
+	{
+		lpMethod inherited = DeclaredMethodByParams(c, name, params);
+		if (!inherited || (inherited->accFlag & ACM_PRIVATE) != 0)
+		{
+			continue;
+		}
+		if ((inherited->accFlag & ACM_ABSTRACT) == 0)
+		{
+			method = inherited;
+			return true;
+		}
+		if (!abstractMatch)
+		{
+			abstractMatch = inherited;
+		}
+	}
+	std::vector<std::pair<lpClass, lpMethod> > candidates;
+	std::set<std::string> visited;
 	for (lpClass c = this; c; c = c->super_class)
 	{
 		for (U2 i = 0; i < c->interfaceCount; i++)
 		{
-			lpClassConstant ic = c->interfaces ? c->interfaces[i] : NULL;
-			if (!ic || !ic->GetName() || !c->classloader)
+			lpClass iface = ResolveInterface(c, c->interfaces ? c->interfaces[i] : NULL);
+			if (iface)
 			{
-				continue;
-			}
-			lpClass iface = NULL;
-			try
-			{
-				if (c->classloader->FindClass(ic->GetName(), iface, false) && iface &&
-				    FindInterfaceMethodByParams(iface, name, params, method))
-				{
-					return true;
-				}
-			}
-			catch (...)
-			{
+				CollectInterfaceMethodsByParams(iface, name, params, candidates, visited);
 			}
 		}
+	}
+	if (SelectMaximallySpecific(candidates, method))
+	{
+		return true;
+	}
+	if (abstractMatch)
+	{
+		method = abstractMatch;
+		return true;
 	}
 	return false;
 }

@@ -29,16 +29,36 @@ public final class Array
         {
             throw new IllegalArgumentException("zero dimensions");
         }
-        Class<?> type = componentType;
-        for (int i = 1; i < dimensions.length; i++)
+        return newMultiInstance(componentType, dimensions, 0);
+    }
+
+    private static Object newMultiInstance(Class<?> componentType,
+                                           int[] dimensions, int level)
+    {
+        Class<?> arrayType = componentType;
+        for (int i = level + 1; i < dimensions.length; i++)
         {
-            type = newInstance(type, 0).getClass();
+            arrayType = newInstance0(arrayType, 0).getClass();
         }
-        return newInstance0(type, dimensions[0]);
+        Object array = newInstance0(arrayType, dimensions[level]);
+        if (level + 1 < dimensions.length)
+        {
+            Object[] elements = (Object[])array;
+            for (int i = 0; i < elements.length; i++)
+            {
+                elements[i] = newMultiInstance(componentType, dimensions,
+                                               level + 1);
+            }
+        }
+        return array;
     }
 
     public static int getLength(Object array)
     {
+        if (array == null || !array.getClass().isArray())
+        {
+            throw new IllegalArgumentException("argument is not an array");
+        }
         return length0(array);
     }
 
@@ -125,39 +145,78 @@ public final class Array
         Class<?> type = array.getClass().getComponentType();
         if (!type.isPrimitive())
         {
-            ((Object[])array)[index] = value;
+            try
+            {
+                ((Object[])array)[index] = value;
+            }
+            catch (ArrayStoreException error)
+            {
+                throw new IllegalArgumentException("argument type mismatch");
+            }
             return;
         }
         if (type == boolean.class)
         {
+            if (!(value instanceof Boolean))
+            {
+                throw new IllegalArgumentException("argument type mismatch");
+            }
             ((boolean[])array)[index] = ((Boolean)value).booleanValue();
         }
         else if (type == byte.class)
         {
+            if (!(value instanceof Number))
+            {
+                throw new IllegalArgumentException("argument type mismatch");
+            }
             ((byte[])array)[index] = ((Number)value).byteValue();
         }
         else if (type == char.class)
         {
+            if (!(value instanceof Character))
+            {
+                throw new IllegalArgumentException("argument type mismatch");
+            }
             ((char[])array)[index] = ((Character)value).charValue();
         }
         else if (type == short.class)
         {
+            if (!(value instanceof Number))
+            {
+                throw new IllegalArgumentException("argument type mismatch");
+            }
             ((short[])array)[index] = ((Number)value).shortValue();
         }
         else if (type == int.class)
         {
+            if (!(value instanceof Number))
+            {
+                throw new IllegalArgumentException("argument type mismatch");
+            }
             ((int[])array)[index] = ((Number)value).intValue();
         }
         else if (type == long.class)
         {
+            if (!(value instanceof Number))
+            {
+                throw new IllegalArgumentException("argument type mismatch");
+            }
             ((long[])array)[index] = ((Number)value).longValue();
         }
         else if (type == float.class)
         {
+            if (!(value instanceof Number))
+            {
+                throw new IllegalArgumentException("argument type mismatch");
+            }
             ((float[])array)[index] = ((Number)value).floatValue();
         }
         else
         {
+            if (!(value instanceof Number))
+            {
+                throw new IllegalArgumentException("argument type mismatch");
+            }
             ((double[])array)[index] = ((Number)value).doubleValue();
         }
     }

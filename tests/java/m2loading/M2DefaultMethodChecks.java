@@ -57,6 +57,44 @@ class M2ImplSuper extends M2Super implements M2A
 {
 }
 
+interface M2Wide
+{
+    Object pick();
+}
+
+interface M2Narrow extends M2Wide
+{
+    String pick();
+}
+
+class M2NarrowImpl implements M2Narrow
+{
+    public String pick()
+    {
+        return "narrow";
+    }
+}
+
+interface M2DefaultWide
+{
+    default Object pick()
+    {
+        return "wide";
+    }
+}
+
+interface M2DefaultNarrow extends M2DefaultWide
+{
+    default String pick()
+    {
+        return "narrow-default";
+    }
+}
+
+class M2DefaultNarrowImpl implements M2DefaultNarrow
+{
+}
+
 public class M2DefaultMethodChecks
 {
     private static int checks;
@@ -92,6 +130,13 @@ public class M2DefaultMethodChecks
         Method aWho = M2A.class.getMethod("who", new Class[0]);
         check("B".equals(aWho.invoke(new M2ImplB(), new Object[0])),
             "reflective invocation dispatches to the derived default");
+
+        M2Wide wide = new M2NarrowImpl();
+        check("narrow".equals(wide.pick()),
+            "covariant override resolves through the wide interface");
+        M2DefaultWide wideDefault = new M2DefaultNarrowImpl();
+        check("narrow-default".equals(wideDefault.pick()),
+            "covariant default shadows the wide interface default");
 
         System.out.println("m2 default-method checks=" + checks + " failures=" + failures);
         if (failures != 0)

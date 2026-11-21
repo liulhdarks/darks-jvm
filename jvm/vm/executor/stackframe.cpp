@@ -324,9 +324,6 @@ bool FindClassOrError(lpClassLoader loader, const char *name, lpClass &out,
                       const char *error_class)
 {
 	out = NULL;
-	if (name && strstr(name, "SpringApplication"))
-	{
-	}
 	if (!loader || !name)
 	{
 		VMContext::pending_exception = CreateJavaException(
@@ -830,13 +827,6 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 			op_stack->push(s2);
 			op_stack->push(s1);
 			break;
-		case _swap:
-			op_stack->pop(s1);
-			op_stack->pop(s2);
-			op_stack->push(s1);
-			op_stack->push(s2);
-			break;
-
 		case iadd:
 			op_stack->pop(s1);
 			op_stack->pop(s2);
@@ -1757,12 +1747,6 @@ EventNotify StackFrame::ExecuteCode()
 			op_stack->push(s2);
 			op_stack->push(s1);
 		}
-		break;
-	case _swap:// 95 /*(0x5f)*/
-		op_stack->pop(s1);          // value1
-		op_stack->pop(s2);          // value2
-		op_stack->push(s1);
-		op_stack->push(s2);
 		break;
 		
 		//Type Conversion
