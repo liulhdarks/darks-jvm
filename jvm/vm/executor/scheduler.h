@@ -71,6 +71,10 @@ struct Coroutine
 	int64_t deadline_ns;       // 0 => no timer
 	uint64_t timer_generation;
 	LPOBJECT_REF injected;     // InterruptedException to raise on resume (root)
+	// Structured concurrency: the scope that owns this coroutine when it was
+	// started by StructuredTaskScope.fork().  Registered as a GC root so the
+	// Java scope stays alive for as long as a child can still report to it.
+	LPOBJECT_REF scope_parent;
 
 	bool interrupt_flag;
 	bool throw_on_resume;
@@ -145,6 +149,23 @@ public:
 	// ---- thread lifecycle (natives) --------------------------------------
 	bool StartThread(LPOBJECT_REF thread_obj);
 	bool StartVirtualThread(LPOBJECT_REF thread_obj);
+	// Structured concurrency (java.util.concurrent.StructuredTaskScope).
+	// Starts thread_obj as a child of scope_obj (virtual threads use the
+	// virtual kind, custom factories may supply platform threads).  Fails
+	// when the scope was already closed, so a late fork cannot leak past
+	// shutdown.
+	bool StartScopedThread(LPOBJECT_REF thread_obj, LPOBJECT_REF scope_obj);
+	// Interrupts the scope's unfinished children through the regular
+	// interrupt + injected_exception path.
+	void ScopeShutdown(LPOBJECT_REF scope_obj);
+	// Number of children that have not finished yet.
+	int ScopeLiveChildren(LPOBJECT_REF scope_obj);
+	// Marks the scope closed and returns the number of children still alive;
+	// the registry entry goes away once the last child finishes (or
+	// immediately when there is none).
+	int ScopeClose(LPOBJECT_REF scope_obj);
+	// Parent scope of the calling coroutine, or NULL outside a scope.
+	LPOBJECT_REF CurrentScope();
 	void InterruptThread(LPOBJECT_REF thread_obj);
 	bool IsInterrupted(LPOBJECT_REF thread_obj, bool clear);
 	bool ThreadAlive(LPOBJECT_REF thread_obj);
@@ -187,7 +208,8 @@ private:
 	void MarkAtSafepoint(bool at);
 	void DetachCoroutine(lpCoroutine co);
 	bool SetupThread(lpCoroutine co, LPOBJECT_REF thread_obj);
-	bool StartThreadInternal(LPOBJECT_REF thread_obj, int kind);
+	bool StartThreadInternal(LPOBJECT_REF thread_obj, int kind,
+	                        LPOBJECT_REF scope_obj = NULL);
 
 	struct Impl;
 	Impl *impl;

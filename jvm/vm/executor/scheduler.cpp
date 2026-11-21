@@ -62,6 +62,19 @@ struct WorkerInfo
 	int index;
 };
 
+// Structured concurrency registry: one entry per open StructuredTaskScope.
+// Children are coroutines, pruned as they terminate; the entry itself is
+// removed on close once the last child is gone.
+struct ScopeInfo
+{
+	ScopeInfo()
+	{
+		closed = false;
+	}
+	std::vector<lpCoroutine> children;
+	bool closed;
+};
+
 thread_local lpCoroutine t_co = NULL;
 thread_local WorkerInfo *t_worker = NULL;
 
@@ -196,6 +209,7 @@ struct Scheduler::Impl
 	std::map<LPOBJECT_REF, Monitor *> monitors;
 	std::map<lpClass, Monitor *> class_monitors;
 	std::map<LPOBJECT_REF, lpCoroutine> by_thread;
+	std::map<LPOBJECT_REF, ScopeInfo *> scopes;
 
 	lpCoroutine main_co;
 
@@ -232,6 +246,7 @@ Coroutine::Coroutine()
 	deadline_ns = 0;
 	timer_generation = 0;
 	injected = NULL;
+	scope_parent = NULL;
 	interrupt_flag = false;
 	throw_on_resume = false;
 	resume_from_wait = false;
@@ -418,6 +433,12 @@ void Scheduler::Shutdown()
 		}
 		impl->class_monitors.clear();
 		impl->timers.clear();
+		for (std::map<LPOBJECT_REF, ScopeInfo *>::iterator si = impl->scopes.begin();
+		     si != impl->scopes.end(); ++si)
+		{
+			delete si->second;
+		}
+		impl->scopes.clear();
 	}
 	for (size_t i = 0; i < leftover.size(); i++)
 	{
@@ -940,8 +961,10 @@ bool Scheduler::SleepCurrent(ThreadStack *ts, int64_t millis)
 	// Build the exception outside the scheduler lock: creating Java objects
 	// takes the heap mutex, and the collection path takes the locks in the
 	// opposite order.
-	co->injected = CreateJavaException("java/lang/InterruptedException",
-	                                   "sleep interrupted");
+	// The interrupt arrived while this coroutine was runnable, so it must be
+	// raised at the sleep call site rather than parked for the next resume.
+	ts->injected_exception = CreateJavaException("java/lang/InterruptedException",
+	                                             "sleep interrupted");
 	return false;
 }
 
@@ -964,7 +987,6 @@ bool Scheduler::YieldCurrent(ThreadStack *)
 
 bool Scheduler::JoinCurrent(ThreadStack *ts, LPOBJECT_REF target, int64_t millis)
 {
-	(void)ts;
 	lpCoroutine co = Current();
 	if (!co || !impl)
 	{
@@ -985,8 +1007,10 @@ bool Scheduler::JoinCurrent(ThreadStack *ts, LPOBJECT_REF target, int64_t millis
 	{
 		co->interrupt_flag = false;
 		lk.unlock();
-		co->injected = CreateJavaException("java/lang/InterruptedException",
-		                                   "join interrupted");
+		// Raise at the join call site: the interrupt was recorded while this
+		// coroutine was still runnable.
+		ts->injected_exception = CreateJavaException("java/lang/InterruptedException",
+		                                             "join interrupted");
 		return false;
 	}
 	co->join_target = target_co;
@@ -1003,7 +1027,6 @@ bool Scheduler::JoinCurrent(ThreadStack *ts, LPOBJECT_REF target, int64_t millis
 
 bool Scheduler::WaitCurrent(ThreadStack *ts, LPOBJECT_REF obj, int64_t millis)
 {
-	(void)ts;
 	lpCoroutine co = Current();
 	if (!co || !impl)
 	{
@@ -1023,8 +1046,10 @@ bool Scheduler::WaitCurrent(ThreadStack *ts, LPOBJECT_REF obj, int64_t millis)
 	{
 		co->interrupt_flag = false;
 		lk.unlock();
-		co->injected = CreateJavaException("java/lang/InterruptedException",
-		                                   "wait interrupted");
+		// Raise at the wait call site: the interrupt was recorded while this
+		// coroutine was still runnable.
+		ts->injected_exception = CreateJavaException("java/lang/InterruptedException",
+		                                             "wait interrupted");
 		return false;
 	}
 	co->saved_count = mon->count;
@@ -1292,6 +1317,7 @@ void Scheduler::AddCoroutineRoots(lpCoroutine co)
 	VMContext::object_heap->AddRootSlot(&co->thread_ref);
 	VMContext::object_heap->AddRootSlot(&co->block_obj);
 	VMContext::object_heap->AddRootSlot(&co->injected);
+	VMContext::object_heap->AddRootSlot(&co->scope_parent);
 }
 
 void Scheduler::RemoveCoroutineRoots(lpCoroutine co)
@@ -1304,6 +1330,7 @@ void Scheduler::RemoveCoroutineRoots(lpCoroutine co)
 	VMContext::object_heap->RemoveRootSlot(&co->thread_ref);
 	VMContext::object_heap->RemoveRootSlot(&co->block_obj);
 	VMContext::object_heap->RemoveRootSlot(&co->injected);
+	VMContext::object_heap->RemoveRootSlot(&co->scope_parent);
 }
 
 void Scheduler::WakeJoiners(lpCoroutine co)
@@ -1349,7 +1376,108 @@ bool Scheduler::StartVirtualThread(LPOBJECT_REF thread_obj)
 	return StartThreadInternal(thread_obj, CO_KIND_VIRTUAL);
 }
 
-bool Scheduler::StartThreadInternal(LPOBJECT_REF thread_obj, int kind)
+bool Scheduler::StartScopedThread(LPOBJECT_REF thread_obj, LPOBJECT_REF scope_obj)
+{
+	if (!scope_obj)
+	{
+		return false;
+	}
+	bool virtual_thread = true;
+	GetBoolField(thread_obj, "virtual", virtual_thread);
+	return StartThreadInternal(thread_obj, virtual_thread ? CO_KIND_VIRTUAL : CO_KIND_PLATFORM,
+	                           scope_obj);
+}
+
+void Scheduler::ScopeShutdown(LPOBJECT_REF scope_obj)
+{
+	if (!impl || !scope_obj)
+	{
+		return;
+	}
+	// Collect targets under the scheduler lock, then interrupt each one via
+	// InterruptThread: it allocates the InterruptedException outside the lock
+	// and installs it through the injected_exception path, so a parked child
+	// resumes by throwing at its blocking call site.
+	std::vector<LPOBJECT_REF> targets;
+	lpCoroutine self = Current();
+	{
+		std::lock_guard<std::recursive_mutex> lk(impl->m);
+		std::map<LPOBJECT_REF, ScopeInfo *>::iterator si = impl->scopes.find(scope_obj);
+		if (si == impl->scopes.end())
+		{
+			return;
+		}
+		for (size_t i = 0; i < si->second->children.size(); i++)
+		{
+			lpCoroutine child = si->second->children[i];
+			if (!child || child == self || child->finished ||
+			    child->state == CO_TERMINATED || !child->thread_ref)
+			{
+				continue;
+			}
+			targets.push_back(child->thread_ref);
+		}
+	}
+	for (size_t i = 0; i < targets.size(); i++)
+	{
+		InterruptThread(targets[i]);
+	}
+}
+
+int Scheduler::ScopeLiveChildren(LPOBJECT_REF scope_obj)
+{
+	if (!impl || !scope_obj)
+	{
+		return 0;
+	}
+	std::lock_guard<std::recursive_mutex> lk(impl->m);
+	std::map<LPOBJECT_REF, ScopeInfo *>::iterator si = impl->scopes.find(scope_obj);
+	if (si == impl->scopes.end())
+	{
+		return 0;
+	}
+	int live = 0;
+	for (size_t i = 0; i < si->second->children.size(); i++)
+	{
+		lpCoroutine child = si->second->children[i];
+		if (child && !child->finished && child->state != CO_TERMINATED)
+		{
+			live++;
+		}
+	}
+	return live;
+}
+
+int Scheduler::ScopeClose(LPOBJECT_REF scope_obj)
+{
+	if (!impl || !scope_obj)
+	{
+		return 0;
+	}
+	std::lock_guard<std::recursive_mutex> lk(impl->m);
+	std::map<LPOBJECT_REF, ScopeInfo *>::iterator si = impl->scopes.find(scope_obj);
+	if (si == impl->scopes.end())
+	{
+		return 0;
+	}
+	si->second->closed = true;
+	int live = static_cast<int>(si->second->children.size());
+	if (live == 0)
+	{
+		delete si->second;
+		impl->scopes.erase(si);
+	}
+	return live;
+}
+
+LPOBJECT_REF Scheduler::CurrentScope()
+{
+	lpCoroutine co = Current();
+	return co ? co->scope_parent : NULL;
+}
+
+bool Scheduler::StartThreadInternal(LPOBJECT_REF thread_obj, int kind,
+                                    LPOBJECT_REF scope_obj)
 {
 	if (!impl || !thread_obj || !VMContext::object_heap)
 	{
@@ -1380,10 +1508,41 @@ bool Scheduler::StartThreadInternal(LPOBJECT_REF thread_obj, int kind)
 	co->id = impl->next_id++;
 	co->state = CO_READY;
 	co->entered = false;
+	co->scope_parent = scope_obj;
 	AddCoroutineRoots(co);
+	bool rejected = false;
 	{
 		std::lock_guard<std::recursive_mutex> lk(impl->m);
-		impl->by_thread[thread_obj] = co;
+		if (scope_obj)
+		{
+			std::map<LPOBJECT_REF, ScopeInfo *>::iterator si =
+				impl->scopes.find(scope_obj);
+			if (si == impl->scopes.end())
+			{
+				ScopeInfo *info = new ScopeInfo();
+				impl->scopes[scope_obj] = info;
+				si = impl->scopes.find(scope_obj);
+			}
+			if (si->second->closed)
+			{
+				rejected = true;
+			}
+			else
+			{
+				si->second->children.push_back(co);
+			}
+		}
+		if (!rejected)
+		{
+			impl->by_thread[thread_obj] = co;
+		}
+	}
+	if (rejected)
+	{
+		RemoveCoroutineRoots(co);
+		delete ts;
+		delete co;
+		return false;
 	}
 	SetBoolField(thread_obj, "alive", true);
 	SetBoolField(thread_obj, "started", true);
@@ -1655,6 +1814,21 @@ void Scheduler::FinishCoroutine(lpCoroutine co, bool)
 	}
 	{
 		std::lock_guard<std::recursive_mutex> lk(impl->m);
+		// Drop pending timer entries before the Coroutine is destroyed: an
+		// interrupted sleep leaves its deadline entry behind, and ReapTimers
+		// would otherwise dereference the freed coroutine.
+		for (std::multimap<int64_t, lpCoroutine>::iterator ti = impl->timers.begin();
+		     ti != impl->timers.end();)
+		{
+			if (ti->second == co)
+			{
+				ti = impl->timers.erase(ti);
+			}
+			else
+			{
+				++ti;
+			}
+		}
 		co->state = CO_TERMINATED;
 		co->finished = true;
 		co->deadline_ns = 0;
@@ -1664,6 +1838,24 @@ void Scheduler::FinishCoroutine(lpCoroutine co, bool)
 		}
 	}
 	WakeJoiners(co);
+	if (co->scope_parent)
+	{
+		std::lock_guard<std::recursive_mutex> lk(impl->m);
+		std::map<LPOBJECT_REF, ScopeInfo *>::iterator si =
+			impl->scopes.find(co->scope_parent);
+		if (si != impl->scopes.end())
+		{
+			std::vector<lpCoroutine> &children = si->second->children;
+			children.erase(std::remove(children.begin(), children.end(), co),
+			               children.end());
+			if (children.empty() && si->second->closed)
+			{
+				delete si->second;
+				impl->scopes.erase(si);
+			}
+		}
+		co->scope_parent = NULL;
+	}
 	if (co->ts)
 	{
 		delete co->ts;

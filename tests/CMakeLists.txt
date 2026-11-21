@@ -50,6 +50,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/format/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/temporal/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/charset/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/darks/concurrent/*.java"
     )
     set(JAVA_SOURCES
         ${RUNTIME_JAVA_SOURCES}
@@ -78,6 +79,11 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/RuntimeCompat.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/LongArrayInit.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/P0Checks.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/channel/ChannelPingPong.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/channel/ChannelClose.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/channel/SelectFairness.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/channel/SelectInterrupt.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/channel/ChannelGC.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/AssertCheck.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SystemProps.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/FileIoDemo.java"
@@ -117,11 +123,17 @@ if(JAVAC)
             "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/ExecutorServiceTest.java"
             "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/VirtualThreadInterruptTest.java"
             "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/PinningTest.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/StructuredScopeTest.java"
         )
         set(CONCURRENT_STAMP "${CLASSES_DIR}/.stamp_concurrent")
         add_custom_command(
             OUTPUT "${CONCURRENT_STAMP}"
-            COMMAND "${JAVAC21}" -source 11 -target 11 -cp "${CLASSES_DIR}"
+            COMMAND "${CMAKE_COMMAND}" -E remove_directory "${CMAKE_CURRENT_BINARY_DIR}/jbase-patch"
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                    "${CLASSES_DIR}/java" "${CMAKE_CURRENT_BINARY_DIR}/jbase-patch/java"
+            COMMAND "${JAVAC21}" -source 11 -target 11
+                    --patch-module java.base=${CMAKE_CURRENT_BINARY_DIR}/jbase-patch
+                    -cp "${CLASSES_DIR}"
                     -d "${CLASSES_DIR}" ${CONCURRENT_TEST_SOURCES}
             COMMAND "${CMAKE_COMMAND}" -E touch "${CONCURRENT_STAMP}"
             DEPENDS ${CONCURRENT_TEST_SOURCES} "${CLASS_STAMP}"
@@ -753,7 +765,70 @@ if(JAVAC)
             "-DEXPECT_TEXT=pinned in a native call"
             "-DEXPECT_TEXT2=pinning ok virtual=true platform=false"
             -P "${CHECK}")
+
+    # Structured concurrency (combination B, B2): scope policies, deadline,
+    # cancellation, leak detection and nested scopes.  MP=1 keeps the
+    # live-subtask assertions deterministic.
+    add_test(NAME structured_scope
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPROG=${CMAKE_COMMAND}"
+            "-DARGS=-E;env;DARKS_JVM_MP=1;DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};StructuredScopeTest"
+            -DEXPECT_RC=0 -DTIMEOUT=180
+            "-DEXPECT_TEXT=structured-scope ok"
+            -P "${CHECK}")
+
+    add_test(NAME structured_scope_mp4
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPROG=${CMAKE_COMMAND}"
+            "-DARGS=-E;env;DARKS_JVM_MP=4;DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};StructuredScopeTest"
+            -DEXPECT_RC=0 -DTIMEOUT=180
+            "-DEXPECT_TEXT=structured-scope ok"
+            -P "${CHECK}")
     endif()
+
+    # ------------------------------------------------------------------
+    # Combination B, B3: darks.concurrent Channel and Select.  All tests run
+    # with one and four OS threads; ChannelGC additionally forces frequent
+    # collections so parked waiters and channel queues are re-scanned.
+    # ------------------------------------------------------------------
+    foreach(mp 1 4)
+        add_test(NAME channel_pingpong_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};ChannelPingPong"
+                -DEXPECT_RC=0 -DTIMEOUT=600
+                "-DEXPECT_TEXT=channel-pingpong ok rounds=100000.*fifo=true"
+                -P "${CHECK}")
+        add_test(NAME channel_close_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};ChannelClose"
+                -DEXPECT_RC=0 -DTIMEOUT=180
+                "-DEXPECT_TEXT=channel-close ok drain=true senders=true receivers=true"
+                -P "${CHECK}")
+        add_test(NAME select_fairness_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};SelectFairness"
+                -DEXPECT_RC=0 -DTIMEOUT=300
+                "-DEXPECT_TEXT=select-fairness ok fifo=true default=true oneWake=true"
+                -P "${CHECK}")
+        add_test(NAME select_interrupt_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};SelectInterrupt"
+                -DEXPECT_RC=0 -DTIMEOUT=180
+                "-DEXPECT_TEXT=select-interrupt ok select=true send=true cancelled=true"
+                -P "${CHECK}")
+        add_test(NAME channel_gc_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_JVM_GC_THRESHOLD=512;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};ChannelGC"
+                -DEXPECT_RC=0 -DTIMEOUT=300
+                "-DEXPECT_TEXT=channel-gc ok live=true parked=true select=true"
+                "-DEXPECT_TEXT2=gc-collect"
+                -P "${CHECK}")
+    endforeach()
 
     # ------------------------------------------------------------------
     # Producer/consumer example (examples/producer-consumer) and the

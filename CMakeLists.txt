@@ -180,6 +180,7 @@ set(DARKS_JVM_NATIVE_SOURCES
     native/java/io/file_md.cpp
     native/java/io/printstream.cpp
     native/java/util/regex_md.cpp
+    native/java/util/concurrent/structured_scope_md.cpp
 )
 
 add_library(native SHARED ${DARKS_JVM_NATIVE_SOURCES})
