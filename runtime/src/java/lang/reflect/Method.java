@@ -3,11 +3,13 @@ package java.lang.reflect;
 import java.lang.annotation.Annotation;
 
 public final class Method extends AccessibleObject
+    implements GenericDeclaration, AnnotatedElement
 {
     private Class declaringClass;
     private String name;
     private String descriptor;
     private int modifiers;
+    private TypeVariable<Method>[] typeParametersCache;
 
     Method()
     {
@@ -34,28 +36,37 @@ public final class Method extends AccessibleObject
 
     public native Class[] getExceptionTypes();
 
+    native String getSignature0();
+
     public Type getGenericReturnType()
     {
-        throw new UnsupportedOperationException(
-            "generic signatures are not supported");
+        return GenericSignatureParser.getGenericReturnType(this);
     }
 
     public Type[] getGenericParameterTypes()
     {
-        throw new UnsupportedOperationException(
-            "generic signatures are not supported");
+        return GenericSignatureParser.getGenericParameterTypes(this);
     }
 
     public Type[] getGenericExceptionTypes()
     {
-        throw new UnsupportedOperationException(
-            "generic signatures are not supported");
+        return GenericSignatureParser.getGenericExceptionTypes(this);
     }
 
     public TypeVariable<Method>[] getTypeParameters()
     {
-        throw new UnsupportedOperationException(
-            "generic signatures are not supported");
+        if (typeParametersCache == null)
+        {
+            Type[] parsed = GenericSignatureParser.getMethodTypeParameters(this);
+            TypeVariable<Method>[] typed =
+                (TypeVariable<Method>[])new TypeVariable[parsed.length];
+            for (int i = 0; i < parsed.length; i++)
+            {
+                typed[i] = (TypeVariable<Method>)parsed[i];
+            }
+            typeParametersCache = typed;
+        }
+        return typeParametersCache;
     }
 
     public native Object invoke0(Object obj, Object[] args);
@@ -73,12 +84,21 @@ public final class Method extends AccessibleObject
         return getDeclaredAnnotations0();
     }
 
-    public <T extends Annotation> T getAnnotation(Class<T> annotationClass)
+    public Annotation[] getAnnotations()
     {
+        return getDeclaredAnnotations0();
+    }
+
+    public <T extends Annotation> T getDeclaredAnnotation(Class<T> annotationClass)
+    {
+        if (annotationClass == null)
+        {
+            throw new NullPointerException("annotationClass");
+        }
         Annotation[] all = getDeclaredAnnotations0();
         for (int i = 0; i < all.length; i++)
         {
-            if (annotationClass.isInstance(all[i]))
+            if (all[i].annotationType() == annotationClass)
             {
                 return (T)all[i];
             }
@@ -86,9 +106,30 @@ public final class Method extends AccessibleObject
         return null;
     }
 
+    public <T extends Annotation> T getAnnotation(Class<T> annotationClass)
+    {
+        return getDeclaredAnnotation(annotationClass);
+    }
+
     public boolean isAnnotationPresent(Class<? extends Annotation> annotationClass)
     {
         return getAnnotation(annotationClass) != null;
+    }
+
+    public <T extends Annotation> T[] getDeclaredAnnotationsByType(
+        Class<T> annotationClass)
+    {
+        if (annotationClass == null)
+        {
+            throw new NullPointerException("annotationClass");
+        }
+        return (T[])AnnotationSupport.expand(getDeclaredAnnotations0(),
+            annotationClass);
+    }
+
+    public <T extends Annotation> T[] getAnnotationsByType(Class<T> annotationClass)
+    {
+        return getDeclaredAnnotationsByType(annotationClass);
     }
 
     public String toString()

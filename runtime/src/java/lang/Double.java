@@ -1,6 +1,6 @@
 package java.lang;
 
-public final class Double implements Comparable<Double>
+public final class Double extends Number implements Comparable<Double>
 {
     public static final Class TYPE = Class.getPrimitiveClass("double");
 
@@ -30,6 +30,16 @@ public final class Double implements Comparable<Double>
     public int intValue()
     {
         return (int)value;
+    }
+
+    public long longValue()
+    {
+        return (long)value;
+    }
+
+    public float floatValue()
+    {
+        return (float)value;
     }
 
     public static boolean isNaN(double v)

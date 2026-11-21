@@ -48,6 +48,55 @@ public final class String implements Comparable<String>, CharSequence
         value = decodeUtf8(bytes, offset, length);
     }
 
+    public String(byte[] bytes, java.nio.charset.Charset charset)
+    {
+        if (charset == null)
+        {
+            throw new NullPointerException("charset");
+        }
+        value = charset.decode(bytes).toCharArray();
+    }
+
+    public String(byte[] bytes, int offset, int length,
+                  java.nio.charset.Charset charset)
+    {
+        if (charset == null)
+        {
+            throw new NullPointerException("charset");
+        }
+        value = charset.decode(bytes, offset, length).toCharArray();
+    }
+
+    public String(byte[] bytes, String charsetName)
+        throws java.io.UnsupportedEncodingException
+    {
+        value = charsetForName(charsetName).decode(bytes).toCharArray();
+    }
+
+    public String(byte[] bytes, int offset, int length, String charsetName)
+        throws java.io.UnsupportedEncodingException
+    {
+        value = charsetForName(charsetName).decode(bytes, offset, length)
+            .toCharArray();
+    }
+
+    private static java.nio.charset.Charset charsetForName(String name)
+        throws java.io.UnsupportedEncodingException
+    {
+        if (name == null)
+        {
+            throw new NullPointerException("charsetName");
+        }
+        try
+        {
+            return java.nio.charset.Charset.forName(name);
+        }
+        catch (java.nio.charset.UnsupportedCharsetException unsupported)
+        {
+            throw new java.io.UnsupportedEncodingException(name);
+        }
+    }
+
     public int length()
     {
         return value.length;
@@ -465,22 +514,31 @@ public final class String implements Comparable<String>, CharSequence
         return true;
     }
 
-    // The separator is matched literally (not as a regular expression); this
-    // is the documented boundary of the small runtime.  A trailing empty
-    // field is dropped, matching String.split's common case.
+    // A separator without regular-expression metacharacters keeps the simple
+    // literal path; everything else goes through java.util.regex.
     public String[] split(String separator)
+    {
+        return split(separator, 0);
+    }
+
+    public String[] split(String separator, int limit)
     {
         if (separator == null)
         {
             throw new NullPointerException();
         }
+        if (!isLiteralSeparator(separator))
+        {
+            return java.util.regex.Pattern.compile(separator).split(this, limit);
+        }
         if (separator.length() == 0)
         {
-            throw new IllegalArgumentException("empty separator");
+            return splitEmpty(limit);
         }
         int parts = 1;
         int i = 0;
-        while (i + separator.length() <= value.length)
+        while ((limit <= 0 || parts < limit) &&
+               i + separator.length() <= value.length)
         {
             if (regionMatches(i, separator))
             {
@@ -497,7 +555,7 @@ public final class String implements Comparable<String>, CharSequence
         int count = 0;
         int start = 0;
         i = 0;
-        while (i + separator.length() <= value.length)
+        while (count < parts - 1 && i + separator.length() <= value.length)
         {
             if (regionMatches(i, separator))
             {
@@ -515,9 +573,12 @@ public final class String implements Comparable<String>, CharSequence
         starts[count] = start;
         ends[count] = value.length;
         count = count + 1;
-        if (count > 1 && starts[count - 1] == ends[count - 1])
+        if (limit == 0)
         {
-            count = count - 1;
+            while (count > 1 && starts[count - 1] == ends[count - 1])
+            {
+                count = count - 1;
+            }
         }
         String[] result = new String[count];
         i = 0;
@@ -527,6 +588,60 @@ public final class String implements Comparable<String>, CharSequence
             i = i + 1;
         }
         return result;
+    }
+
+    private String[] splitEmpty(int limit)
+    {
+        if (limit == 1)
+        {
+            String[] single = new String[1];
+            single[0] = this;
+            return single;
+        }
+        if (value.length == 0)
+        {
+            String[] empty = new String[1];
+            empty[0] = "";
+            return empty;
+        }
+        if (limit > 0)
+        {
+            int head = value.length < limit - 1 ? value.length : limit - 1;
+            String[] result = new String[head + 1];
+            int i = 0;
+            while (i < head)
+            {
+                result[i] = substring(i, i + 1);
+                i = i + 1;
+            }
+            result[head] = substring(head);
+            return result;
+        }
+        String[] result = new String[value.length];
+        int i = 0;
+        while (i < value.length)
+        {
+            result[i] = substring(i, i + 1);
+            i = i + 1;
+        }
+        return result;
+    }
+
+    private static boolean isLiteralSeparator(String separator)
+    {
+        int i = 0;
+        while (i < separator.length())
+        {
+            char c = separator.charAt(i);
+            if (c == '.' || c == '[' || c == ']' || c == '{' || c == '}' ||
+                c == '(' || c == ')' || c == '*' || c == '+' || c == '-' ||
+                c == '?' || c == '^' || c == '$' || c == '|' || c == '\\')
+            {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
     }
 
     public char[] toCharArray()
@@ -544,6 +659,21 @@ public final class String implements Comparable<String>, CharSequence
     public byte[] getBytes()
     {
         return encodeUtf8(value);
+    }
+
+    public byte[] getBytes(java.nio.charset.Charset charset)
+    {
+        if (charset == null)
+        {
+            throw new NullPointerException("charset");
+        }
+        return charset.encode(this);
+    }
+
+    public byte[] getBytes(String charsetName)
+        throws java.io.UnsupportedEncodingException
+    {
+        return charsetForName(charsetName).encode(this);
     }
 
     private static byte[] encodeUtf8(char[] chars)
@@ -936,11 +1066,8 @@ public final class String implements Comparable<String>, CharSequence
         return out.toString();
     }
 
-    // Full regular expressions are outside this runtime; refusing explicitly
-    // is better than silently mis-matching.
     public boolean matches(String regex)
     {
-        throw new UnsupportedOperationException(
-            "String.matches: regular expressions are not supported");
+        return java.util.regex.Pattern.matches(regex, this);
     }
 }

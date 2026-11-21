@@ -80,6 +80,7 @@ set(DARKS_JVM_CORE_SOURCES
     jvm/vm/executor/methodarea.cpp
     jvm/vm/executor/nativelibs.cpp
     jvm/vm/executor/objectheap.cpp
+    jvm/vm/executor/proxy.cpp
     jvm/vm/executor/scheduler.cpp
     jvm/vm/executor/stackframe.cpp
     jvm/vm/executor/threadstack.cpp
@@ -171,12 +172,14 @@ endif()
 set(DARKS_JVM_NATIVE_SOURCES
     native/native.cpp
     native/java/lang/core_md.cpp
+    native/java/lang/proxy_md.cpp
     native/java/lang/reflect_md.cpp
     native/java/lang/system_md.cpp
     native/java/lang/thread_md.cpp
     native/java/lang/string_md.cpp
     native/java/io/file_md.cpp
     native/java/io/printstream.cpp
+    native/java/util/regex_md.cpp
 )
 
 add_library(native SHARED ${DARKS_JVM_NATIVE_SOURCES})

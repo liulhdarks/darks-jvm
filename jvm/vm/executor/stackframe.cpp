@@ -13,6 +13,7 @@
 #include "jni/jni_impl.h"
 #include "scheduler.h"
 #include "vmmutex.h"
+#include "proxy.h"
 
 #include <ffi.h>
 
@@ -3616,6 +3617,11 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 				}
 			}
 		}
+		LPOBJECT_REF proxy_handler = NULL;
+		if (DarksVM_LoadProxyHandler(obj, proxy_handler))
+		{
+			return InvokeProxy(obj, method, type_desc, result_desc);
+		}
 		lpMethod tmp_method = NULL;
 		lpClass receiver_class = obj->obj_class;
 		if (method_ref->cached_receiver_class.load(std::memory_order_acquire) == receiver_class)
@@ -4713,6 +4719,197 @@ bool StackFrame::InvokeLambda(int lambda_id, lpMethod call_method,
 		return true;
 	}
 	op_stack->push(result);
+	return true;
+}
+
+bool StackFrame::InvokeProxy(lpObject object, lpMethod call_method,
+                             vector<TypeDesc> &call_args, TypeDesc &result_desc)
+{
+	LPOBJECT_REF handler_ref = NULL;
+	if (!object || !call_method || !call_method->methodDesc ||
+	    !DarksVM_LoadProxyHandler(object, handler_ref))
+	{
+		return false;
+	}
+	lpObject handler = NULL;
+	if (!VMContext::object_heap->GetObject(handler_ref, handler) || !handler)
+	{
+		return false;
+	}
+	int call_slots = 0;
+	for (size_t i = 0; i < call_args.size(); i++)
+	{
+		DATA_TYPE type = call_args[i].data_type;
+		call_slots += (type == DT_LONG || type == DT_DOUBLE) ? 2 : 1;
+	}
+	int base = op_stack->size() - call_slots;
+	Slot receiver;
+	if (base < 1 || !op_stack->get(base - 1, receiver) || !receiver.heapPtr)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NullPointerException", "null proxy receiver");
+		return false;
+	}
+	LPOBJECT_REF proxy_ref = receiver.heapPtr;
+	GCRootScope root_proxy(VMContext::object_heap, &proxy_ref);
+	LPOBJECT_REF method_ref = NULL;
+	LPOBJECT_REF args_ref = NULL;
+	GCRootSet roots(VMContext::object_heap);
+	roots.Add(&method_ref);
+	roots.Add(&args_ref);
+	{
+		GCNativeScope no_gc(VMContext::object_heap);
+		jobject method_mirror = DarksVM_NewMethodMirror(call_method);
+		method_ref = JniRef(method_mirror);
+		lpClass object_array = JniFindClass(NULL, "[Ljava/lang/Object;");
+		if (!method_ref || !object_array ||
+		    !VMContext::object_heap->NewObjectArrayObject(
+				static_cast<int>(call_args.size()), object_array, args_ref))
+		{
+			return false;
+		}
+		lpObject args_obj = NULL;
+		if (!VMContext::object_heap->GetObject(args_ref, args_obj) ||
+		    !args_obj || !args_obj->array_var)
+		{
+			return false;
+		}
+		jobject *elements = static_cast<jobject *>(args_obj->array_var);
+		int slot_index = base;
+		for (size_t i = 0; i < call_args.size(); i++)
+		{
+			DATA_TYPE type = call_args[i].check_array ? DT_ARRAY : call_args[i].data_type;
+			Slot low;
+			Slot high;
+			if (!op_stack->get(slot_index, low))
+			{
+				return false;
+			}
+			bool wide = (type == DT_LONG || type == DT_DOUBLE);
+			if (wide && !op_stack->get(slot_index + 1, high))
+			{
+				return false;
+			}
+			if (type == DT_REF || type == DT_ARRAY)
+			{
+				elements[i] = JniObject(low.heapPtr);
+			}
+			else
+			{
+				jvalue value;
+				memset(&value, 0, sizeof(value));
+				switch (type)
+				{
+				case DT_BOOL: value.z = low.blValue ? JNI_TRUE : JNI_FALSE; break;
+				case DT_BYTE: value.b = low.bValue; break;
+				case DT_CHAR: value.c = low.cValue; break;
+				case DT_SHORT: value.s = low.sValue; break;
+				case DT_INT: value.i = low.iValue; break;
+				case DT_FLOAT: value.f = low.fValue; break;
+				case DT_LONG:
+					{
+						WByteValue bv;
+						for (int k = 0; k < 4; k++)
+						{
+							bv.bytes[k] = low.bytes[k];
+							bv.bytes[4 + k] = high.bytes[k];
+						}
+						value.j = bv.lValue;
+						break;
+					}
+				case DT_DOUBLE:
+					{
+						WByteValue bv;
+						for (int k = 0; k < 4; k++)
+						{
+							bv.bytes[k] = low.bytes[k];
+							bv.bytes[4 + k] = high.bytes[k];
+						}
+						value.d = bv.dValue;
+						break;
+					}
+				default:
+					break;
+				}
+				elements[i] = DarksVM_BoxValue(type, value);
+			}
+			slot_index += wide ? 2 : 1;
+		}
+	}
+	for (int i = 0; i < call_slots + 1; i++)
+	{
+		Slot ignored;
+		op_stack->pop(ignored);
+	}
+	const char *invoke_sig =
+		"invoke:(Ljava/lang/Object;Ljava/lang/reflect/Method;[Ljava/lang/Object;)Ljava/lang/Object;";
+	lpMethod invoke = NULL;
+	if (!handler->obj_class->FindMethod(const_cast<char *>(invoke_sig), invoke) ||
+	    !invoke)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/AbstractMethodError",
+			"proxy invocation handler has no invoke method");
+		return false;
+	}
+	if (!invoke->code_attr)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/AbstractMethodError",
+			"proxy invocation handler method is abstract");
+		return false;
+	}
+	std::vector<Slot> vars;
+	Slot handler_slot;
+	handler_slot.heapPtr = handler_ref;
+	vars.push_back(handler_slot);
+	Slot proxy_slot;
+	proxy_slot.heapPtr = proxy_ref;
+	vars.push_back(proxy_slot);
+	Slot method_slot;
+	method_slot.heapPtr = method_ref;
+	vars.push_back(method_slot);
+	Slot args_slot;
+	args_slot.heapPtr = args_ref;
+	vars.push_back(args_slot);
+	Slot result;
+	bool result_wide = false;
+	if (!InvokeJavaSync(invoke->clazz, invoke, vars, result, result_wide))
+	{
+		return false;
+	}
+	DATA_TYPE return_type = result_desc.data_type;
+	if (result_desc.check_array)
+	{
+		return_type = DT_ARRAY;
+	}
+	if (return_type == DT_VOID)
+	{
+		return true;
+	}
+	if (return_type == DT_REF || return_type == DT_ARRAY)
+	{
+		op_stack->push(result);
+		return true;
+	}
+	Slot unboxed;
+	bool unboxed_wide = false;
+	if (!UnboxWrapper(result.heapPtr, return_type, unboxed, unboxed_wide))
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/ClassCastException",
+			"proxy handler returned an incompatible value");
+		return false;
+	}
+	op_stack->push(unboxed);
+	if (unboxed_wide)
+	{
+		WByteValue bv;
+		bv.lValue = unboxed.lValue;
+		Slot high;
+		high.set(bv.bytes + 4, 4);
+		op_stack->push(high);
+	}
 	return true;
 }
 

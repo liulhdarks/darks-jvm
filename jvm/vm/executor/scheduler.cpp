@@ -86,6 +86,21 @@ int EnvParallelism()
 	return static_cast<int>(n);
 }
 
+// Virtual-thread pinning diagnostics are opt-in: DARKS_VTHREAD_PINNING=warn
+// prints one warning per virtual thread when it enters a native call while
+// holding a monitor.  They are off by default because many short natives
+// (identityHashCode, currentTimeMillis) are harmless.
+bool PinningWarnEnabled()
+{
+	static int enabled = -1;
+	if (enabled < 0)
+	{
+		const char *value = getenv("DARKS_VTHREAD_PINNING");
+		enabled = (value && strcmp(value, "warn") == 0) ? 1 : 0;
+	}
+	return enabled != 0;
+}
+
 // Object layouts store instance fields under "<name>:<descriptor>" (see
 // Field::GetSimpleName).  The helpers below accept the bare field name and
 // resolve the descriptor-qualified entry.
@@ -212,12 +227,16 @@ Coroutine::Coroutine()
 	join_target = NULL;
 	saved_count = 0;
 	state = CO_NEW;
+	kind = CO_KIND_PLATFORM;
+	carrier_id = -1;
 	deadline_ns = 0;
 	timer_generation = 0;
 	injected = NULL;
 	interrupt_flag = false;
 	throw_on_resume = false;
 	resume_from_wait = false;
+	pinned_depth = 0;
+	pinning_warned = false;
 	monitor_granted = false;
 	busy.store(false);
 	entered = false;
@@ -283,6 +302,7 @@ void Scheduler::AttachMain(ThreadStack *ts)
 	lpCoroutine co = new Coroutine();
 	co->ts = ts;
 	co->pin_main = true;
+	co->kind = CO_KIND_MAIN;
 	co->id = impl->next_id++;
 	co->state = CO_READY;
 	co->entered = false;
@@ -1137,6 +1157,20 @@ void Scheduler::EnterNative()
 			impl->stw_cv.notify_all();
 		}
 	}
+	lpCoroutine co = t_co;
+	if (co && co->kind == CO_KIND_VIRTUAL)
+	{
+		co->pinned_depth++;
+		if (PinningWarnEnabled() && !co->pinning_warned && co->ts &&
+		    co->ts->HoldsMonitor())
+		{
+			fprintf(stderr,
+			        "darks-jvm: virtual thread %llu is pinned in a native call "
+			        "while holding a monitor\n",
+			        static_cast<unsigned long long>(co->id));
+			co->pinning_warned = true;
+		}
+	}
 }
 
 void Scheduler::ExitNative()
@@ -1145,6 +1179,11 @@ void Scheduler::ExitNative()
 	if (w)
 	{
 		w->in_native = false;
+	}
+	lpCoroutine co = t_co;
+	if (co && co->kind == CO_KIND_VIRTUAL && co->pinned_depth > 0)
+	{
+		co->pinned_depth--;
 	}
 }
 
@@ -1302,6 +1341,16 @@ void Scheduler::WakeJoiners(lpCoroutine co)
 // ---------------------------------------------------------------------------
 bool Scheduler::StartThread(LPOBJECT_REF thread_obj)
 {
+	return StartThreadInternal(thread_obj, CO_KIND_PLATFORM);
+}
+
+bool Scheduler::StartVirtualThread(LPOBJECT_REF thread_obj)
+{
+	return StartThreadInternal(thread_obj, CO_KIND_VIRTUAL);
+}
+
+bool Scheduler::StartThreadInternal(LPOBJECT_REF thread_obj, int kind)
+{
 	if (!impl || !thread_obj || !VMContext::object_heap)
 	{
 		return false;
@@ -1327,6 +1376,7 @@ bool Scheduler::StartThread(LPOBJECT_REF thread_obj)
 	co->thread_ref = thread_obj;
 	co->start_method = run_method;
 	co->start_class = run_method->clazz ? run_method->clazz : obj->obj_class;
+	co->kind = kind;
 	co->id = impl->next_id++;
 	co->state = CO_READY;
 	co->entered = false;
@@ -1506,6 +1556,7 @@ void Scheduler::RunOne(lpCoroutine co)
 	}
 	lpCoroutine prev = t_co;
 	t_co = co;
+	co->carrier_id = t_worker ? t_worker->index : -1;
 	{
 		std::lock_guard<std::recursive_mutex> lk(impl->m);
 		co->state = CO_RUNNING;
@@ -1545,6 +1596,7 @@ void Scheduler::RunOne(lpCoroutine co)
 			}
 		}
 		co->busy.store(false);
+		co->carrier_id = -1;
 		return;
 	}
 	if (ev == EN_SAFEPOINT)
@@ -1577,6 +1629,7 @@ void Scheduler::RunOne(lpCoroutine co)
 			}
 		}
 		co->busy.store(false);
+		co->carrier_id = -1;
 		return;
 	}
 	FinishCoroutine(co, ev == EN_EXCEPTION);
@@ -1584,6 +1637,7 @@ void Scheduler::RunOne(lpCoroutine co)
 
 void Scheduler::FinishCoroutine(lpCoroutine co, bool)
 {
+	co->carrier_id = -1;
 	if (VMContext::pending_exception)
 	{
 		PrintUncaughtException(VMContext::pending_exception);
@@ -1697,6 +1751,7 @@ EventNotify Scheduler::RunMain(ThreadStack *ts, lpClass clazz, lpMethod method,
 	}
 	lpCoroutine co = impl->main_co;
 	t_co = co;
+	co->carrier_id = t_worker ? t_worker->index : -1;
 	{
 		std::lock_guard<std::recursive_mutex> lk(impl->m);
 		co->state = CO_RUNNING;

@@ -1,6 +1,6 @@
 package java.lang;
 
-public final class Short implements Comparable<Short>
+public final class Short extends Number implements Comparable<Short>
 {
     public static final Class TYPE = Class.getPrimitiveClass("short");
 
@@ -35,6 +35,11 @@ public final class Short implements Comparable<Short>
     }
 
     public double doubleValue()
+    {
+        return value;
+    }
+
+    public float floatValue()
     {
         return value;
     }

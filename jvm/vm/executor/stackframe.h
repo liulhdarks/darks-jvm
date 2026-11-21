@@ -108,6 +108,8 @@ private:
 	bool CloneArrayReceiver();
 	bool InvokeLambda(int lambda_id, lpMethod call_method,
 	                  vector<TypeDesc> &call_args);
+	bool InvokeProxy(lpObject object, lpMethod call_method,
+	                 vector<TypeDesc> &call_args, TypeDesc &result_desc);
 
 	// Runs a Java method on a nested ThreadStack frame and returns its value.
 	// The caller's frame stays suspended (and therefore stays a GC root), so

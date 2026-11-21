@@ -1,17 +1,75 @@
 package java.lang;
 
+import java.util.concurrent.ThreadFactory;
+
 /**
  * Java-level Thread API on top of the coroutine scheduler.
  *
  * Every Thread is a user-space coroutine (M:N scheduled).  The methods below
  * keep the standard Java signatures; primitives that need scheduler support
- * (start0, sleep0, join0, interrupt0, currentThread0) are native.
+ * (start0, startVirtual0, sleep0, join0, interrupt0, currentThread0) are
+ * native.
  *
- * Not provided: ThreadGroup, thread priorities (stored only), Thread.State,
- * thread stacks/traces, timed join nanoseconds precision.
+ * Virtual threads and platform threads currently share the same coroutine
+ * scheduler.  The distinction is kept in the Java object and in the scheduler
+ * so that isVirtual()/diagnostics behave like the JDK API, while platform
+ * threads can be bound to a dedicated carrier later without changing callers.
+ *
+ * Not provided: ThreadGroup, thread stacks/traces, timed join nanoseconds
+ * precision, inheritable thread locals.
  */
 public class Thread implements Runnable
 {
+    public interface UncaughtExceptionHandler
+    {
+        void uncaughtException(Thread t, Throwable e);
+    }
+
+    public interface Builder
+    {
+        Builder name(String name);
+
+        Builder name(String prefix, long start);
+
+        Builder inheritInheritableThreadLocals(boolean inherit);
+
+        Builder uncaughtExceptionHandler(UncaughtExceptionHandler eh);
+
+        Thread unstarted(Runnable task);
+
+        Thread start(Runnable task);
+
+        ThreadFactory factory();
+
+        interface OfVirtual extends Builder
+        {
+            OfVirtual name(String name);
+
+            OfVirtual name(String prefix, long start);
+
+            OfVirtual inheritInheritableThreadLocals(boolean inherit);
+
+            OfVirtual uncaughtExceptionHandler(UncaughtExceptionHandler eh);
+        }
+
+        interface OfPlatform extends Builder
+        {
+            OfPlatform name(String name);
+
+            OfPlatform name(String prefix, long start);
+
+            OfPlatform inheritInheritableThreadLocals(boolean inherit);
+
+            OfPlatform uncaughtExceptionHandler(UncaughtExceptionHandler eh);
+
+            OfPlatform daemon(boolean on);
+
+            OfPlatform priority(int newPriority);
+
+            OfPlatform stackSize(long size);
+        }
+    }
+
     public enum State
     {
         NEW,
@@ -29,6 +87,10 @@ public class Thread implements Runnable
     private boolean started;
     private long tid;
     private int priority;
+    private boolean virtual;
+    private ClassLoader contextClassLoader;
+    private UncaughtExceptionHandler uncaughtExceptionHandler;
+    private static UncaughtExceptionHandler defaultUncaughtExceptionHandler;
     // ThreadLocal storage: slots indexed by ThreadLocal.key.
     Object[] tls;
 
@@ -49,6 +111,7 @@ public class Thread implements Runnable
         this.started = false;
         this.tid = nextThreadId();
         this.priority = 5;
+        this.virtual = false;
     }
 
     public Thread()
@@ -71,6 +134,33 @@ public class Thread implements Runnable
         init(target, name);
     }
 
+    private Thread(Runnable target, String name, boolean virtual, boolean daemon,
+                   int priority, UncaughtExceptionHandler handler,
+                   ClassLoader contextClassLoader)
+    {
+        init(target, name);
+        this.virtual = virtual;
+        this.daemon = daemon;
+        this.priority = priority;
+        this.uncaughtExceptionHandler = handler;
+        this.contextClassLoader = contextClassLoader;
+    }
+
+    public static Builder.OfVirtual ofVirtual()
+    {
+        return new VirtualBuilder();
+    }
+
+    public static Builder.OfPlatform ofPlatform()
+    {
+        return new PlatformBuilder();
+    }
+
+    public static Thread startVirtualThread(Runnable task)
+    {
+        return ofVirtual().start(task);
+    }
+
     public synchronized void start()
     {
         if (started)
@@ -78,16 +168,38 @@ public class Thread implements Runnable
             throw new IllegalStateException("Thread already started");
         }
         started = true;
-        start0();
+        if (virtual)
+        {
+            startVirtual0();
+        }
+        else
+        {
+            start0();
+        }
     }
 
     private native void start0();
 
+    private native void startVirtual0();
+
     public void run()
     {
-        if (target != null)
+        if (target == null)
+        {
+            return;
+        }
+        try
         {
             target.run();
+        }
+        catch (Throwable failure)
+        {
+            UncaughtExceptionHandler handler = getUncaughtExceptionHandler();
+            if (handler == null)
+            {
+                throw failure;
+            }
+            handler.uncaughtException(this, failure);
         }
     }
 
@@ -203,6 +315,16 @@ public class Thread implements Runnable
         return tid;
     }
 
+    public long threadId()
+    {
+        return tid;
+    }
+
+    public final boolean isVirtual()
+    {
+        return virtual;
+    }
+
     public final int getPriority()
     {
         return priority;
@@ -217,6 +339,44 @@ public class Thread implements Runnable
         priority = newPriority;
     }
 
+    public ClassLoader getContextClassLoader()
+    {
+        if (contextClassLoader != null)
+        {
+            return contextClassLoader;
+        }
+        return ClassLoader.getSystemClassLoader();
+    }
+
+    public void setContextClassLoader(ClassLoader cl)
+    {
+        contextClassLoader = cl;
+    }
+
+    public UncaughtExceptionHandler getUncaughtExceptionHandler()
+    {
+        if (uncaughtExceptionHandler != null)
+        {
+            return uncaughtExceptionHandler;
+        }
+        return defaultUncaughtExceptionHandler;
+    }
+
+    public void setUncaughtExceptionHandler(UncaughtExceptionHandler handler)
+    {
+        uncaughtExceptionHandler = handler;
+    }
+
+    public static UncaughtExceptionHandler getDefaultUncaughtExceptionHandler()
+    {
+        return defaultUncaughtExceptionHandler;
+    }
+
+    public static void setDefaultUncaughtExceptionHandler(UncaughtExceptionHandler handler)
+    {
+        defaultUncaughtExceptionHandler = handler;
+    }
+
     public static Thread currentThread()
     {
         return currentThread0();
@@ -226,6 +386,143 @@ public class Thread implements Runnable
 
     public String toString()
     {
-        return "Thread[" + getName() + "]";
+        return (virtual ? "VirtualThread[" : "Thread[") + getName() + "]";
+    }
+
+    private static class VirtualBuilder implements Builder.OfVirtual
+    {
+        private String name;
+        private UncaughtExceptionHandler handler;
+
+        public OfVirtual name(String value)
+        {
+            name = value;
+            return this;
+        }
+
+        public OfVirtual name(String prefix, long start)
+        {
+            name = prefix + start;
+            return this;
+        }
+
+        public OfVirtual inheritInheritableThreadLocals(boolean inherit)
+        {
+            return this;
+        }
+
+        public OfVirtual uncaughtExceptionHandler(UncaughtExceptionHandler eh)
+        {
+            handler = eh;
+            return this;
+        }
+
+        public Thread unstarted(Runnable task)
+        {
+            if (task == null)
+            {
+                throw new NullPointerException("task");
+            }
+            return new Thread(task, name, true, true, 5, handler, null);
+        }
+
+        public Thread start(Runnable task)
+        {
+            Thread thread = unstarted(task);
+            thread.start();
+            return thread;
+        }
+
+        public ThreadFactory factory()
+        {
+            final VirtualBuilder builder = this;
+            return new ThreadFactory()
+            {
+                public Thread newThread(Runnable task)
+                {
+                    return builder.unstarted(task);
+                }
+            };
+        }
+    }
+
+    private static class PlatformBuilder implements Builder.OfPlatform
+    {
+        private String name;
+        private boolean daemon;
+        private int priority = 5;
+        private UncaughtExceptionHandler handler;
+
+        public OfPlatform name(String value)
+        {
+            name = value;
+            return this;
+        }
+
+        public OfPlatform name(String prefix, long start)
+        {
+            name = prefix + start;
+            return this;
+        }
+
+        public OfPlatform inheritInheritableThreadLocals(boolean inherit)
+        {
+            return this;
+        }
+
+        public OfPlatform uncaughtExceptionHandler(UncaughtExceptionHandler eh)
+        {
+            handler = eh;
+            return this;
+        }
+
+        public OfPlatform daemon(boolean on)
+        {
+            daemon = on;
+            return this;
+        }
+
+        public OfPlatform priority(int newPriority)
+        {
+            if (newPriority < 1 || newPriority > 10)
+            {
+                throw new IllegalArgumentException("priority out of range");
+            }
+            priority = newPriority;
+            return this;
+        }
+
+        public OfPlatform stackSize(long size)
+        {
+            return this;
+        }
+
+        public Thread unstarted(Runnable task)
+        {
+            if (task == null)
+            {
+                throw new NullPointerException("task");
+            }
+            return new Thread(task, name, false, daemon, priority, handler, null);
+        }
+
+        public Thread start(Runnable task)
+        {
+            Thread thread = unstarted(task);
+            thread.start();
+            return thread;
+        }
+
+        public ThreadFactory factory()
+        {
+            final PlatformBuilder builder = this;
+            return new ThreadFactory()
+            {
+                public Thread newThread(Runnable task)
+                {
+                    return builder.unstarted(task);
+                }
+            };
+        }
     }
 }

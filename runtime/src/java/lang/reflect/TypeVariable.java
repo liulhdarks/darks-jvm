@@ -1,6 +1,10 @@
 package java.lang.reflect;
 
-/** Marker interface for type variables; generic signatures are unsupported. */
-public interface TypeVariable<D> extends Type
+public interface TypeVariable<D extends GenericDeclaration> extends Type
 {
+    String getName();
+
+    Type[] getBounds();
+
+    D getGenericDeclaration();
 }

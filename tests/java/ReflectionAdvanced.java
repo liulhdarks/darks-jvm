@@ -269,11 +269,12 @@ public class ReflectionAdvanced
         }
         check("missing-class", noClass);
 
-        // Generic signatures are explicitly unsupported.
-        check("generic-super", unsupported(subjectClass));
-        check("generic-type", unsupportedField(secret));
-        check("generic-return", unsupportedMethod(add));
-        check("generic-ctor", unsupportedConstructor(privateCtor));
+        // Erased members fall back to their Class representation.
+        check("generic-super", subjectClass.getGenericSuperclass() == Object.class);
+        check("generic-type", secret.getGenericType() == int.class);
+        check("generic-return", add.getGenericReturnType() == int.class);
+        check("generic-ctor-param",
+            privateCtor.getGenericParameterTypes()[0] == int.class);
 
         System.out.println("reflect-adv checks=" + checks + " failures=" + failures);
         if (failures != 0)
@@ -283,55 +284,4 @@ public class ReflectionAdvanced
         System.out.println("reflection advanced: ok");
     }
 
-    private static boolean unsupported(Class<?> clazz) throws Exception
-    {
-        try
-        {
-            clazz.getGenericSuperclass();
-        }
-        catch (UnsupportedOperationException expected)
-        {
-            return true;
-        }
-        return false;
-    }
-
-    private static boolean unsupportedField(Field field) throws Exception
-    {
-        try
-        {
-            field.getGenericType();
-        }
-        catch (UnsupportedOperationException expected)
-        {
-            return true;
-        }
-        return false;
-    }
-
-    private static boolean unsupportedMethod(Method method) throws Exception
-    {
-        try
-        {
-            method.getGenericReturnType();
-        }
-        catch (UnsupportedOperationException expected)
-        {
-            return true;
-        }
-        return false;
-    }
-
-    private static boolean unsupportedConstructor(Constructor<?> ctor) throws Exception
-    {
-        try
-        {
-            ctor.getGenericParameterTypes();
-        }
-        catch (UnsupportedOperationException expected)
-        {
-            return true;
-        }
-        return false;
-    }
 }

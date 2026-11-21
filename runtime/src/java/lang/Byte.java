@@ -1,6 +1,6 @@
 package java.lang;
 
-public final class Byte implements Comparable<Byte>
+public final class Byte extends Number implements Comparable<Byte>
 {
     public static final Class TYPE = Class.getPrimitiveClass("byte");
 
@@ -35,6 +35,11 @@ public final class Byte implements Comparable<Byte>
     }
 
     public double doubleValue()
+    {
+        return value;
+    }
+
+    public float floatValue()
     {
         return value;
     }

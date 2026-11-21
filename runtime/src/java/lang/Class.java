@@ -1,16 +1,25 @@
 package java.lang;
 
 import java.lang.annotation.Annotation;
+import java.lang.reflect.AnnotatedElement;
+import java.lang.reflect.AnnotationSupport;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.GenericDeclaration;
+import java.lang.reflect.GenericSignatureParser;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.lang.reflect.TypeVariable;
+import java.util.ArrayList;
 
-public final class Class<T>
+public final class Class<T> implements GenericDeclaration, AnnotatedElement, Type
 {
     private String name;
     private long vmClass;
+    private TypeVariable<Class<T>>[] typeParametersCache;
+    private Type genericSuperclassCache;
+    private boolean genericSuperclassComputed;
+    private Type[] genericInterfacesCache;
 
     public String getName()
     {
@@ -291,21 +300,40 @@ public final class Class<T>
 
     public Type getGenericSuperclass()
     {
-        throw new UnsupportedOperationException(
-            "generic signatures are not supported");
+        if (!genericSuperclassComputed)
+        {
+            genericSuperclassCache = GenericSignatureParser.getGenericSuperclass(this);
+            genericSuperclassComputed = true;
+        }
+        return genericSuperclassCache;
     }
 
     public Type[] getGenericInterfaces()
     {
-        throw new UnsupportedOperationException(
-            "generic signatures are not supported");
+        if (genericInterfacesCache == null)
+        {
+            genericInterfacesCache = GenericSignatureParser.getGenericInterfaces(this);
+        }
+        return genericInterfacesCache;
     }
 
     public TypeVariable<Class<T>>[] getTypeParameters()
     {
-        throw new UnsupportedOperationException(
-            "generic signatures are not supported");
+        if (typeParametersCache == null)
+        {
+            Type[] parsed = GenericSignatureParser.getClassTypeParameters(this);
+            TypeVariable<Class<T>>[] typed =
+                (TypeVariable<Class<T>>[])new TypeVariable[parsed.length];
+            for (int i = 0; i < parsed.length; i++)
+            {
+                typed[i] = (TypeVariable<Class<T>>)parsed[i];
+            }
+            typeParametersCache = typed;
+        }
+        return typeParametersCache;
     }
+
+    public native String getSignature0();
 
     public native Annotation[] getDeclaredAnnotations0();
 
@@ -316,15 +344,61 @@ public final class Class<T>
 
     public Annotation[] getAnnotations()
     {
-        return getDeclaredAnnotations0();
+        Annotation[] declared = getDeclaredAnnotations0();
+        Class<?> parent = isInterface() ? null : getSuperclass();
+        if (parent == null)
+        {
+            return declared;
+        }
+        Annotation[] inherited = parent.getAnnotations();
+        if (inherited.length == 0)
+        {
+            return declared;
+        }
+        ArrayList<Annotation> merged = new ArrayList<Annotation>();
+        for (int i = 0; i < declared.length; i++)
+        {
+            merged.add(declared[i]);
+        }
+        for (int i = 0; i < inherited.length; i++)
+        {
+            Class<?> type = inherited[i].annotationType();
+            if (!AnnotationSupport.isInherited(type) || containsType(declared, type))
+            {
+                continue;
+            }
+            merged.add(inherited[i]);
+        }
+        Annotation[] result = new Annotation[merged.size()];
+        for (int i = 0; i < result.length; i++)
+        {
+            result[i] = merged.get(i);
+        }
+        return result;
     }
 
-    public <T extends Annotation> T getAnnotation(Class<T> annotationClass)
+    private static boolean containsType(Annotation[] annotations, Class<?> type)
     {
+        for (int i = 0; i < annotations.length; i++)
+        {
+            if (annotations[i].annotationType() == type)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public <T extends Annotation> T getDeclaredAnnotation(Class<T> annotationClass)
+    {
+        if (annotationClass == null)
+        {
+            throw new NullPointerException("annotationClass");
+        }
         Annotation[] all = getDeclaredAnnotations0();
         for (int i = 0; i < all.length; i++)
         {
-            if (annotationClass.isInstance(all[i]))
+            if (all[i].annotationType() == annotationClass)
             {
                 return (T)all[i];
             }
@@ -332,9 +406,50 @@ public final class Class<T>
         return null;
     }
 
+    public <T extends Annotation> T getAnnotation(Class<T> annotationClass)
+    {
+        T declared = getDeclaredAnnotation(annotationClass);
+        if (declared != null)
+        {
+            return declared;
+        }
+        Class<?> parent = isInterface() ? null : getSuperclass();
+        if (parent != null && AnnotationSupport.isInherited(annotationClass))
+        {
+            return parent.getAnnotation(annotationClass);
+        }
+        return null;
+    }
+
     public boolean isAnnotationPresent(Class<? extends Annotation> annotationClass)
     {
         return getAnnotation(annotationClass) != null;
+    }
+
+    public <T extends Annotation> T[] getDeclaredAnnotationsByType(
+        Class<T> annotationClass)
+    {
+        if (annotationClass == null)
+        {
+            throw new NullPointerException("annotationClass");
+        }
+        return (T[])AnnotationSupport.expand(getDeclaredAnnotations0(),
+            annotationClass);
+    }
+
+    public <T extends Annotation> T[] getAnnotationsByType(Class<T> annotationClass)
+    {
+        T[] declared = getDeclaredAnnotationsByType(annotationClass);
+        if (declared.length > 0)
+        {
+            return declared;
+        }
+        Class<?> parent = isInterface() ? null : getSuperclass();
+        if (parent != null && AnnotationSupport.isInherited(annotationClass))
+        {
+            return parent.getAnnotationsByType(annotationClass);
+        }
+        return declared;
     }
 
     static native Class getPrimitiveClass(String name);

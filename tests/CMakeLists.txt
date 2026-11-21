@@ -3,6 +3,23 @@
 find_program(JAVAC NAMES javac)
 find_program(JAVA NAMES java)
 
+# The virtual-thread tests call Thread.ofVirtual()/Executors.newVirtualThread
+# PerTaskExecutor(), which only exist in JDK 21+.  They are compiled with
+# -source 11 -target 11 so they still produce class file version 55, but the
+# compiler must be a JDK 21+ javac to see the API.  Prefer JAVA_HOME, which
+# usually points at the newest installed JDK.
+find_program(JAVAC21 NAMES javac HINTS "$ENV{JAVA_HOME}/bin" NO_DEFAULT_PATH)
+if(NOT JAVAC21)
+    find_program(JAVAC21 NAMES javac)
+endif()
+if(JAVAC21)
+    execute_process(COMMAND "${JAVAC21}" -version
+                    OUTPUT_VARIABLE JAVAC21_VERSION
+                    ERROR_VARIABLE JAVAC21_VERSION_ERROR)
+    string(STRIP "${JAVAC21_VERSION}${JAVAC21_VERSION_ERROR}" JAVAC21_VERSION)
+    string(REGEX MATCH "[0-9]+" JAVAC21_MAJOR "${JAVAC21_VERSION}")
+endif()
+
 add_executable(unit_tests unit_tests.cpp)
 target_link_libraries(unit_tests PRIVATE darksvm)
 
@@ -22,8 +39,17 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/io/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/function/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/concurrent/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/reflect/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/annotation/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/beans/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/regex/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/math/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/text/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/format/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/temporal/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/charset/*.java"
     )
     set(JAVA_SOURCES
         ${RUNTIME_JAVA_SOURCES}
@@ -43,6 +69,10 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/MainMonitorHandoff.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/TimedWait.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/ReflectionAdvanced.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/GenericReflect.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/AnnotationDemo.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/ProxyDemo.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/BeansDemo.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/JitWorkload.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/CollectionsAdvanced.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/RuntimeCompat.java"
@@ -52,6 +82,11 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SystemProps.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/FileIoDemo.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/ResourceDemo.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkTimeTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkMathTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkTextTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkRegexTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkCharsetTest.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
     add_custom_command(
@@ -70,6 +105,32 @@ if(JAVAC)
     add_custom_target(java_classes ALL DEPENDS "${CLASS_STAMP}")
     add_dependencies(unit_tests java_classes)
     add_dependencies(gc_tests java_classes)
+
+    # Virtual-thread tests call Java 21-era APIs (Thread.ofVirtual,
+    # Executors.newVirtualThreadPerTaskExecutor) that are not part of the
+    # Java 11 API.  Compile them with -source 11 -target 11 (without
+    # --release) so they bind to the runtime classes on the class path while
+    # still producing class file version 55, which darks-jvm accepts.
+    if(JAVAC21_MAJOR GREATER_EQUAL 21)
+        set(CONCURRENT_TEST_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/VirtualThreadScale.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/ExecutorServiceTest.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/VirtualThreadInterruptTest.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/PinningTest.java"
+        )
+        set(CONCURRENT_STAMP "${CLASSES_DIR}/.stamp_concurrent")
+        add_custom_command(
+            OUTPUT "${CONCURRENT_STAMP}"
+            COMMAND "${JAVAC21}" -source 11 -target 11 -cp "${CLASSES_DIR}"
+                    -d "${CLASSES_DIR}" ${CONCURRENT_TEST_SOURCES}
+            COMMAND "${CMAKE_COMMAND}" -E touch "${CONCURRENT_STAMP}"
+            DEPENDS ${CONCURRENT_TEST_SOURCES} "${CLASS_STAMP}"
+            COMMENT "Compiling virtual-thread tests")
+        add_custom_target(concurrent_classes ALL DEPENDS "${CONCURRENT_STAMP}")
+        add_dependencies(concurrent_classes java_classes)
+    else()
+        message(STATUS "javac 21 not found: virtual-thread tests disabled.")
+    endif()
 
     set(CHECK "${CMAKE_CURRENT_SOURCE_DIR}/check.cmake")
     set(JVM "$<TARGET_FILE:darks-jvm>")
@@ -123,6 +184,30 @@ if(JAVAC)
                     "-DARGS=-cp;${CLASSES_DIR};ReflectionAdvanced" -DEXPECT_RC=0
                     "-DEXPECT_TEXT=reflect-adv\ checks=.*\ failures=0"
                     "-DEXPECT_TEXT2=reflection\ advanced:\ ok" -P "${CHECK}")
+
+        add_test(NAME reflect_generics
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};GenericReflect" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=generic-reflect\ checks=.*\ failures=0"
+                    "-DEXPECT_TEXT2=generic\ reflection:\ ok" -P "${CHECK}")
+
+        add_test(NAME reflect_annotations
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};AnnotationDemo" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=annotation\ checks=.*\ failures=0"
+                    "-DEXPECT_TEXT2=annotations:\ ok" -P "${CHECK}")
+
+        add_test(NAME reflect_proxy
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};ProxyDemo" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=proxy\ checks=.*\ failures=0"
+                    "-DEXPECT_TEXT2=dynamic\ proxy:\ ok" -P "${CHECK}")
+
+        add_test(NAME reflect_beans
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};BeansDemo" -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=beans\ checks=.*\ failures=0"
+                    "-DEXPECT_TEXT2=java\ beans:\ ok" -P "${CHECK}")
 
         # The same workload runs with the lightweight JIT disabled, enabled
         # with a one-invocation threshold, and with a high threshold (pure
@@ -389,6 +474,36 @@ if(JAVAC)
                 "-DARGS=-cp;${CLASSES_DIR};RuntimeCompat" -DEXPECT_RC=0
                 "-DEXPECT_TEXT=runtime-compat\ checks=[0-9]+\ failures=0" -P "${CHECK}")
 
+    add_test(NAME sdk_time
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};SdkTimeTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=time\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=sdk\ time:\ ok" -P "${CHECK}")
+
+    add_test(NAME sdk_math
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};SdkMathTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=math\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=sdk\ math:\ ok" -P "${CHECK}")
+
+    add_test(NAME sdk_text
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};SdkTextTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=text\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=sdk\ text:\ ok" -P "${CHECK}")
+
+    add_test(NAME sdk_regex
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};SdkRegexTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=regex\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=sdk\ regex:\ ok" -P "${CHECK}")
+
+    add_test(NAME sdk_charset
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};SdkCharsetTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=charset\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=sdk\ charset:\ ok" -P "${CHECK}")
+
     add_test(NAME long_array_init
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
                 "-DARGS=-cp;${CLASSES_DIR};LongArrayInit" -DEXPECT_RC=0
@@ -598,6 +713,47 @@ if(JAVAC)
     add_thread_test(JoinTimeoutTest "join-timeout ok")
     add_thread_test(MainMonitorHandoff "main-monitor-handoff ok")
     add_thread_test(TimedWait "timed-wait ok")
+
+    # ------------------------------------------------------------------
+    # Virtual threads / minimal java.util.concurrent (combination B, B0+B1).
+    # ------------------------------------------------------------------
+    if(JAVAC21_MAJOR GREATER_EQUAL 21)
+    add_test(NAME virtual_thread_scale
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPROG=${CMAKE_COMMAND}"
+            "-DARGS=-E;env;DARKS_JVM_MP=1;DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};VirtualThreadScale;100000"
+            -DEXPECT_RC=0 -DTIMEOUT=600
+            "-DEXPECT_TEXT=virtual-thread-scale ok n=100000 virtual=true"
+            -P "${CHECK}")
+
+    foreach(mp 1 4)
+        add_test(NAME executor_service_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};ExecutorServiceTest;10000"
+                -DEXPECT_RC=0 -DTIMEOUT=300
+                "-DEXPECT_TEXT=executor-service ok n=10000"
+                "-DEXPECT_TEXT2=timeout=true cancel=true terminated=true rejected=true"
+                -P "${CHECK}")
+    endforeach()
+
+    add_test(NAME virtual_thread_interrupt
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPROG=${CMAKE_COMMAND}"
+            "-DARGS=-E;env;DARKS_JVM_MP=1;DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};VirtualThreadInterruptTest"
+            -DEXPECT_RC=0 -DTIMEOUT=120
+            "-DEXPECT_TEXT=virtual-thread-interrupt ok virtual=true interrupted=true"
+            -P "${CHECK}")
+
+    add_test(NAME virtual_thread_pinning
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPROG=${CMAKE_COMMAND}"
+            "-DARGS=-E;env;DARKS_JVM_MP=1;DARKS_VTHREAD_PINNING=warn;${JVM};-cp;${CLASSES_DIR};PinningTest"
+            -DEXPECT_RC=0 -DTIMEOUT=120
+            "-DEXPECT_TEXT=pinned in a native call"
+            "-DEXPECT_TEXT2=pinning ok virtual=true platform=false"
+            -P "${CHECK}")
+    endif()
 
     # ------------------------------------------------------------------
     # Producer/consumer example (examples/producer-consumer) and the

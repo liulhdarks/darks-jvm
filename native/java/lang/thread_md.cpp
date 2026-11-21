@@ -125,6 +125,16 @@ JNIEXPORT void JNICALL Java_java_lang_Thread_start0(JNIEnv *env, jobject thiz)
 	}
 }
 
+JNIEXPORT void JNICALL Java_java_lang_Thread_startVirtual0(JNIEnv *env, jobject thiz)
+{
+	(void)env;
+	if (!Scheduler::Instance().StartVirtualThread(JniRef(thiz)))
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/IllegalThreadStateException", "cannot start virtual thread");
+	}
+}
+
 JNIEXPORT void JNICALL Java_java_lang_Thread_sleep0(JNIEnv *env, jclass clazz, jlong millis)
 {
 	(void)env;

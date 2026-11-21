@@ -1,6 +1,6 @@
 package java.lang;
 
-public final class Float implements Comparable<Float>
+public final class Float extends Number implements Comparable<Float>
 {
     public static final Class TYPE = Class.getPrimitiveClass("float");
 
@@ -32,6 +32,11 @@ public final class Float implements Comparable<Float>
     public int intValue()
     {
         return (int)value;
+    }
+
+    public long longValue()
+    {
+        return (long)value;
     }
 
     public boolean equals(Object other)

@@ -9,6 +9,7 @@
 #include "stdafx.h"
 #include "jni_impl.h"
 #include "vm/executor/javaexception.h"
+#include "vm/executor/proxy.h"
 
 #include <cstring>
 #include <string>
@@ -593,7 +594,101 @@ std::string Utf8At(ConstantPool *pool, U2 index)
 	return std::string(u->bytes, u->length);
 }
 
-bool ReadElementValue(JNIEnv *env, ConstantPool *pool, ByteReader &r, Variant &out);
+bool ReadElementValue(JNIEnv *env, ConstantPool *pool, ByteReader &r,
+                      const char *expected_desc, Variant &out);
+
+jobject BoxValue(JNIEnv *env, DATA_TYPE type, const Variant &value);
+
+bool method_desc_has_no_args(const char *desc);
+
+std::string AnnotationElementDescriptor(lpMethod method)
+{
+	if (!method || !method->methodDesc || !method->methodDesc->GetName())
+	{
+		return std::string();
+	}
+	const char *desc = method->methodDesc->GetName();
+	const char *close = strchr(desc, ')');
+	if (!close)
+	{
+		return std::string();
+	}
+	return std::string(close + 1);
+}
+
+lpMethod FindAnnotationElement(lpClass annotation_class, const std::string &name)
+{
+	if (!annotation_class)
+	{
+		return NULL;
+	}
+	for (U2 i = 0; i < annotation_class->methodCount; i++)
+	{
+		lpMethod method = annotation_class->methods ? annotation_class->methods[i] : NULL;
+		if (!method || !method->methodName || !method->methodDesc)
+		{
+			continue;
+		}
+		const char *method_name = method->methodName->GetName();
+		if (!method_name || strcmp(method_name, name.c_str()) != 0)
+		{
+			continue;
+		}
+		if (method_desc_has_no_args(method->methodDesc->GetName()))
+		{
+			return method;
+		}
+	}
+	return NULL;
+}
+
+bool method_desc_has_no_args(const char *desc)
+{
+	return desc && strncmp(desc, "()", 2) == 0;
+}
+
+jobject AnnotationValueObject(JNIEnv *env, const Variant &value, const char *desc)
+{
+	if (!desc || !desc[0])
+	{
+		if (value.heapPtr)
+		{
+			jobject ref = JniObject(value.heapPtr);
+			JniAddLocalRef(env, ref);
+			return ref;
+		}
+		return NULL;
+	}
+	if (desc[0] == 'L' || desc[0] == '[')
+	{
+		if (!value.heapPtr)
+		{
+			return NULL;
+		}
+		jobject ref = JniObject(value.heapPtr);
+		JniAddLocalRef(env, ref);
+		return ref;
+	}
+	DATA_TYPE type = DT_INT;
+	switch (desc[0])
+	{
+	case 'Z': type = DT_BOOL; break;
+	case 'B': type = DT_BYTE; break;
+	case 'C': type = DT_CHAR; break;
+	case 'S': type = DT_SHORT; break;
+	case 'I': type = DT_INT; break;
+	case 'J': type = DT_LONG; break;
+	case 'F': type = DT_FLOAT; break;
+	case 'D': type = DT_DOUBLE; break;
+	default: break;
+	}
+	jobject boxed = BoxValue(env, type, value);
+	if (boxed)
+	{
+		JniAddLocalRef(env, boxed);
+	}
+	return boxed;
+}
 
 jobject ReadAnnotation(JNIEnv *env, ConstantPool *pool, ByteReader &r)
 {
@@ -606,58 +701,74 @@ jobject ReadAnnotation(JNIEnv *env, ConstantPool *pool, ByteReader &r)
 	}
 	std::string class_name = descriptor.substr(1, descriptor.size() - 2);
 	lpClass annotation_class = JniFindClass(env, class_name.c_str());
-	jobject annotation = NewHeapObject(env, annotation_class);
-	if (!annotation)
+	if (!annotation_class)
 	{
 		return NULL;
 	}
-	lpObject object = JniResolveObject(annotation);
+	std::map<std::string, jobject> provided;
 	U2 pair_count = r.U2();
 	for (U2 i = 0; i < pair_count && r.ok; i++)
 	{
 		U2 name_index = r.U2();
 		std::string element_name = Utf8At(pool, name_index);
+		lpMethod element = FindAnnotationElement(annotation_class, element_name);
+		std::string element_desc = AnnotationElementDescriptor(element);
 		Variant value;
-		if (!ReadElementValue(env, pool, r, value))
+		if (!ReadElementValue(env, pool, r, element_desc.c_str(), value))
 		{
 			break;
 		}
-		lpFieldValue fv = new FieldValue();
-		fv->field_value = value;
-		object->AdoptFieldValue("ann:" + element_name, fv);
+		jobject object = AnnotationValueObject(env, value, element_desc.c_str());
+		if (object)
+		{
+			provided[element_name] = object;
+		}
 	}
-	// Elements absent from the annotation bytes take their declared default
-	// from the annotation type's AnnotationDefault attributes.
-	for (U2 m = 0; annotation_class && m < annotation_class->methodCount; m++)
+	std::vector<std::string> names;
+	std::vector<jobject> values;
+	for (U2 m = 0; m < annotation_class->methodCount; m++)
 	{
-		lpMethod annotation_method = annotation_class->methods ? annotation_class->methods[m] : NULL;
-		if (!annotation_method || !annotation_method->methodName ||
-		    !annotation_method->annotation_default ||
-		    !annotation_method->annotation_default->bytes)
+		lpMethod method = annotation_class->methods ? annotation_class->methods[m] : NULL;
+		if (!method || !method->methodName || !method->methodDesc)
 		{
 			continue;
 		}
-		std::string element_name = annotation_method->methodName->GetName();
-		if (object->varants.find("ann:" + element_name) != object->varants.end())
+		std::string element_name = method->methodName->GetName();
+		if (element_name.empty() || element_name[0] == '<' ||
+		    !method_desc_has_no_args(method->methodDesc->GetName()))
 		{
 			continue;
 		}
-		ByteReader defaults(annotation_method->annotation_default->bytes,
-		                    annotation_method->annotation_default->attr_length);
-		Variant value;
-		bool default_ok = ReadElementValue(env,
-			annotation_class->const_pool, defaults, value);
-		if (default_ok)
+		std::string element_desc = AnnotationElementDescriptor(method);
+		jobject object = NULL;
+		std::map<std::string, jobject>::iterator it = provided.find(element_name);
+		if (it != provided.end())
 		{
-			lpFieldValue fv = new FieldValue();
-			fv->field_value = value;
-			object->AdoptFieldValue("ann:" + element_name, fv);
+			object = it->second;
 		}
+		else if (method->annotation_default && method->annotation_default->bytes)
+		{
+			ByteReader defaults(method->annotation_default->bytes,
+			                    method->annotation_default->attr_length);
+			Variant value;
+			if (ReadElementValue(env, annotation_class->const_pool, defaults,
+			                     element_desc.c_str(), value))
+			{
+				object = AnnotationValueObject(env, value, element_desc.c_str());
+			}
+		}
+		if (!object)
+		{
+			continue;
+		}
+		names.push_back(element_name);
+		values.push_back(object);
 	}
-	return annotation;
+	return DarksVM_CreateAnnotationProxy(env, annotation_class, names, values);
 }
 
-bool ReadElementValue(JNIEnv *env, ConstantPool *pool, ByteReader &r, Variant &out)
+bool ReadElementValue(JNIEnv *env, ConstantPool *pool, ByteReader &r,
+                      const char *expected_desc, Variant &out)
 {
 	char tag = static_cast<char>(r.U1());
 	switch (tag)
@@ -793,102 +904,107 @@ bool ReadElementValue(JNIEnv *env, ConstantPool *pool, ByteReader &r, Variant &o
 	case '[':
 		{
 			U2 count = r.U2();
-			if (count == 0)
+			std::string component;
+			if (expected_desc && expected_desc[0] == '[')
 			{
-				jobject empty = MakeObjectArray(env, "[Ljava/lang/Object;",
-				                                std::vector<jobject>());
-				out.heapPtr = JniRef(empty);
-				return true;
+				component = std::string(expected_desc + 1);
 			}
-			int tag_pos = r.pos;
-			char component_tag = static_cast<char>(r.data[tag_pos]);
-			bool primitive = component_tag == 'B' || component_tag == 'C' ||
-				component_tag == 'S' || component_tag == 'Z' ||
-				component_tag == 'I' || component_tag == 'J' ||
-				component_tag == 'F' || component_tag == 'D';
+			std::string array_name;
+			if (!component.empty())
+			{
+				array_name = "[" + component;
+			}
+			else
+			{
+				array_name = "[Ljava/lang/Object;";
+			}
+			lpClass array_class = JniFindClass(env, array_name.c_str());
+			if (!array_class || !VMContext::object_heap)
+			{
+				return false;
+			}
+			char component_tag = component.empty() ? 'L' : component[0];
+			bool primitive = component.size() == 1 &&
+				(component_tag == 'B' || component_tag == 'C' ||
+				 component_tag == 'S' || component_tag == 'Z' ||
+				 component_tag == 'I' || component_tag == 'J' ||
+				 component_tag == 'F' || component_tag == 'D');
+			LPOBJECT_REF ref = NULL;
 			if (primitive)
 			{
-				DATA_TYPE type = DT_INT;
-				switch (component_tag)
-				{
-				case 'B': type = DT_BYTE; break;
-				case 'C': type = DT_CHAR; break;
-				case 'S': type = DT_SHORT; break;
-				case 'Z': type = DT_BOOL; break;
-				case 'I': type = DT_INT; break;
-				case 'J': type = DT_LONG; break;
-				case 'F': type = DT_FLOAT; break;
-				case 'D': type = DT_DOUBLE; break;
-				}
-				char array_name[4] = {'[', 0, 0, 0};
-				switch (type)
-				{
-				case DT_BYTE: array_name[1] = 'B'; break;
-				case DT_CHAR: array_name[1] = 'C'; break;
-				case DT_SHORT: array_name[1] = 'S'; break;
-				case DT_BOOL: array_name[1] = 'Z'; break;
-				case DT_INT: array_name[1] = 'I'; break;
-				case DT_LONG: array_name[1] = 'J'; break;
-				case DT_FLOAT: array_name[1] = 'F'; break;
-				case DT_DOUBLE: array_name[1] = 'D'; break;
-				default: array_name[1] = 'I'; break;
-				}
-				lpClass array_class = JniFindClass(env, array_name);
-				LPOBJECT_REF ref = NULL;
 				if (!VMContext::object_heap->NewArrayObject(count, array_class, ref))
 				{
 					return false;
 				}
-				jobject array = JniObject(ref);
-				JniAddLocalRef(env, array);
-				lpObject array_obj = NULL;
-				VMContext::object_heap->GetObject(ref, array_obj);
+			}
+			else
+			{
+				if (!VMContext::object_heap->NewObjectArrayObject(count, array_class, ref))
+				{
+					return false;
+				}
+			}
+			jobject array = JniObject(ref);
+			JniAddLocalRef(env, array);
+			lpObject array_obj = NULL;
+			VMContext::object_heap->GetObject(ref, array_obj);
+			if (!array_obj)
+			{
+				return false;
+			}
+			if (primitive)
+			{
 				for (U2 i = 0; i < count && r.ok; i++)
 				{
 					Variant element;
-					if (!ReadElementValue(env, pool, r, element))
+					if (!ReadElementValue(env, pool, r, component.c_str(), element))
 					{
 						break;
 					}
-					if (array_obj && array_obj->array_var)
+					if (!array_obj->array_var)
 					{
-						switch (type)
-						{
-						case DT_BYTE:
-							static_cast<jbyte *>(array_obj->array_var)[i] = element.bValue; break;
-						case DT_CHAR:
-							static_cast<jchar *>(array_obj->array_var)[i] = element.cValue; break;
-						case DT_SHORT:
-							static_cast<jshort *>(array_obj->array_var)[i] = element.sValue; break;
-						case DT_BOOL:
-							static_cast<jboolean *>(array_obj->array_var)[i] = element.blValue; break;
-						case DT_INT:
-							static_cast<jint *>(array_obj->array_var)[i] = element.iValue; break;
-						case DT_LONG:
-							static_cast<jlong *>(array_obj->array_var)[i] = element.lValue; break;
-						case DT_FLOAT:
-							static_cast<jfloat *>(array_obj->array_var)[i] = element.fValue; break;
-						case DT_DOUBLE:
-							static_cast<jdouble *>(array_obj->array_var)[i] = element.dValue; break;
-						default:
-							break;
-						}
+						continue;
+					}
+					switch (component_tag)
+					{
+					case 'B':
+						static_cast<jbyte *>(array_obj->array_var)[i] = element.bValue; break;
+					case 'C':
+						static_cast<jchar *>(array_obj->array_var)[i] = element.cValue; break;
+					case 'S':
+						static_cast<jshort *>(array_obj->array_var)[i] = element.sValue; break;
+					case 'Z':
+						static_cast<jboolean *>(array_obj->array_var)[i] = element.blValue; break;
+					case 'I':
+						static_cast<jint *>(array_obj->array_var)[i] = element.iValue; break;
+					case 'J':
+						static_cast<jlong *>(array_obj->array_var)[i] = element.lValue; break;
+					case 'F':
+						static_cast<jfloat *>(array_obj->array_var)[i] = element.fValue; break;
+					case 'D':
+						static_cast<jdouble *>(array_obj->array_var)[i] = element.dValue; break;
+					default:
+						break;
 					}
 				}
-				out.heapPtr = JniRef(array);
-				return true;
 			}
-			std::vector<jobject> elements;
-			for (U2 i = 0; i < count && r.ok; i++)
+			else
 			{
-				Variant element;
-				if (!ReadElementValue(env, pool, r, element))
+				jobject *elements = array_obj->array_var
+					? static_cast<jobject *>(array_obj->array_var) : NULL;
+				for (U2 i = 0; i < count && r.ok; i++)
 				{
-					break;
+					Variant element;
+					if (!ReadElementValue(env, pool, r, component.c_str(), element))
+					{
+						break;
+					}
+					if (elements)
+					{
+						elements[i] = JniObject(element.heapPtr);
+					}
 				}
-				elements.push_back(JniObject(element.heapPtr));
 			}
-			jobject array = MakeObjectArray(env, "[Ljava/lang/Object;", elements);
 			out.heapPtr = JniRef(array);
 			return true;
 		}
@@ -914,6 +1030,103 @@ jobject AnnotationsToArray(JNIEnv *env, lpClass owner, lpRuntimeVisibleAnnotatio
 		}
 	}
 	return MakeObjectArray(env, "[Ljava/lang/annotation/Annotation;", results);
+}
+
+// Finds the container annotation declared by @Repeatable on annotation_class.
+lpClass FindRepeatableContainer(JNIEnv *env, lpClass annotation_class)
+{
+	if (!annotation_class || !annotation_class->const_pool ||
+	    !annotation_class->rt_visible_attr || !annotation_class->rt_visible_attr->bytes)
+	{
+		return NULL;
+	}
+	lpRuntimeVisibleAnnotations attr = annotation_class->rt_visible_attr;
+	if (attr->attr_length < 2)
+	{
+		return NULL;
+	}
+	ByteReader reader(attr->bytes, attr->attr_length);
+	U2 count = reader.U2();
+	for (U2 i = 0; i < count && reader.ok; i++)
+	{
+		int start = reader.pos;
+		U2 type_index = reader.U2();
+		std::string descriptor = Utf8At(annotation_class->const_pool, type_index);
+		if (descriptor == "Ljava/lang/annotation/Repeatable;")
+		{
+			U2 pair_count = reader.U2();
+			for (U2 p = 0; p < pair_count && reader.ok; p++)
+			{
+				U2 name_index = reader.U2();
+				std::string name = Utf8At(annotation_class->const_pool, name_index);
+				Variant value;
+				if (!ReadElementValue(env, annotation_class->const_pool, reader,
+				                      "Ljava/lang/Class;", value))
+				{
+					return NULL;
+				}
+				if (name == "value" && value.heapPtr)
+				{
+					return MirrorClass(JniObject(value.heapPtr));
+				}
+			}
+			return NULL;
+		}
+		// Not the Repeatable annotation: skip its element values.
+		reader.pos = start;
+		if (!ReadAnnotation(env, annotation_class->const_pool, reader))
+		{
+			return NULL;
+		}
+	}
+	return NULL;
+}
+
+jobject ExpandAnnotations(JNIEnv *env, jobjectArray annotations, lpClass target)
+{
+	std::vector<jobject> results;
+	if (!target)
+	{
+		return MakeObjectArray(env, "[Ljava/lang/annotation/Annotation;", results);
+	}
+	lpClass container = FindRepeatableContainer(env, target);
+	lpObject array = JniResolveObject(reinterpret_cast<jobject>(annotations));
+	if (array && array->array_var)
+	{
+		jobject *elements = static_cast<jobject *>(array->array_var);
+		for (int i = 0; i < array->array_length; i++)
+		{
+			jobject annotation = elements[i];
+			if (!annotation)
+			{
+				continue;
+			}
+			lpClass annotation_class = DarksVM_ProxyAnnotationClass(annotation);
+			if (annotation_class == target)
+			{
+				results.push_back(annotation);
+			}
+			else if (container && annotation_class == container)
+			{
+				jobject value = DarksVM_ProxyAnnotationValue(annotation, "value");
+				lpObject values = JniResolveObject(value);
+				if (values && values->array_var)
+				{
+					jobject *items = static_cast<jobject *>(values->array_var);
+					for (int k = 0; k < values->array_length; k++)
+					{
+						if (items[k] &&
+						    DarksVM_ProxyAnnotationClass(items[k]) == target)
+						{
+							results.push_back(items[k]);
+						}
+					}
+				}
+			}
+		}
+	}
+	std::string array_name = "[L" + std::string(target->thisClass->GetName()) + ";";
+	return MakeObjectArray(env, array_name.c_str(), results);
 }
 
 // Box/unbox helpers shared by Method.invoke and Field access.
@@ -1608,6 +1821,28 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_invoke0(JNIEnv *env,
 		}
 		return NULL;
 	}
+	LPOBJECT_REF proxy_handler = NULL;
+	lpObject receiver_obj = JniResolveObject(receiver);
+	if (receiver_obj && DarksVM_LoadProxyHandler(receiver_obj, proxy_handler))
+	{
+		DATA_TYPE return_type = result_desc.data_type;
+		if (result_desc.check_array)
+		{
+			return_type = DT_ARRAY;
+		}
+		jvalue proxy_result;
+		if (!DarksVM_InvokeProxyHandler(env, receiver, target, values,
+		                                return_type, proxy_result))
+		{
+			if (VMContext::pending_exception)
+			{
+				return WrapInvocationTarget(env, VMContext::pending_exception);
+			}
+			return NULL;
+		}
+		return VariantToObject(env, return_type,
+			JValueToVariant(proxy_result, return_type));
+	}
 	jvalue result = JniInvokeMethod(env, receiver,
 		reinterpret_cast<jclass>(declaring), reinterpret_cast<jmethodID>(target),
 		values.empty() ? NULL : &values[0], target->isStatic(), false);
@@ -1929,4 +2164,112 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_getExceptionTypes(J
 	return ClassArrayFromExceptionAttribute(env, init);
 }
 
+// ---------------------------------------------------------------------------
+// Generic signatures and repeatable annotation expansion
+// ---------------------------------------------------------------------------
+
+namespace {
+
+jobject SignatureString(JNIEnv *env, ConstantPool *pool, lpSignature signature)
+{
+	if (!pool || !signature)
+	{
+		return NULL;
+	}
+	std::string text = Utf8At(pool, signature->signature_index);
+	if (text.empty())
+	{
+		return NULL;
+	}
+	return NewString(env, text);
+}
+
+lpMethod MemberMethod(JNIEnv *env, lpObject member, const char *fallback_name)
+{
+	lpClass declaring = MirrorClass(ObjectFieldRef(member, "declaringClass"));
+	std::string name = ObjectFieldString(env, member, "name");
+	std::string desc = ObjectFieldString(env, member, "descriptor");
+	if (name.empty())
+	{
+		name = fallback_name ? fallback_name : "";
+	}
+	return FindMethodByDescriptor(declaring, name.c_str(), desc.c_str(), false);
+}
+
+} // namespace
+
+JNIEXPORT jobject JNICALL Java_java_lang_Class_getSignature0(JNIEnv *env,
+	jobject thiz)
+{
+	lpClass clazz = MirrorClass(thiz);
+	if (!clazz)
+	{
+		return NULL;
+	}
+	return SignatureString(env, clazz->const_pool, clazz->signature_attr);
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getSignature0(JNIEnv *env,
+	jobject thiz)
+{
+	lpObject member = JniResolveObject(thiz);
+	if (!member)
+	{
+		return NULL;
+	}
+	lpMethod method = MemberMethod(env, member, NULL);
+	if (!method || !method->clazz)
+	{
+		return NULL;
+	}
+	return SignatureString(env, method->clazz->const_pool, method->signature_attr);
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_getSignature0(JNIEnv *env,
+	jobject thiz)
+{
+	lpObject member = JniResolveObject(thiz);
+	if (!member)
+	{
+		return NULL;
+	}
+	lpMethod method = MemberMethod(env, member, "<init>");
+	if (!method || !method->clazz)
+	{
+		return NULL;
+	}
+	return SignatureString(env, method->clazz->const_pool, method->signature_attr);
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Field_getSignature0(JNIEnv *env,
+	jobject thiz)
+{
+	lpObject member = JniResolveObject(thiz);
+	if (!member)
+	{
+		return NULL;
+	}
+	lpClass declaring = MirrorClass(ObjectFieldRef(member, "declaringClass"));
+	std::string name = ObjectFieldString(env, member, "name");
+	std::string desc = ObjectFieldString(env, member, "descriptor");
+	lpField field = JniFindField(declaring, name.c_str(), desc.c_str(), false);
+	if (!field)
+	{
+		field = JniFindField(declaring, name.c_str(), desc.c_str(), true);
+	}
+	if (!field || !declaring)
+	{
+		return NULL;
+	}
+	return SignatureString(env, declaring->const_pool, field->signature_attr);
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_AnnotationSupport_expand0(
+	JNIEnv *env, jclass unused, jobjectArray annotations, jobject annotationClass)
+{
+	(void)unused;
+	return ExpandAnnotations(env, annotations, MirrorClass(annotationClass));
+}
+
 } // extern "C"
+
