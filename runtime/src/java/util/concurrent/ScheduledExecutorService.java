@@ -1,0 +1,18 @@
+package java.util.concurrent;
+
+/**
+ * An executor service that can schedule tasks to run after a delay or
+ * periodically.
+ */
+public interface ScheduledExecutorService extends ExecutorService
+{
+    ScheduledFuture<?> schedule(Runnable command, long delay, TimeUnit unit);
+
+    <V> ScheduledFuture<V> schedule(Callable<V> callable, long delay, TimeUnit unit);
+
+    ScheduledFuture<?> scheduleAtFixedRate(Runnable command, long initialDelay,
+                                           long period, TimeUnit unit);
+
+    ScheduledFuture<?> scheduleWithFixedDelay(Runnable command, long initialDelay,
+                                              long delay, TimeUnit unit);
+}

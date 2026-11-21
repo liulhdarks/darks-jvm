@@ -41,6 +41,8 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/function/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/concurrent/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/concurrent/atomic/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/concurrent/locks/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/reflect/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/annotation/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/beans/*.java"
@@ -152,6 +154,12 @@ if(JAVAC)
             "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/VirtualThreadInterruptTest.java"
             "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/PinningTest.java"
             "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/StructuredScopeTest.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/ConcurrentCollectionsTest.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/BlockingQueueTest.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/ExecutorPoolTest.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/ScheduledExecutorTest.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/LocksTest.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/AtomicsTest.java"
         )
         set(CONCURRENT_STAMP "${CLASSES_DIR}/.stamp_concurrent")
         add_custom_command(
@@ -883,6 +891,60 @@ if(JAVAC)
             -DEXPECT_RC=0 -DTIMEOUT=180
             "-DEXPECT_TEXT=structured-scope ok"
             -P "${CHECK}")
+
+    # ------------------------------------------------------------------
+    # SDK concurrency containers, executors, locks and atomics.  Each test
+    # runs with one and four scheduler threads.
+    # ------------------------------------------------------------------
+    foreach(mp 1 4)
+        add_test(NAME sdk_concurrent_collections_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};ConcurrentCollectionsTest"
+                -DEXPECT_RC=0 -DTIMEOUT=300
+                "-DEXPECT_TEXT=concurrent-collections ok checks=[0-9]+ map=4000 queue=2000 cow=200"
+                -P "${CHECK}")
+
+        add_test(NAME sdk_blocking_queue_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};BlockingQueueTest"
+                -DEXPECT_RC=0 -DTIMEOUT=180
+                "-DEXPECT_TEXT=blocking-queue ok checks=[0-9]+ abq=0,1,2,3,4 lbq=true sync=42"
+                -P "${CHECK}")
+
+        add_test(NAME sdk_executor_pool_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};ExecutorPoolTest"
+                -DEXPECT_RC=0 -DTIMEOUT=300
+                "-DEXPECT_TEXT=executor-pool ok checks=[0-9]+ fixed=39800 rejected=true cached=20"
+                -P "${CHECK}")
+
+        add_test(NAME sdk_scheduled_executor_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};ScheduledExecutorTest"
+                -DEXPECT_RC=0 -DTIMEOUT=300
+                "-DEXPECT_TEXT=scheduled-executor ok checks=[0-9]+ order=ab cancel=true rate=[0-9]+ delay=[0-9]+"
+                -P "${CHECK}")
+
+        add_test(NAME sdk_locks_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};LocksTest"
+                -DEXPECT_RC=0 -DTIMEOUT=180
+                "-DEXPECT_TEXT=locks ok checks=[0-9]+ lock=2000 cond=true latch=true sem=2"
+                -P "${CHECK}")
+
+        add_test(NAME sdk_atomics_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};AtomicsTest"
+                -DEXPECT_RC=0 -DTIMEOUT=180
+                "-DEXPECT_TEXT=atomics ok checks=[0-9]+ ai=16000 arr=4000 adder=8000"
+                -P "${CHECK}")
+    endforeach()
     endif()
 
     # ------------------------------------------------------------------

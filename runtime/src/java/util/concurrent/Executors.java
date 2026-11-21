@@ -19,6 +19,78 @@ public class Executors
         return new VirtualThreadPerTaskExecutor();
     }
 
+    public static ExecutorService newFixedThreadPool(int threads)
+    {
+        return newFixedThreadPool(threads, defaultThreadFactory());
+    }
+
+    public static ExecutorService newFixedThreadPool(int threads, ThreadFactory factory)
+    {
+        if (threads <= 0)
+        {
+            throw new IllegalArgumentException("threads <= 0");
+        }
+        return new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
+                                      new LinkedBlockingQueue<Runnable>(), factory);
+    }
+
+    public static ExecutorService newSingleThreadExecutor()
+    {
+        return newFixedThreadPool(1);
+    }
+
+    public static ExecutorService newSingleThreadExecutor(ThreadFactory factory)
+    {
+        return newFixedThreadPool(1, factory);
+    }
+
+    public static ExecutorService newCachedThreadPool()
+    {
+        return newCachedThreadPool(defaultThreadFactory());
+    }
+
+    public static ExecutorService newCachedThreadPool(ThreadFactory factory)
+    {
+        return new ThreadPoolExecutor(0, Integer.MAX_VALUE, 60L, TimeUnit.SECONDS,
+                                      new SynchronousQueue<Runnable>(), factory);
+    }
+
+    public static ScheduledExecutorService newScheduledThreadPool(int threads)
+    {
+        return new ScheduledThreadPoolExecutor(threads);
+    }
+
+    public static ScheduledExecutorService newScheduledThreadPool(int threads,
+                                                                  ThreadFactory factory)
+    {
+        return new ScheduledThreadPoolExecutor(threads, factory);
+    }
+
+    public static ScheduledExecutorService newSingleThreadScheduledExecutor()
+    {
+        return new ScheduledThreadPoolExecutor(1);
+    }
+
+    public static ScheduledExecutorService newSingleThreadScheduledExecutor(
+        ThreadFactory factory)
+    {
+        return new ScheduledThreadPoolExecutor(1, factory);
+    }
+
+    public static <T> Callable<T> callable(Runnable task, T result)
+    {
+        if (task == null)
+        {
+            throw new NullPointerException("task");
+        }
+        return new CallableAdapter<T>(task, result);
+    }
+
+    public static Callable<Object> callable(Runnable task)
+    {
+        return callable(task, null);
+    }
+
     public static ThreadFactory defaultThreadFactory()
     {
         return new ThreadFactory()
@@ -187,6 +259,24 @@ public class Executors
             {
                 owner.finished(slot, Thread.currentThread());
             }
+        }
+    }
+
+    private static final class CallableAdapter<T> implements Callable<T>
+    {
+        private final Runnable task;
+        private final T result;
+
+        CallableAdapter(Runnable task, T result)
+        {
+            this.task = task;
+            this.result = result;
+        }
+
+        public T call()
+        {
+            task.run();
+            return result;
         }
     }
 }
