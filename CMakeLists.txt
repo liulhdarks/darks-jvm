@@ -69,6 +69,7 @@ set(DARKS_JVM_CORE_SOURCES
     jvm/vm/classfiles/parseclass.cpp
     jvm/vm/executor/attributes.cpp
     jvm/vm/executor/context.cpp
+    jvm/vm/executor/deterministic.cpp
     jvm/vm/executor/descriptor.cpp
     jvm/vm/executor/executor.cpp
     jvm/vm/executor/javaexception.cpp
@@ -181,6 +182,7 @@ set(DARKS_JVM_NATIVE_SOURCES
     native/java/io/printstream.cpp
     native/java/util/regex_md.cpp
     native/java/util/concurrent/structured_scope_md.cpp
+    native/darks/deterministic_md.cpp
 )
 
 add_library(native SHARED ${DARKS_JVM_NATIVE_SOURCES})

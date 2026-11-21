@@ -4,6 +4,9 @@ public class HashSet<E> implements Set<E>
 {
     private Object[] elements;
     private boolean[] used;
+    // Insertion sequence per slot; deterministic mode iterates in this order.
+    private int[] order;
+    private int nextOrder;
     private int count;
 
     public HashSet()
@@ -20,6 +23,7 @@ public class HashSet<E> implements Set<E>
         }
         elements = new Object[size];
         used = new boolean[size];
+        order = new int[size];
     }
 
     public HashSet(Collection<? extends E> values)
@@ -82,8 +86,10 @@ public class HashSet<E> implements Set<E>
     {
         Object[] oldElements = elements;
         boolean[] oldUsed = used;
+        int[] oldOrder = order;
         elements = new Object[size];
         used = new boolean[size];
+        order = new int[size];
         count = 0;
         for (int i = 0; i < oldElements.length; i++)
         {
@@ -92,9 +98,38 @@ public class HashSet<E> implements Set<E>
                 int index = emptyIndex(oldElements[i]);
                 elements[index] = oldElements[i];
                 used[index] = true;
+                order[index] = oldOrder[i];
                 count++;
             }
         }
+    }
+
+    private int[] visitOrder()
+    {
+        int[] indices = new int[count];
+        int n = 0;
+        for (int i = 0; i < elements.length; i++)
+        {
+            if (used[i])
+            {
+                indices[n++] = i;
+            }
+        }
+        if (darks.Deterministic.enabled())
+        {
+            for (int i = 1; i < n; i++)
+            {
+                int value = indices[i];
+                int j = i - 1;
+                while (j >= 0 && order[indices[j]] > order[value])
+                {
+                    indices[j + 1] = indices[j];
+                    j--;
+                }
+                indices[j + 1] = value;
+            }
+        }
+        return indices;
     }
 
     public int size()
@@ -120,6 +155,7 @@ public class HashSet<E> implements Set<E>
         int index = emptyIndex(value);
         elements[index] = value;
         used[index] = true;
+        order[index] = nextOrder++;
         count++;
         return true;
     }
@@ -149,20 +185,19 @@ public class HashSet<E> implements Set<E>
         {
             elements[i] = null;
             used[i] = false;
+            order[i] = 0;
         }
         count = 0;
+        nextOrder = 0;
     }
 
     public Object[] toArray()
     {
         Object[] result = new Object[count];
-        int position = 0;
-        for (int i = 0; i < elements.length; i++)
+        int[] indices = visitOrder();
+        for (int i = 0; i < indices.length; i++)
         {
-            if (used[i])
-            {
-                result[position++] = elements[i];
-            }
+            result[i] = elements[indices[i]];
         }
         return result;
     }
@@ -176,17 +211,15 @@ public class HashSet<E> implements Set<E>
     {
         StringBuilder sb = new StringBuilder("[");
         boolean first = true;
-        for (int i = 0; i < elements.length; i++)
+        int[] indices = visitOrder();
+        for (int i = 0; i < indices.length; i++)
         {
-            if (used[i])
+            if (!first)
             {
-                if (!first)
-                {
-                    sb.append(", ");
-                }
-                sb.append(String.valueOf(elements[i]));
-                first = false;
+                sb.append(", ");
             }
+            sb.append(String.valueOf(elements[indices[i]]));
+            first = false;
         }
         sb.append("]");
         return sb.toString();
@@ -195,38 +228,30 @@ public class HashSet<E> implements Set<E>
     private static class Itr<E> implements Iterator<E>
     {
         private final HashSet<E> owner;
+        private int[] indices;
         private int cursor;
         private int last = -1;
 
         Itr(HashSet<E> owner)
         {
             this.owner = owner;
+            this.indices = owner.visitOrder();
         }
 
         public boolean hasNext()
         {
-            for (int i = cursor; i < owner.elements.length; i++)
-            {
-                if (owner.used[i])
-                {
-                    return true;
-                }
-            }
-            return false;
+            return cursor < indices.length;
         }
 
         public E next()
         {
-            for (int i = cursor; i < owner.elements.length; i++)
+            if (cursor >= indices.length)
             {
-                if (owner.used[i])
-                {
-                    cursor = i + 1;
-                    last = i;
-                    return (E)owner.elements[i];
-                }
+                throw new NoSuchElementException();
             }
-            throw new NoSuchElementException();
+            last = indices[cursor];
+            cursor++;
+            return (E)owner.elements[last];
         }
 
         public void remove()
@@ -237,6 +262,7 @@ public class HashSet<E> implements Set<E>
             }
             owner.remove(owner.elements[last]);
             last = -1;
+            indices = owner.visitOrder();
             cursor = 0;
         }
     }

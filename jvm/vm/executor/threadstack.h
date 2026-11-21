@@ -2,6 +2,9 @@
 
 #include "vm/types.h"
 #include <stack>
+#include <string>
+#include <utility>
+#include <vector>
 #include "stackframe.h"
 #include "vm/classfiles/classloader.h"
 #include "context.h"
@@ -75,4 +78,11 @@ public:
 	// Used by virtual-thread pinning diagnostics: entering a native method
 	// while holding a monitor may pin the carrier thread.
 	bool HoldsMonitor() const;
+
+	// Diagnostics: writes the innermost frame as "Class.method" (internal
+	// class name).  Returns false when the stack is empty.
+	bool DescribeTopFrame(std::string &out) const;
+
+	// Diagnostics: appends every monitor held by a frame, outermost first.
+	void CollectHeldMonitors(std::vector<std::pair<LPOBJECT_REF, lpClass> > &out) const;
 };

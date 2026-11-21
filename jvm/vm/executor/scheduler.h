@@ -19,6 +19,7 @@
 
 #include <stdint.h>
 #include <atomic>
+#include <string>
 #include <vector>
 
 class ThreadStack;
@@ -67,9 +68,14 @@ struct Coroutine
 	int saved_count;           // monitor recursion count restored after wait
 	int state;
 	int kind;                  // CoroutineKind
+	int priority;              // Java thread priority (deterministic ordering)
 	int carrier_id;            // worker index currently running it, -1 if unmounted
 	int64_t deadline_ns;       // 0 => no timer
 	uint64_t timer_generation;
+	// Set when the coroutine is placed in a ready queue and cleared when a
+	// worker claims it.  Diagnostics use it to measure dispatch latency; it is
+	// only read while the scheduler lock is held.
+	int64_t ready_since_ns;
 	LPOBJECT_REF injected;     // InterruptedException to raise on resume (root)
 	// Structured concurrency: the scope that owns this coroutine when it was
 	// started by StructuredTaskScope.fork().  Registered as a GC root so the
@@ -100,6 +106,39 @@ struct Coroutine
 	std::vector<lpCoroutine> joiners;
 
 	Coroutine();
+};
+
+// ---- deadlock / starvation diagnostics -------------------------------------
+// What a parked coroutine is waiting for.  Timed waits carry their own
+// deadline and are never treated as deadlock edges; they only show up as
+// "timed" in a thread snapshot.
+enum CoroutineWaitKind
+{
+	CO_WAIT_NONE = 0,
+	CO_WAIT_MONITOR,       // contending for a monitor
+	CO_WAIT_JOIN,          // Thread.join without a timeout
+	CO_WAIT_OBJECT,        // Object.wait() without a timeout
+	CO_WAIT_CHANNEL_SEND,  // parked in darks.concurrent.Channel.send
+	CO_WAIT_CHANNEL_RECV,  // parked in darks.concurrent.Channel.receive
+	CO_WAIT_TIMED          // sleep / timed join / timed wait
+};
+
+// One row of the diagnostic thread snapshot.  This is the interface the
+// deadlock watchdog uses and that a future ThreadMXBean binding can expose.
+struct DiagThread
+{
+	DiagThread() : id(0), kind(0), state(0), wait_kind(CO_WAIT_NONE), wait_target(0) {}
+
+	uint64_t id;
+	std::string name;
+	int kind;                       // CoroutineKind
+	int state;                      // CoroutineState
+	int wait_kind;                  // CoroutineWaitKind
+	uint64_t wait_target;           // coroutine id of the blocker (0 if none)
+	std::string wait_target_name;
+	std::string monitor;            // monitor / channel being waited for
+	std::vector<std::string> held_monitors;
+	std::string location;           // innermost Java frame
 };
 
 class Scheduler
@@ -190,6 +229,25 @@ public:
 	static void EnterVMLockWait();
 	static void ExitVMLockWait();
 
+	// ---- deadlock / starvation diagnostics -------------------------------
+	// -Ddarks.diag.deadlock=1|log and -Ddarks.diag.starvation=1 install an
+	// idle-point watchdog: it analyses the wait-for graph, prints a report to
+	// stderr and (in "1" mode) exits with code 5 (deadlock) or 6 (starvation).
+	// "log" only prints, which lets an embedder keep running.
+	bool DiagnosticsEnabled() const;
+
+	// Diagnostic request: returns a snapshot of every live coroutine.  Safe
+	// to call from any coroutine; running coroutines are reported without a
+	// stack location because their frames may still be mutating.
+	void SnapshotThreads(std::vector<DiagThread> &out);
+
+	// Diagnostic request: walks the wait-for graph (monitor owners, join
+	// targets including StructuredTaskScope subtasks, channel send/receive
+	// peers) and reports a cycle or an all-blocked state.  Returns true when
+	// a deadlock was found; 'cycle' receives the involved coroutines (empty
+	// for an all-blocked deadlock) and 'report' the formatted text.
+	bool DetectDeadlock(std::vector<DiagThread> &cycle, std::string &report);
+
 private:
 	Scheduler();
 	~Scheduler();
@@ -202,6 +260,16 @@ private:
 	void PumpMain(lpCoroutine main_co, bool yield_to_others = false);
 	bool TakeReady(int worker_index, lpCoroutine &co);
 	void Enqueue(lpCoroutine co, int hint);
+	// Deterministic mode: single ready queue ordered by (priority, seed rank,
+	// enqueue sequence).  All wakeups must go through this helper so ordering
+	// is consistent.
+	void PushReady(lpCoroutine co, size_t hint);
+	// Advances the virtual clock to the earliest pending timer.  Returns false
+	// when there is nothing to advance to.
+	bool AdvanceVirtualTimeLocked();
+	// Stable ids for decision-log events (heap pointers differ per run).
+	uint64_t DeterministicObjectId(LPOBJECT_REF obj, lpClass cls);
+	void RecordMonitorGrant(lpCoroutine owner, LPOBJECT_REF obj, lpClass cls);
 	void ReapTimers();
 	void WaitForWork(int64_t timeout_ns);
 	int64_t NextDeadline() const;
@@ -210,6 +278,13 @@ private:
 	bool SetupThread(lpCoroutine co, LPOBJECT_REF thread_obj);
 	bool StartThreadInternal(LPOBJECT_REF thread_obj, int kind,
 	                        LPOBJECT_REF scope_obj = NULL);
+
+	// Diagnostics.  MaybeRunDiagnostics must be called without holding the
+	// scheduler lock: it acquires VMLock first and the scheduler lock second,
+	// matching the existing VMLock -> scheduler lock order.
+	void MaybeRunDiagnostics(bool idle);
+	void ReportDeadlockAndExit(const std::string &report, bool logging_only);
+	void ReportStarvationAndExit(const std::string &report, bool logging_only);
 
 	struct Impl;
 	Impl *impl;

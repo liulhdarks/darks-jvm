@@ -28,7 +28,10 @@ public class Random
     protected int next(int bits)
     {
         seed = (seed * MULTIPLIER + ADDEND) & MASK;
-        return (int)(seed >>> (48 - bits));
+        int value = (int)(seed >>> (48 - bits));
+        // Deterministic mode records the draw (and, while replaying, returns
+        // the recorded value); outside that mode the hook is a pass-through.
+        return darks.Deterministic.nextRandom(bits, value);
     }
 
     public int nextInt()

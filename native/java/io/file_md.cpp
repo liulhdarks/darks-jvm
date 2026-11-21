@@ -3,6 +3,7 @@
 #include "stdafx.h"
 #include "jni_impl.h"
 #include "platform/platform.h"
+#include "vm/executor/deterministic.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -258,6 +259,9 @@ jobjectArray JNICALL Java_java_io_File_list0(JNIEnv *env, jobject thiz)
 
 jlong JNICALL Java_java_io_FileInputStream_open0(JNIEnv *env, jclass, jstring name)
 {
+	// Real I/O is outside the deterministic model: mark the boundary so a
+	// replay can show exactly where the run depended on the host.
+	DarksDeterministic::Instance().Boundary("io.FileInputStream.open");
 	std::string path;
 	const char *chars = name ? env->GetStringUTFChars(name, NULL) : NULL;
 	if (chars)
@@ -293,6 +297,7 @@ jint JNICALL Java_java_io_FileInputStream_readBytes0(JNIEnv *env, jclass, jlong 
 	{
 		return -1;
 	}
+	DarksDeterministic::Instance().Boundary("io.FileInputStream.read");
 	size_t read = fread(data + offset, 1, static_cast<size_t>(length), file);
 	return static_cast<jint>(read);
 }
@@ -346,6 +351,7 @@ void JNICALL Java_java_io_FileOutputStream_writeBytes0(JNIEnv *env, jclass, jlon
 	{
 		return;
 	}
+	DarksDeterministic::Instance().Boundary("io.FileOutputStream.write");
 	fwrite(data + offset, 1, static_cast<size_t>(length), file);
 }
 

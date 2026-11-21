@@ -22,6 +22,7 @@
 #include "vm/exceptions.h"
 #include "vm/executor/javaexception.h"
 #include "vm/executor/scheduler.h"
+#include "vm/executor/deterministic.h"
 
 #include <cstdio>
 #include <iostream>
@@ -255,6 +256,9 @@ static int run_class(const string &class_name, int argc, char **argv)
 		exec = NULL;
 	}
 	Scheduler::Instance().DetachMain();
+	// Emit the deterministic decision-log hash (no-op outside deterministic
+	// mode) after the main class has finished, while its event log is final.
+	DarksDeterministic::Instance().Finish();
 	VMContext::destroy();
 	return result;
 }

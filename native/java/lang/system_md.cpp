@@ -9,6 +9,7 @@
 #include "vm/executor/objectheap.h"
 #include "vm/executor/jobject.h"
 #include "vm/executor/javaexception.h"
+#include "vm/executor/deterministic.h"
 #include "platform/platform.h"
 
 #include <cstdint>
@@ -349,12 +350,22 @@ jlong JNICALL Java_java_lang_System_currentTimeMillis
 	// to prove that native dispatch reached this function.
 	fprintf(stdout, "probe: entered native System.currentTimeMillis()\n");
 	fflush(stdout);
+	DarksDeterministic &det = DarksDeterministic::Instance();
+	if (det.Enabled())
+	{
+		return static_cast<jlong>(det.CurrentTimeMillis());
+	}
 	return OS::GetCurrentTimeMillis();
 }
 
 jlong JNICALL Java_java_lang_System_nanoTime
 	(JNIEnv *, jclass)
 {
+	DarksDeterministic &det = DarksDeterministic::Instance();
+	if (det.Enabled())
+	{
+		return static_cast<jlong>(det.NanoTime());
+	}
 	return static_cast<jlong>(dk::NanoTime());
 }
 

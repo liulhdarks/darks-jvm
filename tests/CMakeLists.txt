@@ -50,6 +50,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/format/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/temporal/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/charset/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/darks/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/darks/concurrent/*.java"
     )
     set(JAVA_SOURCES
@@ -69,6 +70,11 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/GcThreads.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/MainMonitorHandoff.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/TimedWait.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/MonitorDeadlock.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/JoinCycle.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/ChannelCycle.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/TimedWaitNoFalsePositive.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/Starvation.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/ReflectionAdvanced.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/GenericReflect.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/AnnotationDemo.java"
@@ -84,6 +90,10 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/channel/SelectFairness.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/channel/SelectInterrupt.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/channel/ChannelGC.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/deterministic/DeterministicRepeat.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/deterministic/DeterministicRace.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/deterministic/VirtualClock.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/deterministic/DeterministicReplay.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/AssertCheck.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SystemProps.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/FileIoDemo.java"
@@ -727,6 +737,45 @@ if(JAVAC)
     add_thread_test(TimedWait "timed-wait ok")
 
     # ------------------------------------------------------------------
+    # Deadlock / starvation diagnostics (B4).  The watchdog exits with
+    # code 5 for a deadlock and 6 for starvation, so these tests assert
+    # both the exit code and the stderr report.
+    # ------------------------------------------------------------------
+    function(add_deadlock_test name expect2 mp)
+        add_test(NAME diag_${name}_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};-Ddarks.diag.deadlock=1;${name}"
+                -DEXPECT_RC=5 -DTIMEOUT=120
+                "-DEXPECT_TEXT=deadlock detected"
+                "-DEXPECT_TEXT2=${expect2}"
+                -P "${CHECK}")
+    endfunction()
+
+    foreach(mp 1 4)
+        add_deadlock_test(MonitorDeadlock "deadlock-a" ${mp})
+        add_deadlock_test(JoinCycle "join-a" ${mp})
+        add_deadlock_test(ChannelCycle "channel-a" ${mp})
+    endforeach()
+
+    add_test(NAME diag_TimedWaitNoFalsePositive
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPROG=${CMAKE_COMMAND}"
+            "-DARGS=-E;env;DARKS_JVM_MP=1;${JVM};-cp;${CLASSES_DIR};-Ddarks.diag.deadlock=1;TimedWaitNoFalsePositive"
+            -DEXPECT_RC=0 -DTIMEOUT=120
+            "-DEXPECT_TEXT=timed-wait-no-false-positive ok"
+            -P "${CHECK}")
+
+    add_test(NAME diag_Starvation_mp1
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPROG=${CMAKE_COMMAND}"
+            "-DARGS=-E;env;DARKS_JVM_MP=1;${JVM};-cp;${CLASSES_DIR};-Ddarks.diag.starvation=1;-Ddarks.diag.starvation.ms=2;Starvation"
+            -DEXPECT_RC=6 -DTIMEOUT=180
+            "-DEXPECT_TEXT=starvation detected"
+            "-DEXPECT_TEXT2=burner-"
+            -P "${CHECK}")
+
+    # ------------------------------------------------------------------
     # Virtual threads / minimal java.util.concurrent (combination B, B0+B1).
     # ------------------------------------------------------------------
     if(JAVAC21_MAJOR GREATER_EQUAL 21)
@@ -829,6 +878,36 @@ if(JAVAC)
                 "-DEXPECT_TEXT2=gc-collect"
                 -P "${CHECK}")
     endforeach()
+
+    # ------------------------------------------------------------------
+    # Combination B, B5: deterministic execution mode.  The virtual clock and
+    # seeded scheduling are exercised directly; the repeat/replay drivers
+    # launch independent JVMs and compare event hashes.
+    # ------------------------------------------------------------------
+    add_test(NAME deterministic_virtual_clock
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-Ddarks.deterministic=5;-cp;${CLASSES_DIR};VirtualClock"
+                -DEXPECT_RC=0 -DTIMEOUT=30
+                "-DEXPECT_TEXT=virtual-clock ok"
+                "-DEXPECT_TEXT2=elapsed_ms=3600000" -P "${CHECK}")
+
+    add_test(NAME deterministic_repeat
+        COMMAND "${CMAKE_COMMAND}"
+                "-DJVM=${JVM}" "-DCLASSES=${CLASSES_DIR}" "-DREPEAT=100"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/deterministic_repeat.cmake")
+    set_tests_properties(deterministic_repeat PROPERTIES TIMEOUT 600)
+
+    add_test(NAME deterministic_race
+        COMMAND "${CMAKE_COMMAND}"
+                "-DJVM=${JVM}" "-DCLASSES=${CLASSES_DIR}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/deterministic_race.cmake")
+    set_tests_properties(deterministic_race PROPERTIES TIMEOUT 300)
+
+    add_test(NAME deterministic_replay
+        COMMAND "${CMAKE_COMMAND}"
+                "-DJVM=${JVM}" "-DCLASSES=${CLASSES_DIR}" "-DWORK_DIR=${CMAKE_BINARY_DIR}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/deterministic_replay.cmake")
+    set_tests_properties(deterministic_replay PROPERTIES TIMEOUT 300)
 
     # ------------------------------------------------------------------
     # Producer/consumer example (examples/producer-consumer) and the

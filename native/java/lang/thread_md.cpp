@@ -11,6 +11,7 @@
 #include "jni_impl.h"
 
 #include "vm/executor/scheduler.h"
+#include "vm/executor/deterministic.h"
 #include "vm/executor/context.h"
 #include "vm/executor/objectheap.h"
 #include "vm/executor/jobject.h"
@@ -141,6 +142,16 @@ JNIEXPORT void JNICALL Java_java_lang_Thread_sleep0(JNIEnv *env, jclass clazz, j
 	(void)clazz;
 	if (millis > 0)
 	{
+		// Interpreted code suspends on the scheduler and uses the virtual
+		// clock; this native path is only reached from JNI/reflection, where
+		// the C stack cannot be suspended.  In deterministic mode it must not
+		// sleep on the wall clock, so mark the boundary and return.
+		DarksDeterministic &det = DarksDeterministic::Instance();
+		if (det.Enabled())
+		{
+			det.Boundary("thread.sleep.native");
+			return;
+		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<long long>(millis)));
 	}
 }
@@ -157,6 +168,14 @@ JNIEXPORT void JNICALL Java_java_lang_Thread_join0(JNIEnv *env, jobject thiz, jl
 	(void)env;
 	// Fallback path only (reflection/JNI invocation): poll the alive flag.
 	LPOBJECT_REF target = JniRef(thiz);
+	DarksDeterministic &det = DarksDeterministic::Instance();
+	if (det.Enabled())
+	{
+		// Same limitation as sleep0: a native frame cannot be suspended, and
+		// wall-clock polling would break reproducibility.
+		det.Boundary("thread.join.native");
+		return;
+	}
 	long long waited = 0;
 	while (Scheduler::Instance().ThreadAlive(target))
 	{

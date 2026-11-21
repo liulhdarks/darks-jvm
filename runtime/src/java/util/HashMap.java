@@ -5,6 +5,11 @@ public class HashMap<K, V> implements Map<K, V>
     private Object[] keys;
     private Object[] values;
     private boolean[] used;
+    // Insertion sequence per slot.  Iteration order normally stays the bucket
+    // order for compatibility; deterministic mode sorts by this sequence so a
+    // run does not depend on identity hash codes or table growth.
+    private int[] order;
+    private int nextOrder;
     private int count;
 
     public HashMap()
@@ -22,6 +27,7 @@ public class HashMap<K, V> implements Map<K, V>
         keys = new Object[size];
         values = new Object[size];
         used = new boolean[size];
+        order = new int[size];
     }
 
     private static int spread(Object key)
@@ -75,10 +81,12 @@ public class HashMap<K, V> implements Map<K, V>
         Object[] oldKeys = keys;
         Object[] oldValues = values;
         boolean[] oldUsed = used;
+        int[] oldOrder = order;
         int size = oldKeys.length * 2;
         keys = new Object[size];
         values = new Object[size];
         used = new boolean[size];
+        order = new int[size];
         count = 0;
         for (int i = 0; i < oldKeys.length; i++)
         {
@@ -88,6 +96,7 @@ public class HashMap<K, V> implements Map<K, V>
                 keys[index] = oldKeys[i];
                 values[index] = oldValues[i];
                 used[index] = true;
+                order[index] = oldOrder[i];
                 count++;
             }
         }
@@ -120,6 +129,7 @@ public class HashMap<K, V> implements Map<K, V>
         keys[index] = key;
         values[index] = value;
         used[index] = true;
+        order[index] = nextOrder++;
         count++;
         return null;
     }
@@ -172,9 +182,11 @@ public class HashMap<K, V> implements Map<K, V>
         Object[] oldKeys = keys;
         Object[] oldValues = values;
         boolean[] oldUsed = used;
+        int[] oldOrder = order;
         keys = new Object[size];
         values = new Object[size];
         used = new boolean[size];
+        order = new int[size];
         count = 0;
         for (int i = 0; i < oldKeys.length; i++)
         {
@@ -184,6 +196,7 @@ public class HashMap<K, V> implements Map<K, V>
                 keys[index] = oldKeys[i];
                 values[index] = oldValues[i];
                 used[index] = true;
+                order[index] = oldOrder[i];
                 count++;
             }
         }
@@ -196,8 +209,40 @@ public class HashMap<K, V> implements Map<K, V>
             keys[i] = null;
             values[i] = null;
             used[i] = false;
+            order[i] = 0;
         }
         count = 0;
+        nextOrder = 0;
+    }
+
+    // Slot visit order.  Deterministic mode uses insertion order; the default
+    // keeps the historical bucket order.
+    private int[] visitOrder()
+    {
+        int[] indices = new int[count];
+        int n = 0;
+        for (int i = 0; i < keys.length; i++)
+        {
+            if (used[i])
+            {
+                indices[n++] = i;
+            }
+        }
+        if (darks.Deterministic.enabled())
+        {
+            for (int i = 1; i < n; i++)
+            {
+                int value = indices[i];
+                int j = i - 1;
+                while (j >= 0 && order[indices[j]] > order[value])
+                {
+                    indices[j + 1] = indices[j];
+                    j--;
+                }
+                indices[j + 1] = value;
+            }
+        }
+        return indices;
     }
 
     public boolean containsValue(Object value)
@@ -227,12 +272,10 @@ public class HashMap<K, V> implements Map<K, V>
     public Set<K> keySet()
     {
         HashSet<K> result = new HashSet<K>();
-        for (int i = 0; i < keys.length; i++)
+        int[] indices = visitOrder();
+        for (int i = 0; i < indices.length; i++)
         {
-            if (used[i])
-            {
-                result.add((K)keys[i]);
-            }
+            result.add((K)keys[indices[i]]);
         }
         return result;
     }
@@ -240,12 +283,10 @@ public class HashMap<K, V> implements Map<K, V>
     public Collection<V> values()
     {
         ArrayList<V> result = new ArrayList<V>(count > 0 ? count : 1);
-        for (int i = 0; i < keys.length; i++)
+        int[] indices = visitOrder();
+        for (int i = 0; i < indices.length; i++)
         {
-            if (used[i])
-            {
-                result.add((V)values[i]);
-            }
+            result.add((V)values[indices[i]]);
         }
         return result;
     }
@@ -253,12 +294,10 @@ public class HashMap<K, V> implements Map<K, V>
     public Set<Map.Entry<K, V>> entrySet()
     {
         HashSet<Map.Entry<K, V>> result = new HashSet<Map.Entry<K, V>>(count * 2 + 1);
-        for (int i = 0; i < keys.length; i++)
+        int[] indices = visitOrder();
+        for (int i = 0; i < indices.length; i++)
         {
-            if (used[i])
-            {
-                result.add(new EntryImpl((K)keys[i]));
-            }
+            result.add(new EntryImpl((K)keys[indices[i]]));
         }
         return result;
     }
@@ -315,17 +354,16 @@ public class HashMap<K, V> implements Map<K, V>
     {
         StringBuilder sb = new StringBuilder("{");
         boolean first = true;
-        for (int i = 0; i < keys.length; i++)
+        int[] indices = visitOrder();
+        for (int i = 0; i < indices.length; i++)
         {
-            if (used[i])
+            int index = indices[i];
+            if (!first)
             {
-                if (!first)
-                {
-                    sb.append(", ");
-                }
-                sb.append(String.valueOf(keys[i])).append("=").append(String.valueOf(values[i]));
-                first = false;
+                sb.append(", ");
             }
+            sb.append(String.valueOf(keys[index])).append("=").append(String.valueOf(values[index]));
+            first = false;
         }
         sb.append("}");
         return sb.toString();

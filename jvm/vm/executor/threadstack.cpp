@@ -64,6 +64,72 @@ bool ThreadStack::HoldsMonitor() const
 	return false;
 }
 
+bool ThreadStack::DescribeTopFrame(std::string &out) const
+{
+	out.clear();
+	if (frames.empty())
+	{
+		return false;
+	}
+	lpStackFrame frame = frames.top();
+	if (!frame)
+	{
+		return false;
+	}
+	lpMethod method = frame->GetMethod();
+	const char *class_name = (frame->GetDeclaringClass() && frame->GetDeclaringClass()->thisClass)
+		? frame->GetDeclaringClass()->thisClass->GetName() : NULL;
+	const char *method_name = (method && method->methodName) ? method->methodName->GetName() : NULL;
+	if (class_name)
+	{
+		out += class_name;
+		if (method_name)
+		{
+			out += '.';
+		}
+	}
+	if (method_name)
+	{
+		out += method_name;
+		if (method->methodDesc && method->methodDesc->GetName())
+		{
+			out += method->methodDesc->GetName();
+		}
+	}
+	if (out.empty())
+	{
+		out = "<unknown frame>";
+	}
+	return true;
+}
+
+void ThreadStack::CollectHeldMonitors(
+	std::vector<std::pair<LPOBJECT_REF, lpClass> > &out) const
+{
+	out.clear();
+	// std::stack iterates innermost first; walk a copy into a vector so the
+	// report lists monitors in acquisition order.
+	std::vector<lpStackFrame> ordered;
+	std::stack<lpStackFrame> copy = frames;
+	while (!copy.empty())
+	{
+		ordered.push_back(copy.top());
+		copy.pop();
+	}
+	for (size_t i = ordered.size(); i > 0; i--)
+	{
+		lpStackFrame frame = ordered[i - 1];
+		if (!frame)
+		{
+			continue;
+		}
+		for (size_t m = 0; m < frame->monitors_held.size(); m++)
+		{
+			out.push_back(frame->monitors_held[m]);
+		}
+	}
+}
+
 void ThreadStack::AddFrame(lpClass clazz, lpMethod method, lpStackFrame &frame)
 {
 	frame = new StackFrame(this, clazz, method, class_loader);
