@@ -1,6 +1,8 @@
 package java.util.stream;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -48,6 +50,35 @@ public final class Collectors
                 public List<T> apply(List<T> list)
                 {
                     return list;
+                }
+            });
+    }
+
+    public static <T, C extends Collection<T>> Collector<T, ?, C> toCollection(
+        final Supplier<C> supplier)
+    {
+        return new CollectorImpl<T, C, C>(
+            supplier,
+            new BiConsumer<C, T>()
+            {
+                public void accept(C collection, T value)
+                {
+                    collection.add(value);
+                }
+            },
+            new BinaryOperator<C>()
+            {
+                public C apply(C first, C second)
+                {
+                    first.addAll(second);
+                    return first;
+                }
+            },
+            new Function<C, C>()
+            {
+                public C apply(C collection)
+                {
+                    return collection;
                 }
             });
     }
@@ -190,6 +221,23 @@ public final class Collectors
                 }
             });
     }
+
+    public static <T, A, R, RR> Collector<T, A, RR> collectingAndThen(
+        final Collector<T, A, R> downstream,
+        final Function<R, RR> finisher)
+    {
+        return new CollectorImpl<T, A, RR>(
+            downstream.supplier(),
+            downstream.accumulator(),
+            downstream.combiner(),
+            new Function<A, RR>()
+            {
+                public RR apply(A value)
+                {
+                    return finisher.apply(downstream.finisher().apply(value));
+                }
+            });
+    }
 }
 
 final class CollectorImpl<T, A, R> implements Collector<T, A, R>
@@ -198,14 +246,23 @@ final class CollectorImpl<T, A, R> implements Collector<T, A, R>
     private final BiConsumer<A, T> accumulator;
     private final BinaryOperator<A> combiner;
     private final Function<A, R> finisher;
+    private final Set<Characteristics> flags;
 
     CollectorImpl(Supplier<A> supplier, BiConsumer<A, T> accumulator,
                   BinaryOperator<A> combiner, Function<A, R> finisher)
+    {
+        this(supplier, accumulator, combiner, finisher, null);
+    }
+
+    CollectorImpl(Supplier<A> supplier, BiConsumer<A, T> accumulator,
+                  BinaryOperator<A> combiner, Function<A, R> finisher,
+                  Set<Characteristics> flags)
     {
         this.supplier = supplier;
         this.accumulator = accumulator;
         this.combiner = combiner;
         this.finisher = finisher;
+        this.flags = flags;
     }
 
     public Supplier<A> supplier()
@@ -226,5 +283,10 @@ final class CollectorImpl<T, A, R> implements Collector<T, A, R>
     public Function<A, R> finisher()
     {
         return finisher;
+    }
+
+    public Set<Characteristics> characteristics()
+    {
+        return flags == null ? Collections.emptySet() : flags;
     }
 }

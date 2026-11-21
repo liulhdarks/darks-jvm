@@ -2,8 +2,8 @@ package java.lang.reflect;
 
 import java.lang.annotation.Annotation;
 
-public final class Method extends AccessibleObject
-    implements GenericDeclaration, AnnotatedElement
+public final class Method extends Executable
+    implements AnnotatedElement
 {
     private Class declaringClass;
     private String name;
@@ -30,9 +30,35 @@ public final class Method extends AccessibleObject
         return modifiers;
     }
 
+    public boolean isBridge()
+    {
+        return (modifiers & 0x0040) != 0;
+    }
+
+    public boolean isSynthetic()
+    {
+        return (modifiers & 0x1000) != 0;
+    }
+
+    public boolean isVarArgs()
+    {
+        return (modifiers & 0x0080) != 0;
+    }
+
+    public boolean isDefault()
+    {
+        return declaringClass != null && declaringClass.isInterface() &&
+            (modifiers & (0x0400 | 0x0008 | 0x0002)) == 0;
+    }
+
     public native Class getReturnType();
 
     public native Class[] getParameterTypes();
+
+    public int getParameterCount()
+    {
+        return getParameterTypes().length;
+    }
 
     public native Class[] getExceptionTypes();
 
@@ -78,6 +104,8 @@ public final class Method extends AccessibleObject
     }
 
     public native Annotation[] getDeclaredAnnotations0();
+
+    public native Object getDefaultValue();
 
     public Annotation[] getDeclaredAnnotations()
     {
@@ -130,6 +158,29 @@ public final class Method extends AccessibleObject
     public <T extends Annotation> T[] getAnnotationsByType(Class<T> annotationClass)
     {
         return getDeclaredAnnotationsByType(annotationClass);
+    }
+
+    public boolean equals(Object obj)
+    {
+        if (this == obj)
+        {
+            return true;
+        }
+        if (!(obj instanceof Method))
+        {
+            return false;
+        }
+        Method other = (Method)obj;
+        return declaringClass == other.declaringClass &&
+            (name == null ? other.name == null : name.equals(other.name)) &&
+            (descriptor == null ? other.descriptor == null
+                : descriptor.equals(other.descriptor));
+    }
+
+    public int hashCode()
+    {
+        int h = declaringClass == null ? 0 : declaringClass.getName().hashCode();
+        return h ^ (name == null ? 0 : name.hashCode());
     }
 
     public String toString()

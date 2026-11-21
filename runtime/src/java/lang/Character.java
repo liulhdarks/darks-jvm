@@ -26,9 +26,94 @@ public final class Character implements Comparable<Character>
         return c >= '0' && c <= '9';
     }
 
+    public static boolean isDigit(int c)
+    {
+        return c >= '0' && c <= '9';
+    }
+
     public static boolean isLetter(char c)
     {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    public static boolean isLetter(int c)
+    {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    public static boolean isLetterOrDigit(char c)
+    {
+        return isLetter(c) || isDigit(c);
+    }
+
+    public static boolean isLetterOrDigit(int c)
+    {
+        return isLetter(c) || isDigit(c);
+    }
+
+    public static boolean isAlphabetic(int c)
+    {
+        return isLetter(c);
+    }
+
+    public static boolean isUpperCase(char c)
+    {
+        return c >= 'A' && c <= 'Z';
+    }
+
+    public static boolean isUpperCase(int c)
+    {
+        return c >= 'A' && c <= 'Z';
+    }
+
+    public static boolean isLowerCase(char c)
+    {
+        return c >= 'a' && c <= 'z';
+    }
+
+    public static boolean isLowerCase(int c)
+    {
+        return c >= 'a' && c <= 'z';
+    }
+
+    public static int toUpperCase(int c)
+    {
+        if (c >= 'a' && c <= 'z')
+        {
+            return c - 32;
+        }
+        return c;
+    }
+
+    public static int toLowerCase(int c)
+    {
+        if (c >= 'A' && c <= 'Z')
+        {
+            return c + 32;
+        }
+        return c;
+    }
+
+    public static int digit(int c, int radix)
+    {
+        return digit((char)c, radix);
+    }
+
+    public static int getNumericValue(char c)
+    {
+        if (c >= '0' && c <= '9')
+        {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'z')
+        {
+            return c - 'a' + 10;
+        }
+        if (c >= 'A' && c <= 'Z')
+        {
+            return c - 'A' + 10;
+        }
+        return -1;
     }
 
     public static char toUpperCase(char c)
@@ -90,6 +175,11 @@ public final class Character implements Comparable<Character>
     }
 
     public static boolean isWhitespace(char c)
+    {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\u000B';
+    }
+
+    public static boolean isWhitespace(int c)
     {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\u000B';
     }

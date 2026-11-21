@@ -15,6 +15,16 @@ public class LinkedHashMap<K, V> extends HashMap<K, V>
         super(capacity);
     }
 
+    public LinkedHashMap(int capacity, float loadFactor)
+    {
+        super(capacity);
+    }
+
+    public LinkedHashMap(int capacity, float loadFactor, boolean accessOrder)
+    {
+        super(capacity);
+    }
+
     public LinkedHashMap(Map<? extends K, ? extends V> values)
     {
         super();

@@ -63,7 +63,7 @@ void ThrowUnsupported(const char *what)
 
 LPOBJECT_REF EnsureCurrentThreadObject()
 {
-	lpCoroutine co = Scheduler::Current();
+	lpCoroutine co = Scheduler::CurrentJavaThread();
 	if (!co)
 	{
 		return NULL;

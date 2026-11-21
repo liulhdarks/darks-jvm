@@ -26,6 +26,12 @@ public final class Introspector
         return getBeanInfo(beanClass, null);
     }
 
+    public static BeanInfo getBeanInfo(Class<?> beanClass, int flags)
+        throws IntrospectionException
+    {
+        return getBeanInfo(beanClass, null);
+    }
+
     public static BeanInfo getBeanInfo(Class<?> beanClass, Class<?> stopClass)
         throws IntrospectionException
     {

@@ -137,6 +137,61 @@ public final class Long extends Number implements Comparable<Long>
         return a == b ? 0 : 1;
     }
 
+    public static int bitCount(long i)
+    {
+        i = i - ((i >>> 1) & 0x5555555555555555L);
+        i = (i & 0x3333333333333333L) + ((i >>> 2) & 0x3333333333333333L);
+        i = (i + (i >>> 4)) & 0x0f0f0f0f0f0f0f0fL;
+        i = i + (i >>> 8);
+        i = i + (i >>> 16);
+        i = i + (i >>> 32);
+        return (int)i & 0x7f;
+    }
+
+    public static int numberOfLeadingZeros(long i)
+    {
+        if (i == 0)
+        {
+            return 64;
+        }
+        int n = 1;
+        int x = (int)(i >>> 32);
+        if (x == 0)
+        {
+            n += 32;
+            x = (int)i;
+        }
+        if (x >>> 16 == 0) { n += 16; x <<= 16; }
+        if (x >>> 24 == 0) { n += 8; x <<= 8; }
+        if (x >>> 28 == 0) { n += 4; x <<= 4; }
+        if (x >>> 30 == 0) { n += 2; x <<= 2; }
+        n -= x >>> 31;
+        return n;
+    }
+
+    public static int numberOfTrailingZeros(long i)
+    {
+        if (i == 0)
+        {
+            return 64;
+        }
+        int n = 63;
+        int x = (int)i;
+        if (x != 0)
+        {
+            n -= 32;
+        }
+        else
+        {
+            x = (int)(i >>> 32);
+        }
+        if ((x << 16) != 0) { n -= 16; x <<= 16; }
+        if ((x << 8) != 0) { n -= 8; x <<= 8; }
+        if ((x << 4) != 0) { n -= 4; x <<= 4; }
+        if ((x << 2) != 0) { n -= 2; x <<= 2; }
+        return n - ((x << 1) >>> 31);
+    }
+
     public String toString()
     {
         return toString(value);

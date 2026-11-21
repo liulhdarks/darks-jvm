@@ -393,7 +393,44 @@ JNIEXPORT jobject JNICALL Java_java_lang_Class_forName(JNIEnv *env, jclass clazz
 {
 	(void)clazz;
 	std::string requested = JStringToUtf8(env, name);
-	lpClass found = JniFindClass(env, requested.c_str());
+	std::string internal = requested;
+	for (size_t i = 0; i < internal.size(); i++)
+	{
+		if (internal[i] == '.')
+		{
+			internal[i] = '/';
+		}
+	}
+	// Class.forName(String) resolves through the defining loader of the
+	// calling class, so runtime-defined classes (cglib, proxies) are visible
+	// by name to their own code.
+	lpClassLoader loader = NULL;
+	ThreadStack *stack = env ? static_cast<ThreadStack *>(env->thread_stack) : NULL;
+	if (stack)
+	{
+		loader = stack->TopFrameClassLoader();
+	}
+	lpClass found = NULL;
+	if (loader)
+	{
+		try
+		{
+			loader->FindClass(internal.c_str(), found);
+		}
+		catch (VMException *error)
+		{
+			delete error;
+			found = NULL;
+		}
+		catch (...)
+		{
+			found = NULL;
+		}
+	}
+	if (!found)
+	{
+		found = JniFindClass(env, requested.c_str());
+	}
 	if (!found)
 	{
 		jclass error_class = reinterpret_cast<jclass>(JniFindClass(env, "java/lang/ClassNotFoundException"));
@@ -403,6 +440,7 @@ JNIEXPORT jobject JNICALL Java_java_lang_Class_forName(JNIEnv *env, jclass clazz
 		}
 		return NULL;
 	}
+	DarksVM_EnsureInitialized(found);
 	jobject mirror = JniClassMirror(reinterpret_cast<jclass>(found));
 	JniAddLocalRef(env, mirror);
 	return mirror;

@@ -29,6 +29,17 @@ public abstract class Enum<E extends Enum<E>>
         return ordinal;
     }
 
+    public final Class<E> getDeclaringClass()
+    {
+        Class<?> clazz = getClass();
+        Class<?> superclass = clazz.getSuperclass();
+        if (superclass == Enum.class)
+        {
+            return (Class<E>)clazz;
+        }
+        return (Class<E>)superclass;
+    }
+
     public String toString()
     {
         return name;

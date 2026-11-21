@@ -45,13 +45,28 @@ public class Runtime
         System.exit(status);
     }
 
+    private final java.util.ArrayList<Thread> shutdownHooks =
+        new java.util.ArrayList<Thread>();
+
     public void addShutdownHook(Thread hook)
     {
-        throw new UnsupportedOperationException("shutdown hooks are not supported");
+        if (hook == null)
+        {
+            throw new NullPointerException("hook");
+        }
+        if (shutdownHooks.contains(hook))
+        {
+            throw new IllegalArgumentException("Hook already registered");
+        }
+        shutdownHooks.add(hook);
     }
 
     public boolean removeShutdownHook(Thread hook)
     {
-        throw new UnsupportedOperationException("shutdown hooks are not supported");
+        if (hook == null)
+        {
+            throw new NullPointerException("hook");
+        }
+        return shutdownHooks.remove(hook);
     }
 }

@@ -589,11 +589,17 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 			break;
 		case ldc:
 		case ldc_w:
-			LoadConstant(insn.a, s1);
+			if (!LoadConstant(insn.a, s1))
+			{
+				return ExceptionEvent();
+			}
 			op_stack->push(s1);
 			break;
 		case ldc2_w:
-			LoadConstantW(static_cast<U2>(insn.a), s1, s2);
+			if (!LoadConstantW(static_cast<U2>(insn.a), s1, s2))
+			{
+				return ExceptionEvent();
+			}
 			op_stack->push(s1);
 			op_stack->push(s2);
 			break;
@@ -794,6 +800,12 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 			op_stack->push(s3);
 			op_stack->push(s2);
 			op_stack->push(s1);
+			break;
+		case _swap:
+			op_stack->pop(s1);
+			op_stack->pop(s2);
+			op_stack->push(s1);
+			op_stack->push(s2);
 			break;
 
 		case iadd:
@@ -1084,17 +1096,17 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 			break;
 		case i2b:
 			op_stack->pop(s1);
-			s2.bValue = (signed char)s1.iValue;
+			s2.iValue = (signed char)s1.iValue;
 			op_stack->push(s2);
 			break;
 		case i2c:
 			op_stack->pop(s1);
-			s2.cValue = (uint16_t)s1.iValue;
+			s2.iValue = (int)(uint16_t)s1.iValue;
 			op_stack->push(s2);
 			break;
 		case i2s:
 			op_stack->pop(s1);
-			s2.sValue = (short)s1.iValue;
+			s2.iValue = (short)s1.iValue;
 			op_stack->push(s2);
 			break;
 		case lcmp:
@@ -1399,18 +1411,27 @@ EventNotify StackFrame::ExecuteCode()
 		break;
 
 	case ldc: //Push item from constant pool 			
-		LoadConstant(codes[pc++], s1);
+		if (!LoadConstant(codes[pc++], s1))
+		{
+			return ExceptionEvent();
+		}
 		op_stack->push(s1);
 		break;
 
 	case ldc_w: // Push item from constant pool (wide index)
-		LoadConstant(ReadU2(), s1);
+		if (!LoadConstant(ReadU2(), s1))
+		{
+			return ExceptionEvent();
+		}
 		op_stack->push(s1);
 		break;
 
 	case ldc2_w:// 20 /*(0x14)*/		
 		u2 = ReadU2();
-		LoadConstantW(u2, s1, s2);
+		if (!LoadConstantW(u2, s1, s2))
+		{
+			return ExceptionEvent();
+		}
 		op_stack->push(s1);
 		op_stack->push(s2);
 		break;
@@ -1701,6 +1722,12 @@ EventNotify StackFrame::ExecuteCode()
 			op_stack->push(s2);
 			op_stack->push(s1);
 		}
+		break;
+	case _swap:// 95 /*(0x5f)*/
+		op_stack->pop(s1);          // value1
+		op_stack->pop(s2);          // value2
+		op_stack->push(s1);
+		op_stack->push(s2);
 		break;
 		
 		//Type Conversion
@@ -2058,17 +2085,17 @@ EventNotify StackFrame::ExecuteCode()
 		break;
 	case i2b:
 		op_stack->pop(s1);
-		s2.bValue = (signed char) s1.iValue;
+		s2.iValue = (signed char) s1.iValue;
 		op_stack->push(s2);
 		break;
 	case i2c:
 		op_stack->pop(s1);
-		s2.cValue = (uint16_t) s1.iValue;
+		s2.iValue = (int) (uint16_t) s1.iValue;
 		op_stack->push(s2);
 		break;
 	case i2s:
 		op_stack->pop(s1);
-		s2.sValue = (short) s1.iValue;
+		s2.iValue = (short) s1.iValue;
 		op_stack->push(s2);
 		break;
 
@@ -2504,9 +2531,11 @@ EventNotify StackFrame::ExecuteCode()
 			{
 				lpClassConstant cc = (lpClassConstant)clazz->const_pool->GetConstant(u2);
 				lpClass target = NULL;
-				if (cc && cc->utf8)
+				if (cc && cc->utf8 &&
+				    !FindClassOrError(class_loader, cc->utf8->bytes, target,
+				                      "java/lang/NoClassDefFoundError"))
 				{
-					class_loader->FindClass(cc->utf8->bytes, target);
+					return ExceptionEvent();
 				}
 				lpObject cast_obj = NULL;
 				if (target && VMContext::object_heap->GetObject(cast_ref, cast_obj) &&
@@ -2528,9 +2557,11 @@ EventNotify StackFrame::ExecuteCode()
 			op_stack->pop(obj_slot);
 			lpClassConstant cc = (lpClassConstant)clazz->const_pool->GetConstant(u2);
 			lpClass target = NULL;
-			if (cc && cc->utf8)
+			if (cc && cc->utf8 &&
+			    !FindClassOrError(class_loader, cc->utf8->bytes, target,
+			                      "java/lang/NoClassDefFoundError"))
 			{
-				class_loader->FindClass(cc->utf8->bytes, target);
+				return ExceptionEvent();
 			}
 			lpObject inst_obj = NULL;
 			bool yes = obj_slot.heapPtr &&
@@ -2563,7 +2594,15 @@ EventNotify StackFrame::ExecuteCode()
 		}
 		break;
 	default:
-		throw VMExecutorException("Unknown code.");
+		{
+			char msg[256];
+			snprintf(msg, sizeof(msg), "Unknown code %d at %s.%s pc=%d.",
+				(int)code,
+				(clazz && clazz->thisClass) ? clazz->thisClass->GetName() : "?",
+				(method && method->fullName) ? method->fullName : "?",
+				(int)pc);
+			throw new VMExecutorException(msg);
+		}
 		break;
 	}
 	return EN_NOOP;
@@ -2701,7 +2740,7 @@ bool StackFrame::LoadConstant(int index, Slot &slot)
 			// java.lang.Class mirror of the referenced type.
 			ClassConstant *cc = (ClassConstant*)ct;
 			lpClass target = NULL;
-			if (!class_loader->FindClass(cc->GetName(), target) || !target)
+			if (!FindClassOrError(class_loader, cc->GetName(), target) || !target)
 			{
 				return false;
 			}
@@ -3050,13 +3089,17 @@ bool StackFrame::ExecuteInvokeDynamic(U2 index)
 			return false;
 		}
 		lpClass impl_class = NULL;
-		if (!class_loader->FindClass(impl_ref->clazz->utf8->bytes, impl_class) || !impl_class)
+		if (!FindClassOrError(class_loader, impl_ref->clazz->utf8->bytes, impl_class) || !impl_class)
 		{
 			return false;
 		}
 		lpMethod impl_method = NULL;
 		if (!impl_class->FindMethod(impl_ref->simple_name, impl_method) || !impl_method)
 		{
+			std::string message = std::string(impl_ref->clazz->utf8->bytes) + "." +
+				(impl_ref->simple_name ? impl_ref->simple_name : "?");
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NoSuchMethodError", message.c_str());
 			return false;
 		}
 		// The functional interface is the return type of the call site.
@@ -4317,7 +4360,7 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 	case DT_SHORT:
 		{
 			Slot slot;
-			slot.sValue = static_cast<int16_t>(ret.a);
+			slot.iValue = static_cast<int16_t>(ret.a);
 			op_stack->push(slot);
 			break;
 		}
@@ -4574,9 +4617,35 @@ bool StackFrame::InvokeLambda(int lambda_id, lpMethod call_method,
 		op_stack->pop(ignored);
 	}
 
+	lpClass invoke_class = info.target_class;
+	lpMethod invoke_method = info.target_method;
+	// A bound or unbound virtual/interface method reference dispatches on the
+	// runtime receiver, like invokevirtual/invokeinterface: the declaring
+	// class may only hold an abstract declaration.
+	if (!is_static && !is_constructor && (info.kind == 5 || info.kind == 9))
+	{
+		LPOBJECT_REF recv_ref = receiver_in_args
+			? (vars.empty() ? NULL : vars[0].heapPtr)
+			: (info.captures.empty() ? NULL : info.captures[0].low.heapPtr);
+		lpObject recv_obj = NULL;
+		if (recv_ref && VMContext::object_heap->GetObject(recv_ref, recv_obj) &&
+		    recv_obj && recv_obj->obj_class && invoke_method->methodName &&
+		    invoke_method->methodDesc)
+		{
+			std::string key = std::string(invoke_method->methodName->GetName()) + ":" +
+				invoke_method->methodDesc->GetName();
+			lpMethod resolved = NULL;
+			if (recv_obj->obj_class->FindMethod(const_cast<char *>(key.c_str()), resolved) &&
+			    resolved && resolved->code_attr)
+			{
+				invoke_method = resolved;
+				invoke_class = resolved->clazz ? resolved->clazz : recv_obj->obj_class;
+			}
+		}
+	}
 	Slot result;
 	bool result_wide = false;
-	if (!InvokeJavaSync(info.target_class, info.target_method, vars, result, result_wide))
+	if (!InvokeJavaSync(invoke_class, invoke_method, vars, result, result_wide))
 	{
 		return false;
 	}
@@ -5369,13 +5438,13 @@ bool StackFrame::LoadArray(DATA_TYPE data_type)
 	case DT_BYTE:
 		{
 			jbyte *bytes = (jbyte*)obj->array_var;
-			ret.bValue = bytes[index];
+			ret.iValue = (int)(signed char)bytes[index];
 			break;
 		}
 	case DT_CHAR:
 		{
 			jchar *vals = (jchar*)obj->array_var;
-			ret.cValue = vals[index];
+			ret.iValue = (int)(uint16_t)vals[index];
 			break;
 		}
 	case DT_DOUBLE:
@@ -5405,7 +5474,7 @@ bool StackFrame::LoadArray(DATA_TYPE data_type)
 	case DT_SHORT:
 		{
 			jshort *vals = (jshort*)obj->array_var;
-			ret.sValue = vals[index];
+			ret.iValue = (int)vals[index];
 			break;
 		}
 	case DT_ARRAY:

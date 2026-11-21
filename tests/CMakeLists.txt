@@ -34,7 +34,7 @@ endif()
 set(CLASSES_DIR "${CMAKE_BINARY_DIR}/classes")
 
 if(JAVAC)
-    file(GLOB RUNTIME_JAVA_SOURCES
+    file(GLOB RUNTIME_JAVA_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/io/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/net/*.java"
@@ -45,6 +45,8 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/concurrent/locks/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/reflect/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/annotation/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/invoke/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/ref/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/beans/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/regex/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/stream/*.java"
@@ -55,6 +57,11 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/format/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/temporal/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/charset/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/file/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/file/attribute/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/org/xml/sax/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/security/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/darks/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/darks/concurrent/*.java"
     )
@@ -115,6 +122,12 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/sdkcl/Plugin.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/sdkcl/PluginImpl.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SdkUtilTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkIdentityHashMapTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkWeakReferenceTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkReflectArrayTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkGcReferenceTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkReflectionEqualityTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkBitSetTest.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
     add_custom_command(
@@ -583,6 +596,42 @@ if(JAVAC)
                 "-DEXPECT_TEXT=util\ checks=[0-9]+\ failures=0"
                 "-DEXPECT_TEXT2=sdk\ util:\ ok"
                 "-DEXPECT_TEXT3=WARNING:\ log-warning-42" -P "${CHECK}")
+
+    add_test(NAME jdk_identity_hashmap
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};JdkIdentityHashMapTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=identity\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=identity\ hashmap:\ ok" -P "${CHECK}")
+
+    add_test(NAME jdk_weak_references
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};JdkWeakReferenceTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=reference\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=weak\ references:\ ok" -P "${CHECK}")
+
+    add_test(NAME jdk_reflect_array
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};JdkReflectArrayTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=reflect-array\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=reflect\ array:\ ok" -P "${CHECK}")
+
+    add_test(NAME jdk_gc_reference_stress
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};JdkGcReferenceTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc-reference\ rounds=100\ failures=0"
+                "-DEXPECT_TEXT2=gc\ reference\ stress:\ ok" -P "${CHECK}")
+
+    add_test(NAME jdk_reflection_equality
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};JdkReflectionEqualityTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=reflection-equality\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=reflection\ equality:\ ok" -P "${CHECK}")
+
+    add_test(NAME jdk_bitset
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};JdkBitSetTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=bitset\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=bitset:\ ok" -P "${CHECK}")
 
     add_test(NAME long_array_init
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}

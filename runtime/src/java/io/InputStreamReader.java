@@ -11,6 +11,26 @@ public class InputStreamReader extends Reader
         this.in = in;
     }
 
+    public InputStreamReader(InputStream in, java.nio.charset.Charset charset)
+    {
+        this.in = in;
+    }
+
+    public InputStreamReader(InputStream in, String charsetName)
+        throws UnsupportedEncodingException
+    {
+        if (charsetName == null)
+        {
+            throw new UnsupportedEncodingException("null charset name");
+        }
+        this.in = in;
+    }
+
+    public String getEncoding()
+    {
+        return "UTF-8";
+    }
+
     public int read() throws IOException
     {
         int first = in.read();

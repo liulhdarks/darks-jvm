@@ -117,6 +117,10 @@ struct ScopeInfo
 };
 
 thread_local lpCoroutine t_co = NULL;
+// The coroutine whose OS thread is borrowed by a nested executor (class
+// initialisation, string construction).  Thread.currentThread() must keep
+// reporting that Java thread while the nested stack runs.
+thread_local lpCoroutine t_host_co = NULL;
 thread_local WorkerInfo *t_worker = NULL;
 
 std::atomic<bool> g_stw_requested(false);
@@ -2174,6 +2178,11 @@ lpCoroutine Scheduler::Current()
 	return t_co;
 }
 
+lpCoroutine Scheduler::CurrentJavaThread()
+{
+	return t_co ? t_co : t_host_co;
+}
+
 ThreadStack *Scheduler::CurrentStack()
 {
 	return t_co ? t_co->ts : NULL;
@@ -2447,7 +2456,12 @@ EventNotify Scheduler::RunMain(ThreadStack *ts, lpClass clazz, lpMethod method,
 		// this nested stack take their OS-level fallback instead of parking the
 		// coroutine that happens to be running on this OS thread.
 		lpCoroutine saved = t_co;
+		lpCoroutine saved_host = t_host_co;
 		t_co = NULL;
+		if (saved)
+		{
+			t_host_co = saved;
+		}
 		EventNotify result;
 		if (vars)
 		{
@@ -2458,6 +2472,7 @@ EventNotify Scheduler::RunMain(ThreadStack *ts, lpClass clazz, lpMethod method,
 			result = ts->execute(clazz, method);
 		}
 		t_co = saved;
+		t_host_co = saved_host;
 		return result;
 	}
 	lpCoroutine co = impl->main_co;

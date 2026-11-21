@@ -81,6 +81,7 @@ public:
 	// Only read them for a coroutine that is not currently executing.
 	lpClass GetDeclaringClass() const { return clazz; }
 	lpMethod GetMethod() const { return method; }
+	lpClassLoader GetClassLoader() const { return class_loader; }
 	int GetInstructionPc() const { return last_pc; }
 
 private:

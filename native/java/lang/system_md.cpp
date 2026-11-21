@@ -343,6 +343,15 @@ void JNICALL Java_java_lang_System_setErr0
 {
 }
 
+void JNICALL Java_java_lang_System_gc0
+	(JNIEnv *, jclass)
+{
+	if (VMContext::object_heap)
+	{
+		VMContext::object_heap->gc();
+	}
+}
+
 jlong JNICALL Java_java_lang_System_currentTimeMillis
 	(JNIEnv *, jclass)
 {
@@ -684,6 +693,58 @@ jstring JNICALL Java_java_lang_System_getenv0
 		return NULL;
 	}
 	return env->NewStringUTF(value);
+}
+
+jobjectArray JNICALL Java_java_lang_System_getenvPairs0
+	(JNIEnv *env, jclass)
+{
+	std::vector<std::string> pairs;
+#if defined(_WIN32)
+	LPCH block = GetEnvironmentStringsA();
+	if (block)
+	{
+		for (LPCH cursor = block; *cursor; cursor += strlen(cursor) + 1)
+		{
+			std::string entry(cursor);
+			if (!entry.empty() && entry[0] != '=')
+			{
+				pairs.push_back(entry);
+			}
+		}
+		FreeEnvironmentStringsA(block);
+	}
+#else
+	for (char **cursor = environ; cursor && *cursor; cursor++)
+	{
+		pairs.push_back(std::string(*cursor));
+	}
+#endif
+	jclass string_class = reinterpret_cast<jclass>(
+		JniFindClass(env, "java/lang/String"));
+	if (!string_class)
+	{
+		return NULL;
+	}
+	jobjectArray result = env->NewObjectArray(
+		static_cast<jsize>(pairs.size() * 2), string_class, NULL);
+	if (!result)
+	{
+		return NULL;
+	}
+	for (size_t i = 0; i < pairs.size(); i++)
+	{
+		const std::string &entry = pairs[i];
+		size_t separator = entry.find('=');
+		std::string key = separator == std::string::npos
+			? entry : entry.substr(0, separator);
+		std::string value = separator == std::string::npos
+			? std::string() : entry.substr(separator + 1);
+		env->SetObjectArrayElement(result, static_cast<jsize>(i * 2),
+			env->NewStringUTF(key.c_str()));
+		env->SetObjectArrayElement(result, static_cast<jsize>(i * 2 + 1),
+			env->NewStringUTF(value.c_str()));
+	}
+	return result;
 }
 
 void JNICALL Java_java_lang_System_loadLibrary0

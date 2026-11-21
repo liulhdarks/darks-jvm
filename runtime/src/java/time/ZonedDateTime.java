@@ -161,6 +161,11 @@ public final class ZonedDateTime implements java.time.temporal.Temporal,
         return Instant.ofEpochSecond(seconds, dateTime.getNano());
     }
 
+    public OffsetDateTime toOffsetDateTime()
+    {
+        return OffsetDateTime.of(dateTime, getOffset());
+    }
+
     public int getYear()
     {
         return dateTime.getYear();

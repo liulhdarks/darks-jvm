@@ -7,14 +7,20 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Optional;
+import java.util.Spliterator;
+import java.util.Spliterators;
+import java.util.function.BinaryOperator;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.IntFunction;
 import java.util.function.Predicate;
+import java.util.function.ToIntFunction;
 
 // Eager, single-shot stream over an in-memory list.  Each intermediate
 // operation materialises its result, which keeps the implementation small and
 // predictable; laziness and parallel execution are intentionally absent.
-public interface Stream<T>
+public interface Stream<T> extends BaseStream<T, Stream<T>>
 {
     Stream<T> filter(Predicate<? super T> predicate);
 
@@ -29,6 +35,16 @@ public interface Stream<T>
     Stream<T> limit(long maxSize);
 
     Stream<T> skip(long count);
+
+    <R> Stream<R> flatMap(Function<? super T, ? extends Stream<? extends R>> mapper);
+
+    IntStream mapToInt(ToIntFunction<? super T> mapper);
+
+    Optional<T> findFirst();
+
+    Optional<T> reduce(BinaryOperator<T> accumulator);
+
+    Iterator<T> iterator();
 
     long count();
 
@@ -46,6 +62,8 @@ public interface Stream<T>
 
     Object[] toArray();
 
+    <A> A[] toArray(IntFunction<A[]> generator);
+
     static <T> Stream<T> of(T... values)
     {
         ArrayList<T> list = new ArrayList<T>(values.length > 0 ? values.length : 1);
@@ -59,6 +77,22 @@ public interface Stream<T>
     static <T> Stream<T> empty()
     {
         return new ArrayListStream<T>(new ArrayList<T>());
+    }
+
+    static <T> Stream<T> concat(Stream<? extends T> first, Stream<? extends T> second)
+    {
+        ArrayList<T> list = new ArrayList<T>();
+        Iterator<? extends T> it = first.iterator();
+        while (it.hasNext())
+        {
+            list.add(it.next());
+        }
+        it = second.iterator();
+        while (it.hasNext())
+        {
+            list.add(it.next());
+        }
+        return new ArrayListStream<T>(list);
     }
 
     static <T> Stream<T> from(Collection<? extends T> values)
@@ -175,6 +209,97 @@ final class ArrayListStream<T> implements Stream<T>
         return new ArrayListStream<T>(result);
     }
 
+    public <R> Stream<R> flatMap(Function<? super T, ? extends Stream<? extends R>> mapper)
+    {
+        ArrayList<R> result = new ArrayList<R>();
+        for (int i = 0; i < elements.size(); i++)
+        {
+            Stream<? extends R> inner = mapper.apply(elements.get(i));
+            if (inner == null)
+            {
+                continue;
+            }
+            java.util.Iterator<? extends R> it = inner.iterator();
+            while (it.hasNext())
+            {
+                result.add(it.next());
+            }
+        }
+        return new ArrayListStream<R>(result);
+    }
+
+    public IntStream mapToInt(ToIntFunction<? super T> mapper)
+    {
+        int[] result = new int[elements.size()];
+        for (int i = 0; i < elements.size(); i++)
+        {
+            result[i] = mapper.applyAsInt(elements.get(i));
+        }
+        return IntStream.of(result);
+    }
+
+    public Optional<T> findFirst()
+    {
+        if (elements.isEmpty())
+        {
+            return Optional.empty();
+        }
+        return Optional.of(elements.get(0));
+    }
+
+    public Optional<T> reduce(BinaryOperator<T> accumulator)
+    {
+        if (elements.isEmpty())
+        {
+            return Optional.empty();
+        }
+        T result = elements.get(0);
+        for (int i = 1; i < elements.size(); i++)
+        {
+            result = accumulator.apply(result, elements.get(i));
+        }
+        return Optional.of(result);
+    }
+
+    public Iterator<T> iterator()
+    {
+        return copy().iterator();
+    }
+
+    public Spliterator<T> spliterator()
+    {
+        return Spliterators.spliterator(elements, Spliterator.ORDERED);
+    }
+
+    public boolean isParallel()
+    {
+        return false;
+    }
+
+    public Stream<T> sequential()
+    {
+        return this;
+    }
+
+    public Stream<T> parallel()
+    {
+        return this;
+    }
+
+    public Stream<T> unordered()
+    {
+        return this;
+    }
+
+    public Stream<T> onClose(Runnable closeHandler)
+    {
+        return this;
+    }
+
+    public void close()
+    {
+    }
+
     public long count()
     {
         return elements.size();
@@ -239,6 +364,16 @@ final class ArrayListStream<T> implements Stream<T>
         for (int i = 0; i < elements.size(); i++)
         {
             result[i] = elements.get(i);
+        }
+        return result;
+    }
+
+    public <A> A[] toArray(IntFunction<A[]> generator)
+    {
+        A[] result = generator.apply(elements.size());
+        for (int i = 0; i < elements.size(); i++)
+        {
+            result[i] = (A)elements.get(i);
         }
         return result;
     }

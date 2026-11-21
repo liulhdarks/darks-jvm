@@ -43,6 +43,21 @@ public abstract class InputStream
         return count;
     }
 
+    public int available() throws IOException
+    {
+        return 0;
+    }
+
+    public long skip(long count) throws IOException
+    {
+        long skipped = 0;
+        while (skipped < count && read() >= 0)
+        {
+            skipped = skipped + 1;
+        }
+        return skipped;
+    }
+
     public void close() throws IOException
     {
     }

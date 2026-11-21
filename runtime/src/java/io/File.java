@@ -73,6 +73,32 @@ public class File
         return dir + "/" + path;
     }
 
+    public File getAbsoluteFile()
+    {
+        return new File(getAbsolutePath());
+    }
+
+    public String getCanonicalPath() throws IOException
+    {
+        return getAbsolutePath();
+    }
+
+    public File getCanonicalFile() throws IOException
+    {
+        return new File(getAbsolutePath());
+    }
+
+    public boolean isAbsolute()
+    {
+        return path.length() > 0 && path.charAt(0) == '/';
+    }
+
+    public File getParentFile()
+    {
+        String parent = getParent();
+        return parent == null ? null : new File(parent);
+    }
+
     public boolean exists()
     {
         return exists0();

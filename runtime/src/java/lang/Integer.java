@@ -19,6 +19,16 @@ public final class Integer extends Number implements Comparable<Integer>
         return new Integer(value);
     }
 
+    public static Integer valueOf(String text)
+    {
+        return valueOf(parseInt(text));
+    }
+
+    public static Integer valueOf(String text, int radix)
+    {
+        return valueOf(parseInt(text, radix));
+    }
+
     public int intValue()
     {
         return value;
@@ -67,6 +77,45 @@ public final class Integer extends Number implements Comparable<Integer>
     public static int parseInt(String s)
     {
         return (int)parseLong(s);
+    }
+
+    public static int parseInt(String s, int radix)
+    {
+        if (s == null || s.length() == 0)
+        {
+            throw new NumberFormatException("empty string");
+        }
+        if (radix < 2 || radix > 36)
+        {
+            throw new NumberFormatException("radix " + radix);
+        }
+        int i = 0;
+        boolean negative = false;
+        if (s.charAt(0) == '-')
+        {
+            negative = true;
+            i = 1;
+        }
+        else if (s.charAt(0) == '+')
+        {
+            i = 1;
+        }
+        if (i >= s.length())
+        {
+            throw new NumberFormatException(s);
+        }
+        int result = 0;
+        while (i < s.length())
+        {
+            int digit = Character.digit(s.charAt(i), radix);
+            if (digit < 0)
+            {
+                throw new NumberFormatException(s);
+            }
+            result = result * radix + digit;
+            i = i + 1;
+        }
+        return negative ? -result : result;
     }
 
     public static long parseLong(String s)

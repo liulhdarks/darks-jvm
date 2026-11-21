@@ -301,6 +301,13 @@ public class Thread implements Runnable
         return name != null ? name : ("Thread-" + tid);
     }
 
+    public final ThreadGroup getThreadGroup()
+    {
+        return DEFAULT_GROUP;
+    }
+
+    private static final ThreadGroup DEFAULT_GROUP = new ThreadGroup("main");
+
     public final void setName(String newName)
     {
         if (newName == null)

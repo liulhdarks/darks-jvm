@@ -2,6 +2,7 @@
 #include "jclass.h"
 #include "executor.h"
 #include "methodarea.h"
+#include "javaexception.h"
 #include "utils/DebugUtils.h"
 
 Class::Class()
@@ -187,36 +188,122 @@ int Class::EnsureInstanceLayout()
 	return instance_field_total;
 }
 
+namespace
+{
+	void CollectSuperInterfaces(lpClass clazz, lpClassLoader loader,
+	                            std::vector<lpClass> &out, int depth)
+	{
+		if (!clazz || !loader || depth <= 0)
+		{
+			return;
+		}
+		for (U2 i = 0; i < clazz->interfaceCount; i++)
+		{
+			lpClassConstant ic = clazz->interfaces ? clazz->interfaces[i] : NULL;
+			if (!ic || !ic->GetName())
+			{
+				continue;
+			}
+			lpClass iface = NULL;
+			if (!loader->FindClass(ic->GetName(), iface) || !iface)
+			{
+				continue;
+			}
+			bool seen = false;
+			for (size_t k = 0; k < out.size(); k++)
+			{
+				if (out[k] == iface)
+				{
+					seen = true;
+					break;
+				}
+			}
+			if (seen)
+			{
+				continue;
+			}
+			out.push_back(iface);
+			CollectSuperInterfaces(iface, loader, out, depth - 1);
+		}
+	}
+}
+
 bool Class::FindMethod(LPSTR method_name, lpMethod& method)
 {
-	method = MethodArea::GetMethod(this, method_name);
-	if (method)
+	method = NULL;
+	// 1. A method declared by this class always wins.
+	lpMethod declared = MethodArea::GetMethod(this, method_name);
+	if (declared)
 	{
+		method = declared;
 		return true;
 	}
-	// Interface default/static methods are inherited by implementing classes,
-	// so resolution has to walk the interface graph as well as the superclass
-	// chain.  Interfaces are resolved lazily (they may not have been loaded
-	// when this class was defined).
-	for (U2 i = 0; i < interfaceCount; i++)
+	// 2. Declared superclass methods beat interface defaults.  An abstract
+	// superclass declaration is only a fallback: a more specific interface
+	// default may still provide the implementation.
+	lpMethod fallback = NULL;
+	for (lpClass c = super_class; c; c = c->super_class)
 	{
-		lpClassConstant ic = interfaces ? interfaces[i] : NULL;
-		if (!ic || !ic->GetName() || !classloader)
+		lpMethod m = MethodArea::GetMethod(c, method_name);
+		if (!m)
 		{
 			continue;
 		}
-		lpClass iface = NULL;
-		if (classloader->FindClass(ic->GetName(), iface) && iface &&
-		    iface->FindMethod(method_name, method))
+		if ((m->accFlag & ACM_ABSTRACT) == 0)
 		{
-			MethodArea::AddMethod(this, method);
+			method = m;
 			return true;
 		}
+		if (!fallback)
+		{
+			fallback = m;
+		}
 	}
-	if (super_class && super_class->FindMethod(method_name, method))
+	// 3. Superinterfaces.  The JVM selects the maximally specific non-abstract
+	// default, so a subinterface override (IterableConfigurationPropertySource)
+	// must win over its parent's default (ConfigurationPropertySource) even
+	// when the parent is reached through an earlier superclass.
+	std::vector<lpClass> ifaces;
+	for (lpClass c = this; c; c = c->super_class)
 	{
-		MethodArea::AddMethod(this, method);
+		CollectSuperInterfaces(c, classloader, ifaces, 32);
+	}
+	lpMethod best = NULL;
+	lpClass best_iface = NULL;
+	for (size_t i = 0; i < ifaces.size(); i++)
+	{
+		lpMethod candidate = MethodArea::GetMethod(ifaces[i], method_name);
+		if (!candidate)
+		{
+			continue;
+		}
+		if ((candidate->accFlag & ACM_ABSTRACT) != 0)
+		{
+			if (!fallback)
+			{
+				fallback = candidate;
+			}
+			continue;
+		}
+		if (!best)
+		{
+			best = candidate;
+			best_iface = ifaces[i];
+			continue;
+		}
+		if (best != candidate && best_iface &&
+		    ClassIsAssignable(best_iface, ifaces[i]))
+		{
+			// ifaces[i] is a subinterface of best_iface: more specific.
+			best = candidate;
+			best_iface = ifaces[i];
+		}
+	}
+	if (best)
+	{
+		method = best;
 		return true;
 	}
-	return false;
+	method = fallback;
+	return method != NULL;
 }

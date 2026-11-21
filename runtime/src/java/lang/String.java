@@ -339,6 +339,11 @@ public final class String implements Comparable<String>, CharSequence
         return indexOf(s) >= 0;
     }
 
+    public boolean contains(CharSequence s)
+    {
+        return indexOf(s.toString()) >= 0;
+    }
+
     public CharSequence subSequence(int begin, int end)
     {
         return substring(begin, end);
@@ -375,6 +380,33 @@ public final class String implements Comparable<String>, CharSequence
             i = i + 1;
         }
         return new String(result);
+    }
+
+    public String toUpperCase(java.util.Locale locale)
+    {
+        return toUpperCase();
+    }
+
+    public String toLowerCase(java.util.Locale locale)
+    {
+        return toLowerCase();
+    }
+
+    public java.util.stream.IntStream chars()
+    {
+        int[] codes = new int[value.length];
+        int i = 0;
+        while (i < value.length)
+        {
+            codes[i] = value[i];
+            i = i + 1;
+        }
+        return java.util.stream.IntStream.of(codes);
+    }
+
+    public java.util.stream.IntStream codePoints()
+    {
+        return chars();
     }
 
     public String toLowerCase()

@@ -6,6 +6,8 @@ public final class System
 
     public static java.io.PrintStream err;
 
+    public static java.io.InputStream in;
+
     // Single system property table shared by getProperty / setProperty /
     // clearProperty / getProperties.  Defaults come from the native
     // initProperties (real process environment plus -D overrides).
@@ -15,6 +17,7 @@ public final class System
     {
         out = new java.io.PrintStream();
         err = new java.io.PrintStream(true);
+        in = new java.io.ByteArrayInputStream(new byte[0]);
         props = initProperties(new java.util.Properties());
     }
 
@@ -37,6 +40,23 @@ public final class System
     {
         String value = props.getProperty(key);
         return value == null ? defaultValue : value;
+    }
+
+    private static SecurityManager securityManager;
+
+    public static java.io.Console console()
+    {
+        return null;
+    }
+
+    public static SecurityManager getSecurityManager()
+    {
+        return securityManager;
+    }
+
+    public static void setSecurityManager(SecurityManager manager)
+    {
+        securityManager = manager;
     }
 
     public static String setProperty(String key, String value)
@@ -86,11 +106,31 @@ public final class System
 
     private static native String getenv0(String name);
 
+    public static java.util.Map<String, String> getenv()
+    {
+        java.util.HashMap<String, String> values =
+            new java.util.HashMap<String, String>();
+        String[] pairs = getenvPairs0();
+        if (pairs != null)
+        {
+            for (int i = 0; i + 1 < pairs.length; i = i + 2)
+            {
+                values.put(pairs[i], pairs[i + 1]);
+            }
+        }
+        return java.util.Collections.unmodifiableMap(values);
+    }
+
+    private static native String[] getenvPairs0();
+
     private System()
     {
     }
 
     public static void gc()
     {
+        gc0();
     }
+
+    private static native void gc0();
 }

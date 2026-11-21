@@ -157,6 +157,11 @@ public:
 	                    lpVariant vars, int count);
 
 	static lpCoroutine Current();
+	// The Java thread an interpreter frame belongs to.  Unlike Current() this
+	// keeps reporting the suspended coroutine while a nested executor (class
+	// initialisation, JNI embedding) runs on that coroutine's OS thread, so
+	// Thread.currentThread() never observes null.
+	static lpCoroutine CurrentJavaThread();
 	static ThreadStack *CurrentStack();
 	static bool InCoroutine();
 

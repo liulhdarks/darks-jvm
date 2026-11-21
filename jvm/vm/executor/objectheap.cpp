@@ -43,6 +43,50 @@ size_t ElementBytes(DATA_TYPE data_type)
 
 } // namespace
 
+namespace {
+
+lpFieldValue FindFieldValue(lpObject obj, const char *name)
+{
+	if (!obj || !name)
+	{
+		return NULL;
+	}
+	std::string key(name);
+	FIELD_MAP::iterator it = obj->varants.find(key);
+	if (it != obj->varants.end())
+	{
+		return it->second;
+	}
+	key += ":";
+	for (it = obj->varants.begin(); it != obj->varants.end(); ++it)
+	{
+		if (it->first.compare(0, key.size(), key) == 0)
+		{
+			return it->second;
+		}
+	}
+	return NULL;
+}
+
+bool IsReferenceObject(lpObject obj)
+{
+	if (!obj || !obj->obj_class)
+	{
+		return false;
+	}
+	for (lpClass clazz = obj->obj_class; clazz; clazz = clazz->super_class)
+	{
+		if (clazz->thisClass && clazz->thisClass->GetName() &&
+		    strcmp(clazz->thisClass->GetName(), "java/lang/ref/Reference") == 0)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+} // namespace
+
 ObjectHeap::~ObjectHeap()
 {
 	if (gc_log && gc_runs > 0)
@@ -407,6 +451,116 @@ void ObjectHeap::MarkRoots()
 	MarkJniLocalRoots();
 }
 
+void ObjectHeap::ProcessWeakReferences()
+{
+	for (size_t i = 0; i < weak_reference_objects.size(); i++)
+	{
+		OBJECT_REF index = weak_reference_objects[i];
+		if (index <= 0 || static_cast<size_t>(index) >= objs.size())
+		{
+			continue;
+		}
+		lpObject reference = objs[static_cast<size_t>(index)];
+		if (!reference)
+		{
+			continue;
+		}
+		lpFieldValue referent = FindFieldValue(reference, "referent");
+		if (!referent || !referent->field_value.heapPtr)
+		{
+			continue;
+		}
+		LPOBJECT_REF target = referent->field_value.heapPtr;
+		bool reachable = false;
+		std::map<const OBJECT_REF *, OBJECT_REF>::iterator target_it =
+			ref_index.find(target);
+		if (target_it != ref_index.end())
+		{
+			OBJECT_REF target_index = target_it->second;
+			reachable = target_index > 0 &&
+				static_cast<size_t>(target_index) < marked.size() &&
+				marked[static_cast<size_t>(target_index)];
+		}
+		if (reachable)
+		{
+			continue;
+		}
+		referent->field_value.heapPtr = NULL;
+
+		lpFieldValue queue_field = FindFieldValue(reference, "queue");
+		if (!queue_field || !queue_field->field_value.heapPtr)
+		{
+			continue;
+		}
+		lpFieldValue enqueued = FindFieldValue(reference, "enqueued");
+		if (enqueued && enqueued->field_value.blValue)
+		{
+			continue;
+		}
+		lpObject queue = NULL;
+		if (!GetObject(queue_field->field_value.heapPtr, queue) || !queue)
+		{
+			continue;
+		}
+		lpFieldValue head = FindFieldValue(queue, "head");
+		lpFieldValue tail = FindFieldValue(queue, "tail");
+		if (!head)
+		{
+			continue;
+		}
+		LPOBJECT_REF self = &reference->index;
+		lpFieldValue next = FindFieldValue(reference, "next");
+		if (next)
+		{
+			next->field_value.heapPtr = NULL;
+		}
+		if (!head->field_value.heapPtr)
+		{
+			head->field_value.heapPtr = self;
+			if (tail)
+			{
+				tail->field_value.heapPtr = self;
+			}
+		}
+		else
+		{
+			lpObject last = NULL;
+			if (!tail || !tail->field_value.heapPtr ||
+			    !GetObject(tail->field_value.heapPtr, last) || !last)
+			{
+				if (!GetObject(head->field_value.heapPtr, last) || !last)
+				{
+					continue;
+				}
+				while (true)
+				{
+					lpFieldValue link = FindFieldValue(last, "next");
+					lpObject following = NULL;
+					if (!link || !link->field_value.heapPtr ||
+					    !GetObject(link->field_value.heapPtr, following) || !following)
+					{
+						break;
+					}
+					last = following;
+				}
+			}
+			lpFieldValue link = FindFieldValue(last, "next");
+			if (link)
+			{
+				link->field_value.heapPtr = self;
+			}
+			if (tail)
+			{
+				tail->field_value.heapPtr = self;
+			}
+		}
+		if (enqueued)
+		{
+			enqueued->field_value.blValue = 1;
+		}
+	}
+}
+
 void ObjectHeap::gc()
 {
 	// Only one collection at a time.  A native call may reach allocation from
@@ -444,6 +598,7 @@ void ObjectHeap::gc()
 
 	marked.assign(objs.size(), false);
 	mark_stack.clear();
+	weak_reference_objects.clear();
 
 	MarkRoots();
 
@@ -457,11 +612,22 @@ void ObjectHeap::gc()
 		{
 			continue;
 		}
+		bool reference = IsReferenceObject(obj);
+		if (reference)
+		{
+			weak_reference_objects.push_back(idx);
+		}
 		// Instance fields. Primitive values are tolerated: MarkObjectRef only
 		// accepts pointers that match a live object's index address.
 		FIELD_MAP::iterator field_it = obj->varants.begin();
 		for (; field_it != obj->varants.end(); ++field_it)
 		{
+			// Reference.referent is a weak edge; it is handled after the
+			// strong trace once reachability is known.
+			if (reference && field_it->first.compare(0, 9, "referent:") == 0)
+			{
+				continue;
+			}
 			lpFieldValue fv = field_it->second;
 			if (fv)
 			{
@@ -479,6 +645,8 @@ void ObjectHeap::gc()
 			}
 		}
 	}
+
+	ProcessWeakReferences();
 
 	size_t freed_bytes = 0;
 	size_t freed_objects = 0;
