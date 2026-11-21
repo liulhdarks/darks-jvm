@@ -266,6 +266,34 @@ JNIEXPORT jobjectArray JNICALL Java_java_lang_Throwable_captureStack0(JNIEnv *en
 // java.lang.Math
 // ---------------------------------------------------------------------------
 
+JNIEXPORT jint JNICALL Java_java_lang_Float_floatToRawIntBits(JNIEnv *, jclass, jfloat value)
+{
+	jint bits;
+	memcpy(&bits, &value, sizeof(bits));
+	return bits;
+}
+
+JNIEXPORT jfloat JNICALL Java_java_lang_Float_intBitsToFloat(JNIEnv *, jclass, jint bits)
+{
+	jfloat value;
+	memcpy(&value, &bits, sizeof(value));
+	return value;
+}
+
+JNIEXPORT jlong JNICALL Java_java_lang_Double_doubleToRawLongBits(JNIEnv *, jclass, jdouble value)
+{
+	jlong bits;
+	memcpy(&bits, &value, sizeof(bits));
+	return bits;
+}
+
+JNIEXPORT jdouble JNICALL Java_java_lang_Double_longBitsToDouble(JNIEnv *, jclass, jlong bits)
+{
+	jdouble value;
+	memcpy(&value, &bits, sizeof(value));
+	return value;
+}
+
 JNIEXPORT jdouble JNICALL Java_java_lang_Math_sqrt(JNIEnv *env, jclass clazz, jdouble value)
 {
 	(void)env;
@@ -362,6 +390,27 @@ JNIEXPORT jobject JNICALL Java_java_lang_Class_getPrimitiveClass(JNIEnv *env,
 	return mirror;
 }
 
+JNIEXPORT jstring JNICALL Java_java_lang_Class_getSource0(JNIEnv *env, jobject thiz)
+{
+	lpClass clazz = ClassPointer(thiz);
+	if (!clazz || !clazz->thisClass || !clazz->thisClass->GetName())
+	{
+		return NULL;
+	}
+	const char *name = clazz->thisClass->GetName();
+	if (name[0] == '[')
+	{
+		return NULL;
+	}
+	std::vector<uint8_t> data;
+	std::string source;
+	if (!DarksVM_FindClassBytes(std::string(name), data, &source) || source.empty())
+	{
+		return NULL;
+	}
+	return env->NewStringUTF(source.c_str());
+}
+
 JNIEXPORT jobject JNICALL Java_java_lang_Class_getSuperclass(JNIEnv *env, jobject thiz)
 {
 	lpClass clazz = ClassPointer(thiz);
@@ -373,7 +422,6 @@ JNIEXPORT jobject JNICALL Java_java_lang_Class_getSuperclass(JNIEnv *env, jobjec
 	JniAddLocalRef(env, mirror);
 	return mirror;
 }
-
 JNIEXPORT jboolean JNICALL Java_java_lang_Class_isInstance(JNIEnv *env, jobject thiz,
 	jobject obj)
 {
@@ -572,6 +620,7 @@ JNIEXPORT jlong JNICALL Java_java_lang_ClassLoader_createLoader0(JNIEnv *env, jo
 		VMLock lk;
 		ManagedLoaders()[loader] = global;
 	}
+	DarksVM_RegisterJavaClassLoader(loader, JniRef(global));
 	if (!cleanup_registered)
 	{
 		cleanup_registered = true;
@@ -603,6 +652,15 @@ JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_defineClass0(JNIEnv *env,
 		VMLock lk;
 		defined = loader->DefineClass(data, static_cast<int>(length), clazz);
 	}
+	catch (VMException *e)
+	{
+		delete e;
+		defined = false;
+	}
+	catch (const std::exception &e)
+	{
+		defined = false;
+	}
 	catch (...)
 	{
 		defined = false;
@@ -627,8 +685,52 @@ JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_defineClass0(JNIEnv *env,
 		loader->DiscardClass(clazz);
 		return NULL;
 	}
+	// Classes defined through a Java class loader (Spring Boot's nested jar
+	// loader) must run <clinit> like classes resolved through the native
+	// loader; otherwise static state stays at its default values.
+	try
+	{
+		clazz->initialize(true);
+	}
+	catch (VMException *error)
+	{
+		delete error;
+	}
 	jobject mirror = JniClassMirror(reinterpret_cast<jclass>(clazz));
 	JniAddLocalRef(env, mirror);
+	return mirror;
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_findLoadedClass0(JNIEnv *env,
+	jclass, jlong handle, jstring name)
+{
+	lpClassLoader loader = reinterpret_cast<lpClassLoader>(static_cast<intptr_t>(handle));
+	if (!loader || !name)
+	{
+		return NULL;
+	}
+	std::string requested = JStringToUtf8(env, name);
+	for (size_t i = 0; i < requested.size(); i++)
+	{
+		if (requested[i] == '.')
+		{
+			requested[i] = '/';
+		}
+	}
+	lpClass clazz = NULL;
+	{
+		VMLock lk;
+		bool found = loader->GetLoadedClass(requested.c_str(), clazz) && clazz;
+		if (!found)
+		{
+			return NULL;
+		}
+	}
+	jobject mirror = JniClassMirror(reinterpret_cast<jclass>(clazz));
+	if (mirror)
+	{
+		JniAddLocalRef(env, mirror);
+	}
 	return mirror;
 }
 

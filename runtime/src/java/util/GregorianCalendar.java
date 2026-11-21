@@ -51,7 +51,7 @@ public class GregorianCalendar extends Calendar
     public static GregorianCalendar from(java.time.ZonedDateTime value)
     {
         GregorianCalendar calendar =
-            new GregorianCalendar(TimeZone.getTimeZone(value.getZone()));
+            new GregorianCalendar(TimeZone.getTimeZone(value.getZone().getId()));
         calendar.setTimeInMillis(value.toInstant().toEpochMilli());
         return calendar;
     }

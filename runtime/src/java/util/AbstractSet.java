@@ -16,12 +16,19 @@ public abstract class AbstractSet<E> extends AbstractCollection<E> implements Se
         {
             return false;
         }
-        Set<?> set = (Set<?>)other;
+        Set set = (Set)other;
         if (set.size() != size())
         {
             return false;
         }
-        return containsAll(set);
+        try
+        {
+            return containsAll(set);
+        }
+        catch (NullPointerException e)
+        {
+            return false;
+        }
     }
 
     public int hashCode()
@@ -37,5 +44,32 @@ public abstract class AbstractSet<E> extends AbstractCollection<E> implements Se
             }
         }
         return result;
+    }
+
+    public boolean containsAll(Collection<?> values)
+    {
+        Iterator<?> it = values.iterator();
+        while (it.hasNext())
+        {
+            if (!contains(it.next()))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public boolean addAll(Collection<? extends E> values)
+    {
+        boolean changed = false;
+        Iterator<? extends E> it = values.iterator();
+        while (it.hasNext())
+        {
+            if (add(it.next()))
+            {
+                changed = true;
+            }
+        }
+        return changed;
     }
 }

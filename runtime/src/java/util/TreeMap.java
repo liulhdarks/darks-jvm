@@ -3,7 +3,7 @@ package java.util;
 // Sorted map backed by a sorted key/value pair of arrays.  Operations are
 // O(n) on insertion/removal and O(log n) on lookup, which is adequate for the
 // small configuration maps this runtime targets.
-public class TreeMap<K, V> implements Map<K, V>
+public class TreeMap<K, V> implements NavigableMap<K, V>
 {
     private Object[] keys;
     private Object[] values;

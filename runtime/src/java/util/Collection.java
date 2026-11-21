@@ -16,45 +16,52 @@ public interface Collection<E> extends Iterable<E>
 
     Object[] toArray();
 
-    default <T> T[] toArray(T[] array)
+    default <T> T[] toArray(T[] values)
     {
-        Object[] elements = toArray();
-        if (array.length < elements.length)
+        int size = size();
+        if (values.length < size)
         {
-            array = (T[]) java.lang.reflect.Array.newInstance(
-                array.getClass().getComponentType(), elements.length);
+            Class<?> ctype = values.getClass().getComponentType();
+            values = (T[])java.lang.reflect.Array.newInstance(ctype, size);
         }
-        System.arraycopy(elements, 0, array, 0, elements.length);
-        if (array.length > elements.length)
+        Iterator<E> it = iterator();
+        int index = 0;
+        while (it.hasNext())
         {
-            array[elements.length] = null;
+            values[index++] = (T)it.next();
         }
-        return array;
-    }
-
-    default boolean containsAll(Collection<?> values)
-    {
-        for (Object value : values)
+        if (values.length > size)
         {
-            if (!contains(value))
-            {
-                return false;
-            }
+            values[size] = null;
         }
-        return true;
+        return values;
     }
 
     default boolean addAll(Collection<? extends E> values)
     {
         boolean changed = false;
-        for (E value : values)
+        Iterator<? extends E> it = values.iterator();
+        while (it.hasNext())
         {
-            if (add(value))
+            if (add(it.next()))
             {
                 changed = true;
             }
         }
         return changed;
+    }
+
+    default boolean containsAll(Collection<?> values)
+    {
+        Iterator<?> it = values.iterator();
+        while (it.hasNext())
+        {
+            if (!contains(it.next()))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     default boolean removeAll(Collection<?> values)
@@ -66,6 +73,25 @@ public interface Collection<E> extends Iterable<E>
             if (values.contains(it.next()))
             {
                 it.remove();
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    default boolean removeIf(java.util.function.Predicate<? super E> filter)
+    {
+        if (filter == null)
+        {
+            throw new NullPointerException("filter");
+        }
+        boolean changed = false;
+        Iterator<E> iterator = iterator();
+        while (iterator.hasNext())
+        {
+            if (filter.test(iterator.next()))
+            {
+                iterator.remove();
                 changed = true;
             }
         }
@@ -90,20 +116,5 @@ public interface Collection<E> extends Iterable<E>
     default java.util.stream.Stream<E> stream()
     {
         return java.util.stream.Stream.from(this);
-    }
-
-    default boolean removeIf(java.util.function.Predicate<? super E> filter)
-    {
-        boolean removed = false;
-        Iterator<E> it = iterator();
-        while (it.hasNext())
-        {
-            if (filter.test(it.next()))
-            {
-                it.remove();
-                removed = true;
-            }
-        }
-        return removed;
     }
 }

@@ -62,6 +62,10 @@ void MethodArea::ClearStaticFields()
 lpMethod MethodArea::GetMethod(lpClass clazz, LPSTR method_name)
 {
 	VMLock lk;
+	if (!clazz || !clazz->thisClass || !clazz->thisClass->GetName())
+	{
+		return NULL;
+	}
 	char method_full_name[METHOD_NAME_SIZE];
 	sprintf(method_full_name, "%s.%s", clazz->thisClass->GetName(), method_name);
 	LPSTR namePtr = method_full_name;

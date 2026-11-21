@@ -45,8 +45,9 @@ public class Runtime
         System.exit(status);
     }
 
-    private final java.util.ArrayList<Thread> shutdownHooks =
+    private static final java.util.ArrayList<Thread> shutdownHooks =
         new java.util.ArrayList<Thread>();
+    private static boolean shuttingDown;
 
     public void addShutdownHook(Thread hook)
     {
@@ -54,11 +55,18 @@ public class Runtime
         {
             throw new NullPointerException("hook");
         }
-        if (shutdownHooks.contains(hook))
+        synchronized (shutdownHooks)
         {
-            throw new IllegalArgumentException("Hook already registered");
+            if (shuttingDown)
+            {
+                throw new IllegalStateException("Shutdown in progress");
+            }
+            if (shutdownHooks.contains(hook))
+            {
+                throw new IllegalArgumentException("Hook previously registered");
+            }
+            shutdownHooks.add(hook);
         }
-        shutdownHooks.add(hook);
     }
 
     public boolean removeShutdownHook(Thread hook)
@@ -67,6 +75,58 @@ public class Runtime
         {
             throw new NullPointerException("hook");
         }
-        return shutdownHooks.remove(hook);
+        synchronized (shutdownHooks)
+        {
+            if (shuttingDown)
+            {
+                throw new IllegalStateException("Shutdown in progress");
+            }
+            return shutdownHooks.remove(hook);
+        }
+    }
+
+    public static void runShutdownHooks()
+    {
+        java.util.ArrayList<Thread> hooks;
+        synchronized (shutdownHooks)
+        {
+            if (shuttingDown)
+            {
+                return;
+            }
+            shuttingDown = true;
+            hooks = new java.util.ArrayList<Thread>(shutdownHooks);
+            shutdownHooks.clear();
+        }
+        for (int i = 0; i < hooks.size(); i++)
+        {
+            Thread hook = hooks.get(i);
+            if (hook.isAlive())
+            {
+                continue;
+            }
+            try
+            {
+                hook.start();
+            }
+            catch (RuntimeException ignored)
+            {
+            }
+        }
+        for (int i = 0; i < hooks.size(); i++)
+        {
+            Thread hook = hooks.get(i);
+            if (!hook.isAlive())
+            {
+                continue;
+            }
+            try
+            {
+                hook.join();
+            }
+            catch (InterruptedException ignored)
+            {
+            }
+        }
     }
 }

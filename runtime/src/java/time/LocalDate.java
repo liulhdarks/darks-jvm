@@ -37,6 +37,23 @@ public final class LocalDate implements java.time.temporal.Temporal,
         return new LocalDate(year, month, dayOfMonth);
     }
 
+    public static LocalDate ofYearDay(int year, int dayOfYear)
+    {
+        int length = Civil.isLeap(year) ? 366 : 365;
+        if (dayOfYear < 1 || dayOfYear > length)
+        {
+            throw new DateTimeException("Invalid value for DayOfYear: " + dayOfYear);
+        }
+        int month = 1;
+        int day = dayOfYear;
+        while (day > Civil.lengthOfMonth(year, month))
+        {
+            day -= Civil.lengthOfMonth(year, month);
+            month++;
+        }
+        return of(year, month, day);
+    }
+
     public static LocalDate ofEpochDay(long epochDay)
     {
         int[] ymd = Civil.civilFromDays(epochDay);

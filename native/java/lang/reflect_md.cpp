@@ -23,6 +23,18 @@ lpClass MirrorClass(jobject mirror)
 		JniGetLongFieldByName(mirror, "vmClass")));
 }
 
+// Annotation machinery may reference application classes (annotation types,
+// enum constants, class literals) that are invisible to the bootstrap loader.
+lpClass FindClassAnywhere(JNIEnv *env, const char *name)
+{
+	lpClass clazz = NULL;
+	if (name && DarksVM_LoadClassWithoutInitializing(std::string(name), clazz) && clazz)
+	{
+		return clazz;
+	}
+	return JniFindClass(env, name);
+}
+
 lpFieldValue FindNamedField(lpObject object, const char *name)
 {
 	if (!object || !name)
@@ -224,7 +236,7 @@ jobject MirrorForDescriptor(JNIEnv *env, const char *desc, int length)
 	if (desc[0] == 'L' && length >= 2 && desc[length - 1] == ';')
 	{
 		std::string name(desc + 1, desc + length - 1);
-		clazz = JniFindClass(env, name.c_str());
+		clazz = FindClassAnywhere(env, name.c_str());
 	}
 	else if (desc[0] == '[')
 	{
@@ -371,7 +383,7 @@ jobject ClassArrayFromExceptionAttribute(JNIEnv *env, lpMethod method)
 			{
 				continue;
 			}
-			lpClass clazz = JniFindClass(env, constant->GetName());
+			lpClass clazz = FindClassAnywhere(env, constant->GetName());
 			if (!clazz)
 			{
 				continue;
@@ -396,6 +408,7 @@ jobject WrapInvocationTarget(JNIEnv *env, LPOBJECT_REF target)
 		return NULL;
 	}
 	GCRootScope root(VMContext::object_heap, &target);
+	PrintUncaughtException(target);
 	VMContext::pending_exception = NULL;
 	lpClass wrapper_class = JniFindClass(env,
 		"java/lang/reflect/InvocationTargetException");
@@ -694,19 +707,29 @@ jobject ReadAnnotation(JNIEnv *env, ConstantPool *pool, ByteReader &r)
 {
 	U2 type_index = r.U2();
 	std::string descriptor = Utf8At(pool, type_index);
-	if (descriptor.size() < 3 || descriptor[0] != 'L' ||
-	    descriptor[descriptor.size() - 1] != ';')
+	U2 pair_count = r.U2();
+	bool valid_type = descriptor.size() >= 3 && descriptor[0] == 'L' &&
+		descriptor[descriptor.size() - 1] == ';';
+	std::string class_name;
+	lpClass annotation_class = NULL;
+	if (valid_type)
 	{
-		return NULL;
+		class_name = descriptor.substr(1, descriptor.size() - 2);
+		annotation_class = FindClassAnywhere(env, class_name.c_str());
 	}
-	std::string class_name = descriptor.substr(1, descriptor.size() - 2);
-	lpClass annotation_class = JniFindClass(env, class_name.c_str());
 	if (!annotation_class)
 	{
+		// Skip the element values so the surrounding annotation array stays
+		// aligned even when one annotation type cannot be resolved.
+		for (U2 i = 0; i < pair_count && r.ok; i++)
+		{
+			r.U2();
+			Variant ignored;
+			ReadElementValue(env, pool, r, "", ignored);
+		}
 		return NULL;
 	}
 	std::map<std::string, jobject> provided;
-	U2 pair_count = r.U2();
 	for (U2 i = 0; i < pair_count && r.ok; i++)
 	{
 		U2 name_index = r.U2();
@@ -764,7 +787,8 @@ jobject ReadAnnotation(JNIEnv *env, ConstantPool *pool, ByteReader &r)
 		names.push_back(element_name);
 		values.push_back(object);
 	}
-	return DarksVM_CreateAnnotationProxy(env, annotation_class, names, values);
+	jobject proxy = DarksVM_CreateAnnotationProxy(env, annotation_class, names, values);
+	return proxy;
 }
 
 bool ReadElementValue(JNIEnv *env, ConstantPool *pool, ByteReader &r,
@@ -862,7 +886,7 @@ bool ReadElementValue(JNIEnv *env, ConstantPool *pool, ByteReader &r,
 			{
 				name = desc;
 			}
-			lpClass target = JniFindClass(env, name.c_str());
+			lpClass target = FindClassAnywhere(env, name.c_str());
 			jobject mirror = target ? JniClassMirror(reinterpret_cast<jclass>(target)) : NULL;
 			if (mirror)
 			{
@@ -879,7 +903,7 @@ bool ReadElementValue(JNIEnv *env, ConstantPool *pool, ByteReader &r,
 			std::string constant = Utf8At(pool, name_index);
 			std::string enum_name = (enum_desc.size() >= 3 && enum_desc[0] == 'L')
 				? enum_desc.substr(1, enum_desc.size() - 2) : enum_desc;
-			lpClass enum_class = JniFindClass(env, enum_name.c_str());
+			lpClass enum_class = FindClassAnywhere(env, enum_name.c_str());
 			if (enum_class)
 			{
 				DarksVM_EnsureInitialized(enum_class);
@@ -918,7 +942,7 @@ bool ReadElementValue(JNIEnv *env, ConstantPool *pool, ByteReader &r,
 			{
 				array_name = "[Ljava/lang/Object;";
 			}
-			lpClass array_class = JniFindClass(env, array_name.c_str());
+			lpClass array_class = FindClassAnywhere(env, array_name.c_str());
 			if (!array_class || !VMContext::object_heap)
 			{
 				return false;
@@ -1716,6 +1740,47 @@ JNIEXPORT jobject JNICALL Java_java_lang_Class_getInterfaces0(JNIEnv *env,
 	return MakeObjectArray(env, "[Ljava/lang/Class;", items);
 }
 
+JNIEXPORT jobject JNICALL Java_java_lang_Class_getDeclaredClasses0(JNIEnv *env,
+	jobject thiz)
+{
+	lpClass clazz = MirrorClass(thiz);
+	std::vector<jobject> items;
+	if (clazz && clazz->const_pool && clazz->inner_classes &&
+	    clazz->inner_classes->inner_classes && clazz->thisClass)
+	{
+		const char *owner = clazz->thisClass->GetName();
+		for (U2 i = 0; i < clazz->inner_classes->number_of_classes; i++)
+		{
+			const InnerClassesInfo &info = clazz->inner_classes->inner_classes[i];
+			if (!owner || info.outer_class_info_index == 0)
+			{
+				continue;
+			}
+			lpClassConstant inner = (lpClassConstant)
+				clazz->const_pool->GetConstant(info.inner_class_info_index);
+			lpClassConstant outer = (lpClassConstant)
+				clazz->const_pool->GetConstant(info.outer_class_info_index);
+			if (!inner || !outer || !inner->GetName() || !outer->GetName() ||
+			    strcmp(outer->GetName(), owner) != 0)
+			{
+				continue;
+			}
+			lpClass member = FindClassAnywhere(env, inner->GetName());
+			if (!member)
+			{
+				continue;
+			}
+			jobject mirror = JniClassMirror(reinterpret_cast<jclass>(member));
+			if (mirror)
+			{
+				JniAddLocalRef(env, mirror);
+				items.push_back(mirror);
+			}
+		}
+	}
+	return MakeObjectArray(env, "[Ljava/lang/Class;", items);
+}
+
 JNIEXPORT jobject JNICALL Java_java_lang_Class_getDeclaredMethods0(JNIEnv *env,
 	jobject thiz)
 {
@@ -2217,6 +2282,10 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getDefaultValue(JNIEnv *
 		return NULL;
 	}
 	std::string return_desc = AnnotationElementDescriptor(method);
+	if (return_desc.empty())
+	{
+		return NULL;
+	}
 	ByteReader reader(method->annotation_default->bytes,
 	                  method->annotation_default->attr_length);
 	Variant value;
@@ -2459,8 +2528,138 @@ JNIEXPORT jobject JNICALL Java_java_lang_Class_getComponentType(JNIEnv *env,
 	{
 		return NULL;
 	}
-	return MirrorForDescriptor(env, name + 1,
-		static_cast<int>(strlen(name + 1)));
+	// The component class must be resolved through the loader that defined the
+	// array: application classes are not visible to the bootstrap loader.
+	const char *desc = name + 1;
+	int length = static_cast<int>(strlen(desc));
+	lpClass component = clazz->component_class;
+	if (!component && desc[0] == 'L' && length >= 2 && desc[length - 1] == ';')
+	{
+		std::string component_name(desc + 1, length - 2);
+		if (!DarksVM_LoadClassWithoutInitializing(component_name, component))
+		{
+			component = JniFindClass(env, component_name.c_str());
+		}
+	}
+	else if (desc[0] == '[')
+	{
+		if (!DarksVM_LoadClassWithoutInitializing(std::string(desc, length), component))
+		{
+			component = JniFindClass(env, desc);
+		}
+	}
+	else if (length == 1)
+	{
+		const char *primitive = NULL;
+		switch (desc[0])
+		{
+		case 'Z': primitive = "boolean"; break;
+		case 'B': primitive = "byte"; break;
+		case 'C': primitive = "char"; break;
+		case 'S': primitive = "short"; break;
+		case 'I': primitive = "int"; break;
+		case 'J': primitive = "long"; break;
+		case 'F': primitive = "float"; break;
+		case 'D': primitive = "double"; break;
+		default: break;
+		}
+		if (primitive)
+		{
+			component = DarksVM_GetPrimitiveClass(primitive);
+		}
+	}
+	if (!component)
+	{
+		return NULL;
+	}
+	jobject mirror = JniClassMirror(reinterpret_cast<jclass>(component));
+	if (mirror)
+	{
+		JniAddLocalRef(env, mirror);
+	}
+	return mirror;
+}
+
+static int PrimitiveArrayTag(const char *name)
+{
+	if (!name)
+	{
+		return 0;
+	}
+	if (strcmp(name, "boolean") == 0) return 'Z';
+	if (strcmp(name, "byte") == 0) return 'B';
+	if (strcmp(name, "char") == 0) return 'C';
+	if (strcmp(name, "short") == 0) return 'S';
+	if (strcmp(name, "int") == 0) return 'I';
+	if (strcmp(name, "long") == 0) return 'J';
+	if (strcmp(name, "float") == 0) return 'F';
+	if (strcmp(name, "double") == 0) return 'D';
+	return 0;
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Array_newInstance0(JNIEnv *env,
+	jclass, jobject component, jint length)
+{
+	if (length < 0)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/NegativeArraySizeException", "negative array size");
+		return NULL;
+	}
+	lpClass component_class = MirrorClass(component);
+	if (!component_class || !component_class->thisClass ||
+	    !component_class->thisClass->GetName())
+	{
+		return NULL;
+	}
+	const char *name = component_class->thisClass->GetName();
+	std::string array_name;
+	int tag = PrimitiveArrayTag(name);
+	if (tag != 0)
+	{
+		array_name = std::string("[") + static_cast<char>(tag);
+	}
+	else if (name[0] == '[')
+	{
+		array_name = std::string("[") + name;
+	}
+	else
+	{
+		array_name = std::string("[L") + name + ";";
+	}
+	lpClass array_class = JniFindClass(env, array_name.c_str());
+	if (!array_class)
+	{
+		return NULL;
+	}
+	if (!array_class->component_class)
+	{
+		array_class->component_class = component_class;
+	}
+	LPOBJECT_REF ref = NULL;
+	if (!VMContext::object_heap->NewObjectArrayObject(length, array_class, ref))
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/OutOfMemoryError", "cannot allocate array");
+		return NULL;
+	}
+	jobject result = JniObject(ref);
+	if (result)
+	{
+		JniAddLocalRef(env, result);
+	}
+	return result;
+}
+
+JNIEXPORT jint JNICALL Java_java_lang_reflect_Array_length0(JNIEnv *, jclass,
+	jobject array)
+{
+	lpObject obj = JniResolveObject(array);
+	if (!obj || !obj->array_var)
+	{
+		return 0;
+	}
+	return static_cast<jint>(obj->array_length);
 }
 
 JNIEXPORT jobject JNICALL Java_java_lang_reflect_Field_getType(JNIEnv *env,

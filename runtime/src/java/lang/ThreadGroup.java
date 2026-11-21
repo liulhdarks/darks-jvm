@@ -16,8 +16,8 @@ public class ThreadGroup
         {
             throw new NullPointerException("name");
         }
-        this.parent = parent;
         this.name = name;
+        this.parent = parent;
     }
 
     public final String getName()
@@ -30,9 +30,23 @@ public class ThreadGroup
         return parent;
     }
 
+    public final boolean parentOf(ThreadGroup group)
+    {
+        ThreadGroup current = group;
+        while (current != null)
+        {
+            if (current == this)
+            {
+                return true;
+            }
+            current = current.parent;
+        }
+        return false;
+    }
+
     public int activeCount()
     {
-        return 0;
+        return Thread.currentThread().getThreadGroup() == this ? 1 : 0;
     }
 
     public int activeGroupCount()
@@ -40,12 +54,22 @@ public class ThreadGroup
         return 0;
     }
 
-    public void list()
+    public boolean isDaemon()
     {
+        return false;
+    }
+
+    public void setDaemon(boolean daemon)
+    {
+    }
+
+    public int getMaxPriority()
+    {
+        return Thread.MAX_PRIORITY;
     }
 
     public String toString()
     {
-        return getClass().getName() + "[name=" + name + "]";
+        return "java.lang.ThreadGroup[name=" + name + ",maxpri=" + getMaxPriority() + "]";
     }
 }

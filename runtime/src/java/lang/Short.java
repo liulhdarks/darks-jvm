@@ -14,6 +14,16 @@ public final class Short extends Number implements Comparable<Short>
         this.value = value;
     }
 
+    public static Short valueOf(String s)
+    {
+        return new Short(parseShort(s));
+    }
+
+    public static short parseShort(String s)
+    {
+        return (short)Integer.parseInt(s);
+    }
+
     public static Short valueOf(short value)
     {
         return new Short(value);
@@ -52,6 +62,16 @@ public final class Short extends Number implements Comparable<Short>
     public int hashCode()
     {
         return value;
+    }
+
+    public static int hashCode(short value)
+    {
+        return value;
+    }
+
+    public static int compare(short a, short b)
+    {
+        return a - b;
     }
 
     public int compareTo(Short other)

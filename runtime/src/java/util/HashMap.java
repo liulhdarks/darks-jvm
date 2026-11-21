@@ -17,6 +17,12 @@ public class HashMap<K, V> implements Map<K, V>
         this(16);
     }
 
+    public HashMap(Map<? extends K, ? extends V> other)
+    {
+        this(other.size() > 0 ? other.size() * 2 : 16);
+        putAll(other);
+    }
+
     public HashMap(int capacity)
     {
         int size = 1;
@@ -33,12 +39,6 @@ public class HashMap<K, V> implements Map<K, V>
     public HashMap(int capacity, float loadFactor)
     {
         this(capacity);
-    }
-
-    public HashMap(Map<? extends K, ? extends V> values)
-    {
-        this();
-        putAll(values);
     }
 
     private static int spread(Object key)
@@ -249,8 +249,7 @@ public class HashMap<K, V> implements Map<K, V>
     // Occupied slots sorted by insertion sequence, independent of the
     // deterministic-mode switch.  Shared with LinkedHashMap.
     protected int[] insertionOrder()
-    {
-        int[] indices = new int[count];
+    {        int[] indices = new int[count];
         int n = 0;
         for (int i = 0; i < keys.length; i++)
         {
@@ -271,6 +270,32 @@ public class HashMap<K, V> implements Map<K, V>
             indices[j + 1] = value;
         }
         return indices;
+    }
+
+    // Moves an existing key to the most recent position.  LinkedHashMap in
+    // access-order mode calls this from put/get so iteration and eviction see
+    // real access order.
+    protected void touchKey(Object key)
+    {
+        int index = findIndex(key);
+        if (index >= 0)
+        {
+            order[index] = nextOrder++;
+        }
+    }
+
+    // Key with the smallest insertion/access sequence, used for eviction.
+    protected Object eldestKey()
+    {
+        int eldest = -1;
+        for (int i = 0; i < keys.length; i++)
+        {
+            if (used[i] && (eldest < 0 || order[i] < order[eldest]))
+            {
+                eldest = i;
+            }
+        }
+        return eldest < 0 ? null : keys[eldest];
     }
 
     protected Set<K> newKeySet()

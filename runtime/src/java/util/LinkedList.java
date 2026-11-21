@@ -1,115 +1,244 @@
 package java.util;
 
-// List + Deque implementation backed by an array list.  Indexed and deque
-// operations share the same storage so the reporting order matches the
-// insertion order a real LinkedList would produce.
-public class LinkedList<E> implements List<E>, Deque<E>, Cloneable
+// Doubly linked list semantics; array-backed for simplicity.  List methods
+// accept null elements, while the Deque operations reject them (as the
+// Deque contract requires).
+public class LinkedList<E> implements List<E>, Deque<E>
 {
-    private final ArrayList<E> values;
+    private Object[] elements;
+    private int count;
 
     public LinkedList()
     {
-        values = new ArrayList<E>();
+        elements = new Object[10];
     }
 
-    public LinkedList(Collection<? extends E> source)
+    public LinkedList(Collection<? extends E> values)
     {
         this();
-        Iterator<? extends E> it = source.iterator();
-        while (it.hasNext())
+        addAll(values);
+    }
+
+    private void ensure(int needed)
+    {
+        if (needed <= elements.length)
         {
-            values.add(it.next());
+            return;
+        }
+        int size = elements.length * 2;
+        if (size < needed)
+        {
+            size = needed;
+        }
+        Object[] grown = new Object[size];
+        for (int i = 0; i < count; i++)
+        {
+            grown[i] = elements[i];
+        }
+        elements = grown;
+    }
+
+    private static void checkValue(Object value)
+    {
+        if (value == null)
+        {
+            throw new NullPointerException("null element");
+        }
+    }
+
+    private void checkIndex(int index)
+    {
+        if (index < 0 || index >= count)
+        {
+            throw new IndexOutOfBoundsException("index " + index + ", size " + count);
         }
     }
 
     public int size()
     {
-        return values.size();
+        return count;
     }
 
     public boolean isEmpty()
     {
-        return values.isEmpty();
+        return count == 0;
     }
 
     public boolean add(E value)
     {
-        return values.add(value);
+        ensure(count + 1);
+        elements[count++] = value;
+        return true;
     }
 
     public void add(int index, E value)
     {
-        values.add(index, value);
+        if (index < 0 || index > count)
+        {
+            throw new IndexOutOfBoundsException("index " + index);
+        }
+        ensure(count + 1);
+        for (int i = count; i > index; i--)
+        {
+            elements[i] = elements[i - 1];
+        }
+        elements[index] = value;
+        count++;
     }
 
-    public boolean addAll(Collection<? extends E> source)
+    public boolean addAll(Collection<? extends E> values)
     {
-        return values.addAll(source);
+        Iterator<? extends E> it = values.iterator();
+        boolean changed = false;
+        while (it.hasNext())
+        {
+            add(it.next());
+            changed = true;
+        }
+        return changed;
     }
 
-    public boolean addAll(int index, Collection<? extends E> source)
+    public boolean addAll(int index, Collection<? extends E> values)
     {
-        return values.addAll(index, source);
+        if (index < 0 || index > count)
+        {
+            throw new IndexOutOfBoundsException("index " + index);
+        }
+        int position = index;
+        boolean changed = false;
+        Iterator<? extends E> it = values.iterator();
+        while (it.hasNext())
+        {
+            add(position, it.next());
+            position++;
+            changed = true;
+        }
+        return changed;
     }
 
     public E get(int index)
     {
-        return values.get(index);
+        checkIndex(index);
+        return (E)elements[index];
     }
 
     public E set(int index, E value)
     {
-        return values.set(index, value);
+        checkIndex(index);
+        E old = (E)elements[index];
+        elements[index] = value;
+        return old;
     }
 
     public E remove(int index)
     {
-        return values.remove(index);
+        checkIndex(index);
+        E old = (E)elements[index];
+        for (int i = index; i < count - 1; i++)
+        {
+            elements[i] = elements[i + 1];
+        }
+        elements[--count] = null;
+        return old;
     }
 
     public boolean remove(Object value)
     {
-        return values.remove(value);
+        int index = indexOf(value);
+        if (index < 0)
+        {
+            return false;
+        }
+        remove(index);
+        return true;
     }
 
     public boolean contains(Object value)
     {
-        return values.contains(value);
+        return indexOf(value) >= 0;
     }
 
     public int indexOf(Object value)
     {
-        return values.indexOf(value);
+        for (int i = 0; i < count; i++)
+        {
+            if (value == null ? elements[i] == null : value.equals(elements[i]))
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 
     public int lastIndexOf(Object value)
     {
-        return values.lastIndexOf(value);
+        for (int i = count - 1; i >= 0; i--)
+        {
+            if (value == null ? elements[i] == null : value.equals(elements[i]))
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 
     public void clear()
     {
-        values.clear();
+        for (int i = 0; i < count; i++)
+        {
+            elements[i] = null;
+        }
+        count = 0;
     }
 
     public Object[] toArray()
     {
-        return values.toArray();
+        Object[] result = new Object[count];
+        for (int i = 0; i < count; i++)
+        {
+            result[i] = elements[i];
+        }
+        return result;
     }
 
     public Iterator<E> iterator()
     {
-        return values.iterator();
+        return new Itr();
     }
+
+    public String toString()
+    {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < count; i++)
+        {
+            if (i > 0)
+            {
+                sb.append(", ");
+            }
+            sb.append(String.valueOf(elements[i]));
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+
+    // Deque operations
 
     public void addFirst(E value)
     {
-        values.add(0, value);
+        checkValue(value);
+        add(0, value);
     }
 
     public void addLast(E value)
     {
-        values.add(value);
+        checkValue(value);
+        add(value);
+    }
+
+    public boolean offer(E value)
+    {
+        addLast(value);
+        return true;
     }
 
     public boolean offerFirst(E value)
@@ -126,58 +255,73 @@ public class LinkedList<E> implements List<E>, Deque<E>, Cloneable
 
     public E removeFirst()
     {
-        if (values.isEmpty())
+        if (count == 0)
         {
             throw new NoSuchElementException();
         }
-        return values.remove(0);
+        return remove(0);
     }
 
     public E removeLast()
     {
-        if (values.isEmpty())
+        if (count == 0)
         {
             throw new NoSuchElementException();
         }
-        return values.remove(values.size() - 1);
+        return remove(count - 1);
+    }
+
+    public E poll()
+    {
+        return count == 0 ? null : remove(0);
     }
 
     public E pollFirst()
     {
-        return values.isEmpty() ? null : values.remove(0);
+        return poll();
     }
 
     public E pollLast()
     {
-        return values.isEmpty() ? null : values.remove(values.size() - 1);
+        return count == 0 ? null : remove(count - 1);
+    }
+
+    public E element()
+    {
+        return getFirst();
     }
 
     public E getFirst()
     {
-        if (values.isEmpty())
+        if (count == 0)
         {
             throw new NoSuchElementException();
         }
-        return values.get(0);
+        return (E)elements[0];
     }
 
     public E getLast()
     {
-        if (values.isEmpty())
+        if (count == 0)
         {
             throw new NoSuchElementException();
         }
-        return values.get(values.size() - 1);
+        return (E)elements[count - 1];
+    }
+
+    public E peek()
+    {
+        return count == 0 ? null : (E)elements[0];
     }
 
     public E peekFirst()
     {
-        return values.isEmpty() ? null : values.get(0);
+        return peek();
     }
 
     public E peekLast()
     {
-        return values.isEmpty() ? null : values.get(values.size() - 1);
+        return count == 0 ? null : (E)elements[count - 1];
     }
 
     public void push(E value)
@@ -190,117 +334,56 @@ public class LinkedList<E> implements List<E>, Deque<E>, Cloneable
         return removeFirst();
     }
 
-    public boolean removeFirstOccurrence(Object value)
-    {
-        int index = values.indexOf(value);
-        if (index < 0)
-        {
-            return false;
-        }
-        values.remove(index);
-        return true;
-    }
-
-    public boolean removeLastOccurrence(Object value)
-    {
-        int index = values.lastIndexOf(value);
-        if (index < 0)
-        {
-            return false;
-        }
-        values.remove(index);
-        return true;
-    }
-
-    public boolean offer(E value)
-    {
-        return offerLast(value);
-    }
-
-    public E poll()
-    {
-        return pollFirst();
-    }
-
-    public E peek()
-    {
-        return peekFirst();
-    }
-
-    public E element()
-    {
-        return getFirst();
-    }
-
     public E remove()
     {
         return removeFirst();
     }
 
-    public Iterator<E> descendingIterator()
+    public boolean removeFirstOccurrence(Object value)
     {
-        ArrayList<E> copy = new ArrayList<E>(values.size() > 0 ? values.size() : 1);
-        for (int i = values.size() - 1; i >= 0; i--)
-        {
-            copy.add(values.get(i));
-        }
-        return copy.iterator();
+        return remove(value);
     }
 
-    public Object clone()
+    public boolean removeLastOccurrence(Object value)
     {
-        return new LinkedList<E>(values);
-    }
-
-    public boolean equals(Object other)
-    {
-        if (this == other)
-        {
-            return true;
-        }
-        if (!(other instanceof List))
+        int index = lastIndexOf(value);
+        if (index < 0)
         {
             return false;
         }
-        List<?> that = (List<?>)other;
-        if (that.size() != values.size())
-        {
-            return false;
-        }
-        for (int i = 0; i < values.size(); i++)
-        {
-            E mine = values.get(i);
-            Object theirs = that.get(i);
-            if (mine == null ? theirs != null : !mine.equals(theirs))
-            {
-                return false;
-            }
-        }
+        remove(index);
         return true;
     }
 
-    public int hashCode()
+    private class Itr implements Iterator<E>
     {
-        int result = 1;
-        for (int i = 0; i < values.size(); i++)
-        {
-            E value = values.get(i);
-            result = 31 * result + (value == null ? 0 : value.hashCode());
-        }
-        return result;
-    }
+        private int cursor;
+        private int last = -1;
 
-    public String toString()
-    {
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < values.size(); i++)
+        public boolean hasNext()
         {
-            if (i > 0)
-            {
-                sb.append(", ");
-            }
-            sb.append(values.get(i) == null ? "null" : values.get(i).toString());
+            return cursor < count;
         }
-        return sb.append("]").toString();
+
+        public E next()
+        {
+            if (cursor >= count)
+            {
+                throw new NoSuchElementException();
+            }
+            last = cursor;
+            return (E)elements[cursor++];
+        }
+
+        public void remove()
+        {
+            if (last < 0)
+            {
+                throw new IllegalStateException();
+            }
+            LinkedList.this.remove(last);
+            cursor = last;
+            last = -1;
+        }
     }
 }

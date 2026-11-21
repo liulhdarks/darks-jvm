@@ -14,6 +14,16 @@ public final class Byte extends Number implements Comparable<Byte>
         this.value = value;
     }
 
+    public static Byte valueOf(String s)
+    {
+        return new Byte(parseByte(s));
+    }
+
+    public static byte parseByte(String s)
+    {
+        return (byte)Integer.parseInt(s);
+    }
+
     public static Byte valueOf(byte value)
     {
         return new Byte(value);
@@ -52,6 +62,16 @@ public final class Byte extends Number implements Comparable<Byte>
     public int hashCode()
     {
         return value;
+    }
+
+    public static int hashCode(byte value)
+    {
+        return value;
+    }
+
+    public static int compare(byte a, byte b)
+    {
+        return a - b;
     }
 
     public int compareTo(Byte other)

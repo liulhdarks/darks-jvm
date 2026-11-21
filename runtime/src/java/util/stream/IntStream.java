@@ -1,19 +1,33 @@
 package java.util.stream;
 
+import java.util.ArrayList;
 import java.util.OptionalInt;
 import java.util.function.IntConsumer;
+import java.util.function.IntFunction;
 import java.util.function.IntPredicate;
 import java.util.function.IntUnaryOperator;
 
-// Eager, single-shot primitive int stream over an in-memory array, mirroring
-// the list-backed Stream implementation.
+// Eager, single-shot stream of int values.  Intermediate operations
+// materialise their result, matching the Stream implementation.
 public interface IntStream
 {
     IntStream filter(IntPredicate predicate);
 
     IntStream map(IntUnaryOperator mapper);
 
+    <U> Stream<U> mapToObj(IntFunction<? extends U> mapper);
+
+    long count();
+
     void forEach(IntConsumer action);
+
+    int sum();
+
+    OptionalInt min();
+
+    OptionalInt max();
+
+    OptionalInt findFirst();
 
     boolean anyMatch(IntPredicate predicate);
 
@@ -21,17 +35,17 @@ public interface IntStream
 
     boolean noneMatch(IntPredicate predicate);
 
-    OptionalInt findFirst();
+    int[] toArray();
 
-    int sum();
+    IntStream distinct();
 
-    long count();
+    IntStream sorted();
 
     IntStream limit(long maxSize);
 
     IntStream skip(long count);
 
-    int[] toArray();
+    Stream<Integer> boxed();
 
     static IntStream empty()
     {
@@ -84,16 +98,10 @@ final class ArrayIntStream implements IntStream
         {
             if (predicate.test(values[i]))
             {
-                result[count] = values[i];
-                count = count + 1;
+                result[count++] = values[i];
             }
         }
-        int[] trimmed = new int[count];
-        for (int i = 0; i < count; i++)
-        {
-            trimmed[i] = result[i];
-        }
-        return new ArrayIntStream(trimmed);
+        return new ArrayIntStream(copy(result, count));
     }
 
     public IntStream map(IntUnaryOperator mapper)
@@ -106,12 +114,76 @@ final class ArrayIntStream implements IntStream
         return new ArrayIntStream(result);
     }
 
+    public <U> Stream<U> mapToObj(IntFunction<? extends U> mapper)
+    {
+        ArrayList<U> items = new ArrayList<U>(values.length > 0 ? values.length : 1);
+        for (int i = 0; i < values.length; i++)
+        {
+            items.add(mapper.apply(values[i]));
+        }
+        return Stream.from(items);
+    }
+
+    public long count()
+    {
+        return values.length;
+    }
+
     public void forEach(IntConsumer action)
     {
         for (int i = 0; i < values.length; i++)
         {
             action.accept(values[i]);
         }
+    }
+
+    public int sum()
+    {
+        int result = 0;
+        for (int i = 0; i < values.length; i++)
+        {
+            result += values[i];
+        }
+        return result;
+    }
+
+    public OptionalInt min()
+    {
+        if (values.length == 0)
+        {
+            return OptionalInt.empty();
+        }
+        int result = values[0];
+        for (int i = 1; i < values.length; i++)
+        {
+            if (values[i] < result)
+            {
+                result = values[i];
+            }
+        }
+        return OptionalInt.of(result);
+    }
+
+    public OptionalInt max()
+    {
+        if (values.length == 0)
+        {
+            return OptionalInt.empty();
+        }
+        int result = values[0];
+        for (int i = 1; i < values.length; i++)
+        {
+            if (values[i] > result)
+            {
+                result = values[i];
+            }
+        }
+        return OptionalInt.of(result);
+    }
+
+    public OptionalInt findFirst()
+    {
+        return values.length == 0 ? OptionalInt.empty() : OptionalInt.of(values[0]);
     }
 
     public boolean anyMatch(IntPredicate predicate)
@@ -143,66 +215,85 @@ final class ArrayIntStream implements IntStream
         return !anyMatch(predicate);
     }
 
-    public OptionalInt findFirst()
+    public int[] toArray()
     {
-        if (values.length == 0)
-        {
-            return OptionalInt.empty();
-        }
-        return OptionalInt.of(values[0]);
+        return copy(values, values.length);
     }
 
-    public int sum()
+    public IntStream distinct()
     {
-        int total = 0;
+        int[] result = new int[values.length];
+        int count = 0;
         for (int i = 0; i < values.length; i++)
         {
-            total = total + values[i];
+            boolean seen = false;
+            for (int j = 0; j < count; j++)
+            {
+                if (result[j] == values[i])
+                {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen)
+            {
+                result[count++] = values[i];
+            }
         }
-        return total;
+        return new ArrayIntStream(copy(result, count));
     }
 
-    public long count()
+    public IntStream sorted()
     {
-        return values.length;
+        int[] result = copy(values, values.length);
+        for (int i = 1; i < result.length; i++)
+        {
+            int value = result[i];
+            int j = i - 1;
+            while (j >= 0 && result[j] > value)
+            {
+                result[j + 1] = result[j];
+                j--;
+            }
+            result[j + 1] = value;
+        }
+        return new ArrayIntStream(result);
     }
 
     public IntStream limit(long maxSize)
     {
-        if (maxSize < 0)
-        {
-            throw new IllegalArgumentException("negative limit: " + maxSize);
-        }
-        int limit = maxSize > values.length ? values.length : (int)maxSize;
-        int[] result = new int[limit];
-        for (int i = 0; i < limit; i++)
-        {
-            result[i] = values[i];
-        }
-        return new ArrayIntStream(result);
+        int size = maxSize < 0 ? 0 : (int)Math.min(maxSize, values.length);
+        return new ArrayIntStream(copy(values, size));
     }
 
     public IntStream skip(long count)
     {
-        if (count < 0)
+        int start = count < 0 ? 0 : (int)Math.min(count, values.length);
+        int size = values.length - start;
+        int[] result = new int[size];
+        for (int i = 0; i < size; i++)
         {
-            throw new IllegalArgumentException("negative skip: " + count);
-        }
-        int start = count > values.length ? values.length : (int)count;
-        int[] result = new int[values.length - start];
-        for (int i = start; i < values.length; i++)
-        {
-            result[i - start] = values[i];
+            result[i] = values[start + i];
         }
         return new ArrayIntStream(result);
     }
 
-    public int[] toArray()
+    public Stream<Integer> boxed()
     {
-        int[] result = new int[values.length];
+        ArrayList<Integer> items = new ArrayList<Integer>(values.length > 0 ? values.length : 1);
         for (int i = 0; i < values.length; i++)
         {
-            result[i] = values[i];
+            items.add(Integer.valueOf(values[i]));
+        }
+        return Stream.from(items);
+    }
+
+    private static int[] copy(int[] source, int length)
+    {
+        int[] result = new int[length];
+        for (int i = 0; i < length; i++)
+        {
+            result[i] = source[i];
         }
         return result;
     }

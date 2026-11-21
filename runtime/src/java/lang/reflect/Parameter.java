@@ -2,39 +2,22 @@ package java.lang.reflect;
 
 import java.lang.annotation.Annotation;
 
-// Parameter metadata is derived from the descriptor; parameter names and
-// parameter annotations are not available.
 public final class Parameter implements AnnotatedElement
 {
     private final Executable executable;
+    private final Class type;
     private final int index;
-    private final Class<?> type;
 
-    Parameter(Executable executable, int index, Class<?> type)
+    Parameter(Executable executable, Class type, int index)
     {
         this.executable = executable;
-        this.index = index;
         this.type = type;
-    }
-
-    public int getIndex()
-    {
-        return index;
+        this.index = index;
     }
 
     public String getName()
     {
         return "arg" + index;
-    }
-
-    public Class<?> getType()
-    {
-        return type;
-    }
-
-    public Type getParameterizedType()
-    {
-        return type;
     }
 
     public int getModifiers()
@@ -47,6 +30,26 @@ public final class Parameter implements AnnotatedElement
         return false;
     }
 
+    public Executable getDeclaringExecutable()
+    {
+        return executable;
+    }
+
+    public int getIndex()
+    {
+        return index;
+    }
+
+    public Class getType()
+    {
+        return type;
+    }
+
+    public Type getParameterizedType()
+    {
+        return type;
+    }
+
     public boolean isImplicit()
     {
         return false;
@@ -57,14 +60,10 @@ public final class Parameter implements AnnotatedElement
         return false;
     }
 
-    public Executable getDeclaringExecutable()
+    public boolean isVarArgs()
     {
-        return executable;
-    }
-
-    public boolean isAnnotationPresent(Class<? extends Annotation> annotationClass)
-    {
-        return false;
+        return executable != null && executable.isVarArgs()
+            && index == executable.getParameterCount() - 1;
     }
 
     public <T extends Annotation> T getAnnotation(Class<T> annotationClass)
@@ -72,14 +71,14 @@ public final class Parameter implements AnnotatedElement
         return null;
     }
 
+    public <T extends Annotation> T[] getAnnotationsByType(Class<T> annotationClass)
+    {
+        return (T[])java.lang.reflect.Array.newInstance(annotationClass, 0);
+    }
+
     public Annotation[] getAnnotations()
     {
         return new Annotation[0];
-    }
-
-    public <T extends Annotation> T[] getAnnotationsByType(Class<T> annotationClass)
-    {
-        return (T[])AnnotationSupport.expand(new Annotation[0], annotationClass);
     }
 
     public <T extends Annotation> T getDeclaredAnnotation(Class<T> annotationClass)
@@ -87,14 +86,19 @@ public final class Parameter implements AnnotatedElement
         return null;
     }
 
+    public <T extends Annotation> T[] getDeclaredAnnotationsByType(Class<T> annotationClass)
+    {
+        return (T[])java.lang.reflect.Array.newInstance(annotationClass, 0);
+    }
+
     public Annotation[] getDeclaredAnnotations()
     {
         return new Annotation[0];
     }
 
-    public <T extends Annotation> T[] getDeclaredAnnotationsByType(Class<T> annotationClass)
+    public boolean isAnnotationPresent(Class<? extends Annotation> annotationClass)
     {
-        return (T[])AnnotationSupport.expand(new Annotation[0], annotationClass);
+        return false;
     }
 
     public String toString()

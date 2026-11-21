@@ -115,6 +115,44 @@ public class PrintStream
         // Every write already flushes the underlying stdio stream.
     }
 
+    public void write(int b)
+    {
+        write(new byte[] { (byte)b }, 0, 1);
+    }
+
+    public void write(byte[] bytes)
+    {
+        if (bytes == null)
+        {
+            throw new NullPointerException("bytes");
+        }
+        write(bytes, 0, bytes.length);
+    }
+
+    public void write(byte[] bytes, int offset, int length)
+    {
+        if (bytes == null)
+        {
+            throw new NullPointerException("bytes");
+        }
+        if (offset < 0 || length < 0 || offset > bytes.length - length)
+        {
+            throw new IndexOutOfBoundsException();
+        }
+        if (err)
+        {
+            writeErrBytes0(bytes, offset, length);
+        }
+        else
+        {
+            writeBytes0(bytes, offset, length);
+        }
+    }
+
+    private native void writeBytes0(byte[] bytes, int offset, int length);
+
+    private native void writeErrBytes0(byte[] bytes, int offset, int length);
+
     private void write(String s)
     {
         if (err)

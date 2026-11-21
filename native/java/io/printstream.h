@@ -18,6 +18,12 @@ JNIEXPORT void JNICALL Java_java_io_PrintStream_writeErr0
 JNIEXPORT void JNICALL Java_java_io_PrintStream_println
   (JNIEnv *, jobject, jstring);
 
+JNIEXPORT void JNICALL Java_java_io_PrintStream_writeBytes0
+  (JNIEnv *, jobject, jbyteArray, jint, jint);
+
+JNIEXPORT void JNICALL Java_java_io_PrintStream_writeErrBytes0
+  (JNIEnv *, jobject, jbyteArray, jint, jint);
+
 #ifdef __cplusplus
 }
 #endif

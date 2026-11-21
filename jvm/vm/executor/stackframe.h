@@ -75,6 +75,10 @@ public:
 	// EN_EXCEPTION so the caller unwinds.
 	EventNotify ExceptionEvent();
 
+	// Exceptions created by VM code bypass Throwable's constructor; fill the
+	// stackTrace field from the live frames once, at the throw site.
+	void AttachStackTrace(LPOBJECT_REF exception_ref);
+
 	bool HasPendingException() const;
 
 	// Diagnostics accessors (deadlock / starvation reports, ThreadMXBean).

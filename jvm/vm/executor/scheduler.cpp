@@ -117,10 +117,11 @@ struct ScopeInfo
 };
 
 thread_local lpCoroutine t_co = NULL;
-// The coroutine whose OS thread is borrowed by a nested executor (class
-// initialisation, string construction).  Thread.currentThread() must keep
-// reporting that Java thread while the nested stack runs.
-thread_local lpCoroutine t_host_co = NULL;
+// Coroutine whose Java thread owns this OS thread, kept across a nested
+// executor (class initialisation) that clears t_co.  Java code such as
+// Thread.currentThread() or Class.forName(String) executed from <clinit> must
+// still observe the enclosing Java thread and its context class loader.
+thread_local lpCoroutine t_owner = NULL;
 thread_local WorkerInfo *t_worker = NULL;
 
 std::atomic<bool> g_stw_requested(false);
@@ -667,6 +668,7 @@ void Scheduler::AttachMain(ThreadStack *ts)
 	}
 	t_worker = w;
 	t_co = co;
+	t_owner = co;
 	if (VMContext::object_heap)
 	{
 		VMLock lk;
@@ -705,6 +707,7 @@ void Scheduler::DetachMain()
 		                 impl->live.end());
 	}
 	t_co = NULL;
+	t_owner = NULL;
 	t_worker = NULL;
 	if (w)
 	{
@@ -1602,6 +1605,96 @@ bool Scheduler::NotifyCurrent(ThreadStack *ts, LPOBJECT_REF obj, bool all)
 	return true;
 }
 
+bool Scheduler::AwaitCurrentResume(ThreadStack *ts)
+{
+	(void)ts;
+	lpCoroutine co = Current();
+	if (!co || !impl)
+	{
+		return false;
+	}
+	for (;;)
+	{
+		lpCoroutine next = NULL;
+		{
+			std::unique_lock<std::recursive_mutex> lk(impl->m);
+			if (!impl->running)
+			{
+				return false;
+			}
+			if (co->state == CO_READY || co->state == CO_RUNNING)
+			{
+				co->state = CO_RUNNING;
+				t_co = co;
+				t_owner = co;
+				co->carrier_id = t_worker ? t_worker->index : -1;
+				if (co->injected && co->ts)
+				{
+					co->ts->injected_exception = co->injected;
+					co->injected = NULL;
+				}
+				return true;
+			}
+			if (co->state == CO_TERMINATED || co->finished)
+			{
+				return false;
+			}
+			ReapTimers();
+			if (!TakeReady(0, next))
+			{
+				next = NULL;
+				if (AdvanceVirtualTimeLocked())
+				{
+					continue;
+				}
+				if (t_worker)
+				{
+					t_worker->at_safepoint = true;
+					impl->stw_cv.notify_all();
+				}
+				impl->cv.wait_for(lk, std::chrono::milliseconds(1));
+				while (impl->stw_active && impl->running)
+				{
+					impl->stw_cv.wait_for(lk, std::chrono::milliseconds(2));
+				}
+				if (t_worker)
+				{
+					t_worker->at_safepoint = false;
+				}
+				continue;
+			}
+			if (next == co)
+			{
+				co->state = CO_RUNNING;
+				t_co = co;
+				t_owner = co;
+				if (co->injected && co->ts)
+				{
+					co->ts->injected_exception = co->injected;
+					co->injected = NULL;
+				}
+				return true;
+			}
+		}
+		RunOne(next);
+	}
+}
+
+bool Scheduler::CompleteSafepoint()
+{
+	if (!impl || !t_worker)
+	{
+		return true;
+	}
+	std::unique_lock<std::recursive_mutex> lk(impl->m);
+	while (impl->stw_active && impl->running)
+	{
+		impl->stw_cv.wait_for(lk, std::chrono::milliseconds(2));
+	}
+	t_worker->at_safepoint = false;
+	return impl->running;
+}
+
 // ---------------------------------------------------------------------------
 // Interpreter notifications
 // ---------------------------------------------------------------------------
@@ -2180,7 +2273,7 @@ lpCoroutine Scheduler::Current()
 
 lpCoroutine Scheduler::CurrentJavaThread()
 {
-	return t_co ? t_co : t_host_co;
+	return t_co ? t_co : t_owner;
 }
 
 ThreadStack *Scheduler::CurrentStack()
@@ -2193,6 +2286,12 @@ bool Scheduler::InCoroutine()
 	return t_co != NULL;
 }
 
+LPOBJECT_REF Scheduler::CurrentThreadObject()
+{
+	lpCoroutine co = t_owner ? t_owner : t_co;
+	return co ? co->thread_ref : NULL;
+}
+
 void Scheduler::RunOne(lpCoroutine co)
 {
 	if (!co || !co->ts)
@@ -2203,7 +2302,9 @@ void Scheduler::RunOne(lpCoroutine co)
 	// ready-queue waits even when the scheduler never goes idle.
 	MaybeRunDiagnostics(false);
 	lpCoroutine prev = t_co;
+	lpCoroutine prev_owner = t_owner;
 	t_co = co;
+	t_owner = co;
 	co->carrier_id = t_worker ? t_worker->index : -1;
 	{
 		std::lock_guard<std::recursive_mutex> lk(impl->m);
@@ -2228,6 +2329,7 @@ void Scheduler::RunOne(lpCoroutine co)
 		ev = co->ts->start();
 	}
 	t_co = prev;
+	t_owner = prev_owner;
 
 	if (ev == EN_YIELD)
 	{
@@ -2374,6 +2476,7 @@ void Scheduler::PumpMain(lpCoroutine main_co, bool yield_to_others)
 			{
 				main_co->state = CO_RUNNING;
 				t_co = main_co;
+				t_owner = main_co;
 				DarksDeterministic::Instance().Event('S', main_co->id, 1);
 				return;
 			}
@@ -2384,6 +2487,7 @@ void Scheduler::PumpMain(lpCoroutine main_co, bool yield_to_others)
 				{
 					main_co->state = CO_RUNNING;
 					t_co = main_co;
+					t_owner = main_co;
 					DarksDeterministic::Instance().Event('S', main_co->id, 1);
 					return;
 				}
@@ -2414,6 +2518,7 @@ void Scheduler::PumpMain(lpCoroutine main_co, bool yield_to_others)
 				{
 					main_co->state = CO_RUNNING;
 					t_co = main_co;
+					t_owner = main_co;
 					DarksDeterministic::Instance().Event('S', main_co->id, 1);
 					return;
 				}
@@ -2440,6 +2545,7 @@ void Scheduler::PumpMain(lpCoroutine main_co, bool yield_to_others)
 		}
 		RunOne(co);
 		t_co = main_co;
+		t_owner = main_co;
 		// Only the first iteration of a yield needs to defer to other work.
 		yield_to_others = false;
 	}
@@ -2456,27 +2562,40 @@ EventNotify Scheduler::RunMain(ThreadStack *ts, lpClass clazz, lpMethod method,
 		// this nested stack take their OS-level fallback instead of parking the
 		// coroutine that happens to be running on this OS thread.
 		lpCoroutine saved = t_co;
-		lpCoroutine saved_host = t_host_co;
+		lpCoroutine saved_host = t_owner;
 		t_co = NULL;
 		if (saved)
 		{
-			t_host_co = saved;
+			t_owner = saved;
 		}
 		EventNotify result;
-		if (vars)
+		try
 		{
-			result = ts->execute(clazz, method, vars, count);
+			if (vars)
+			{
+				result = ts->execute(clazz, method, vars, count);
+			}
+			else
+			{
+				result = ts->execute(clazz, method);
+			}
 		}
-		else
+		catch (...)
 		{
-			result = ts->execute(clazz, method);
+			// A native that aborts through a C++ exception (class loading
+			// failures do) must not leave the carrier thread without its
+			// coroutine: blocking primitives in the resumed caller would
+			// otherwise busy-spin instead of parking.
+			t_co = saved;
+			throw;
 		}
 		t_co = saved;
-		t_host_co = saved_host;
+		t_owner = saved_host;
 		return result;
 	}
 	lpCoroutine co = impl->main_co;
 	t_co = co;
+	t_owner = co;
 	co->carrier_id = t_worker ? t_worker->index : -1;
 	{
 		std::lock_guard<std::recursive_mutex> lk(impl->m);
@@ -2533,6 +2652,7 @@ EventNotify Scheduler::RunMain(ThreadStack *ts, lpClass clazz, lpMethod method,
 			}
 		}
 		t_co = co;
+		t_owner = co;
 		if (co->injected)
 		{
 			// The main coroutine is resumed directly (not through RunOne), so
@@ -2543,6 +2663,7 @@ EventNotify Scheduler::RunMain(ThreadStack *ts, lpClass clazz, lpMethod method,
 		ev = ts->start();
 	}
 	t_co = co;
+	t_owner = co;
 	return ev;
 }
 

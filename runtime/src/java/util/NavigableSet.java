@@ -2,34 +2,59 @@ package java.util;
 
 public interface NavigableSet<E> extends SortedSet<E>
 {
-    E lower(E e);
+    default E lower(E value)
+    {
+        throw new UnsupportedOperationException();
+    }
 
-    E floor(E e);
+    default E floor(E value)
+    {
+        throw new UnsupportedOperationException();
+    }
 
-    E ceiling(E e);
+    default E ceiling(E value)
+    {
+        throw new UnsupportedOperationException();
+    }
 
-    E higher(E e);
+    default E higher(E value)
+    {
+        throw new UnsupportedOperationException();
+    }
 
-    E pollFirst();
+    default E pollFirst()
+    {
+        throw new UnsupportedOperationException();
+    }
 
-    E pollLast();
+    default E pollLast()
+    {
+        throw new UnsupportedOperationException();
+    }
 
-    Iterator<E> iterator();
+    default NavigableSet<E> descendingSet()
+    {
+        throw new UnsupportedOperationException();
+    }
 
-    NavigableSet<E> descendingSet();
+    default Iterator<E> descendingIterator()
+    {
+        throw new UnsupportedOperationException();
+    }
 
-    Iterator<E> descendingIterator();
+    default NavigableSet<E> subSet(E fromElement, boolean fromInclusive,
+        E toElement, boolean toInclusive)
+    {
+        throw new UnsupportedOperationException();
+    }
 
-    NavigableSet<E> subSet(E fromElement, boolean fromInclusive,
-                           E toElement, boolean toInclusive);
+    default NavigableSet<E> headSet(E toElement, boolean inclusive)
+    {
+        throw new UnsupportedOperationException();
+    }
 
-    NavigableSet<E> headSet(E toElement, boolean inclusive);
-
-    NavigableSet<E> tailSet(E fromElement, boolean inclusive);
-
-    SortedSet<E> subSet(E fromElement, E toElement);
-
-    SortedSet<E> headSet(E toElement);
-
-    SortedSet<E> tailSet(E fromElement);
+    default NavigableSet<E> tailSet(E fromElement, boolean inclusive)
+    {
+        throw new UnsupportedOperationException();
+    }
 }

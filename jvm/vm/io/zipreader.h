@@ -32,6 +32,10 @@ public:
 	// malformed input (call LastError() for a human readable reason).
 	bool Open(const std::string &path);
 
+	// Opens an archive that is already held in memory (for ZipInputStream and
+	// JarInputStream, which consume a stream rather than a file path).
+	bool OpenMemory(const uint8_t *bytes, size_t size);
+
 	bool IsOpen() const { return opened; }
 
 	const std::string &Path() const { return path; }

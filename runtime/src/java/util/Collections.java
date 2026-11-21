@@ -6,6 +6,32 @@ public class Collections
     {
     }
 
+    public static <T> Comparator<T> reverseOrder()
+    {
+        return new Comparator<T>()
+        {
+            public int compare(T first, T second)
+            {
+                return ((Comparable<T>)second).compareTo(first);
+            }
+        };
+    }
+
+    public static <T> Comparator<T> reverseOrder(final Comparator<T> comparator)
+    {
+        if (comparator == null)
+        {
+            return reverseOrder();
+        }
+        return new Comparator<T>()
+        {
+            public int compare(T first, T second)
+            {
+                return comparator.compare(second, first);
+            }
+        };
+    }
+
     public static <T extends Comparable<? super T>> void sort(List<T> list)
     {
         sort(list, null);

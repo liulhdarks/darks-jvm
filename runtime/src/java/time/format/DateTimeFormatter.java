@@ -32,13 +32,18 @@ public final class DateTimeFormatter
         new DateTimeFormatter("yyyy-MM-dd'T'HH:mm:ssXXX", true, false);
     public static final DateTimeFormatter BASIC_ISO_DATE =
         new DateTimeFormatter("yyyyMMdd", true, false);
-    public static final DateTimeFormatter ISO_DATE = ISO_LOCAL_DATE;
-    public static final DateTimeFormatter ISO_TIME = ISO_LOCAL_TIME;
-    public static final DateTimeFormatter ISO_DATE_TIME = ISO_LOCAL_DATE_TIME;
+    public static final DateTimeFormatter ISO_DATE =
+        new DateTimeFormatter("yyyy-MM-dd", true, false);
+    public static final DateTimeFormatter ISO_TIME =
+        new DateTimeFormatter("HH:mm:ss", true, false);
+    public static final DateTimeFormatter ISO_DATE_TIME =
+        new DateTimeFormatter("yyyy-MM-dd'T'HH:mm:ss", true, false);
     public static final DateTimeFormatter ISO_OFFSET_DATE_TIME =
         new DateTimeFormatter("yyyy-MM-dd'T'HH:mm:ssXXX", true, false);
     public static final DateTimeFormatter ISO_OFFSET_TIME =
         new DateTimeFormatter("HH:mm:ssXXX", true, false);
+    public static final DateTimeFormatter RFC_1123_DATE_TIME =
+        new DateTimeFormatter("EEE, dd MMM yyyy HH:mm:ss zzz", true, false);
 
     private static final String[] MONTHS_SHORT = {
         "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -67,6 +72,42 @@ public final class DateTimeFormatter
         this.instantOnly = instantOnly;
     }
 
+    public static DateTimeFormatter ofLocalizedDate(FormatStyle dateStyle)
+    {
+        if (dateStyle == null)
+        {
+            throw new NullPointerException("dateStyle");
+        }
+        return ISO_LOCAL_DATE;
+    }
+
+    public static DateTimeFormatter ofLocalizedTime(FormatStyle timeStyle)
+    {
+        if (timeStyle == null)
+        {
+            throw new NullPointerException("timeStyle");
+        }
+        return ISO_LOCAL_TIME;
+    }
+
+    public static DateTimeFormatter ofLocalizedDateTime(FormatStyle dateTimeStyle)
+    {
+        if (dateTimeStyle == null)
+        {
+            throw new NullPointerException("dateTimeStyle");
+        }
+        return ISO_LOCAL_DATE_TIME;
+    }
+
+    public static DateTimeFormatter ofLocalizedDateTime(FormatStyle dateStyle, FormatStyle timeStyle)
+    {
+        if (dateStyle == null || timeStyle == null)
+        {
+            throw new NullPointerException("style");
+        }
+        return ISO_LOCAL_DATE_TIME;
+    }
+
     public static DateTimeFormatter ofPattern(String pattern)
     {
         if (pattern == null)
@@ -82,35 +123,28 @@ public final class DateTimeFormatter
         return ofPattern(pattern);
     }
 
-    public DateTimeFormatter withLocale(Locale locale)
-    {
-        return this;
-    }
-
     public DateTimeFormatter withZone(ZoneId zone)
     {
         return this;
     }
 
-    public static DateTimeFormatter ofLocalizedDate(FormatStyle style)
+    public DateTimeFormatter withChronology(java.time.chrono.Chronology chronology)
     {
-        return ISO_LOCAL_DATE;
+        return this;
     }
 
-    public static DateTimeFormatter ofLocalizedTime(FormatStyle style)
+    public DateTimeFormatter withResolverStyle(ResolverStyle resolverStyle)
     {
-        return ISO_LOCAL_TIME;
+        if (resolverStyle == null)
+        {
+            throw new NullPointerException("resolverStyle");
+        }
+        return this;
     }
 
-    public static DateTimeFormatter ofLocalizedDateTime(FormatStyle style)
+    public DateTimeFormatter withLocale(Locale locale)
     {
-        return ISO_LOCAL_DATE_TIME;
-    }
-
-    public static DateTimeFormatter ofLocalizedDateTime(FormatStyle dateStyle,
-                                                       FormatStyle timeStyle)
-    {
-        return ISO_LOCAL_DATE_TIME;
+        return this;
     }
 
     public String toString()
@@ -206,14 +240,6 @@ public final class DateTimeFormatter
             offsetSeconds = zdt.getOffset().getTotalSeconds();
             hasOffset = true;
             zoneId = zdt.getZone().getId();
-        }
-        else if (value instanceof java.time.OffsetDateTime)
-        {
-            java.time.OffsetDateTime odt = (java.time.OffsetDateTime)value;
-            date = odt.toLocalDate();
-            time = odt.toLocalTime();
-            offsetSeconds = odt.getOffset().getTotalSeconds();
-            hasOffset = true;
         }
         else if (value instanceof LocalDateTime)
         {

@@ -6,22 +6,15 @@ public interface Predicate<T>
 
     default Predicate<T> and(final Predicate<? super T> other)
     {
+        if (other == null)
+        {
+            throw new NullPointerException("other");
+        }
         return new Predicate<T>()
         {
             public boolean test(T value)
             {
                 return Predicate.this.test(value) && other.test(value);
-            }
-        };
-    }
-
-    default Predicate<T> or(final Predicate<? super T> other)
-    {
-        return new Predicate<T>()
-        {
-            public boolean test(T value)
-            {
-                return Predicate.this.test(value) || other.test(value);
             }
         };
     }
@@ -37,23 +30,28 @@ public interface Predicate<T>
         };
     }
 
-    static <T> Predicate<T> isEqual(final Object targetRef)
+    default Predicate<T> or(final Predicate<? super T> other)
     {
-        if (targetRef == null)
+        if (other == null)
         {
-            return new Predicate<T>()
-            {
-                public boolean test(T value)
-                {
-                    return value == null;
-                }
-            };
+            throw new NullPointerException("other");
         }
         return new Predicate<T>()
         {
             public boolean test(T value)
             {
-                return targetRef.equals(value);
+                return Predicate.this.test(value) || other.test(value);
+            }
+        };
+    }
+
+    static <T> Predicate<T> isEqual(final Object targetRef)
+    {
+        return new Predicate<T>()
+        {
+            public boolean test(T value)
+            {
+                return targetRef == null ? value == null : targetRef.equals(value);
             }
         };
     }
@@ -62,7 +60,7 @@ public interface Predicate<T>
     {
         if (target == null)
         {
-            throw new NullPointerException();
+            throw new NullPointerException("target");
         }
         return new Predicate<T>()
         {

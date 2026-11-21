@@ -117,6 +117,43 @@ public final class Instant implements java.time.temporal.Temporal,
         return seconds * 1000L + nanos / 1000000;
     }
 
+    public Instant truncatedTo(java.time.temporal.TemporalUnit unit)
+    {
+        if (unit == java.time.temporal.ChronoUnit.NANOS)
+        {
+            return this;
+        }
+        if (unit == java.time.temporal.ChronoUnit.MICROS)
+        {
+            return new Instant(seconds, nanos - nanos % 1000);
+        }
+        if (unit == java.time.temporal.ChronoUnit.MILLIS)
+        {
+            return new Instant(seconds, nanos - nanos % 1000000);
+        }
+        if (unit == java.time.temporal.ChronoUnit.SECONDS)
+        {
+            return new Instant(seconds, 0);
+        }
+        if (unit == java.time.temporal.ChronoUnit.MINUTES)
+        {
+            return new Instant(seconds - Math.floorMod(seconds, 60L), 0);
+        }
+        if (unit == java.time.temporal.ChronoUnit.HOURS)
+        {
+            return new Instant(seconds - Math.floorMod(seconds, 3600L), 0);
+        }
+        if (unit == java.time.temporal.ChronoUnit.HALF_DAYS)
+        {
+            return new Instant(seconds - Math.floorMod(seconds, 43200L), 0);
+        }
+        if (unit == java.time.temporal.ChronoUnit.DAYS)
+        {
+            return new Instant(seconds - Math.floorMod(seconds, 86400L), 0);
+        }
+        throw new IllegalArgumentException("Unsupported unit: " + unit);
+    }
+
     public Instant plus(Duration duration)
     {
         return create(seconds + duration.getSeconds(), nanos + (long)duration.getNano());

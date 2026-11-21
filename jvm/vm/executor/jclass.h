@@ -33,6 +33,8 @@ public:
 	lpBootstrapMethods bootstrap_methods;
 	ClassType class_type;
 	lpClass super_class;
+	// For CT_ARRAY classes: the element class when it is already known.
+	lpClass component_class;
 
 	// Class file version (major 45..55 supported; 52 == Java 8, 55 == Java 11).
 	U2 major_version;
@@ -67,6 +69,7 @@ public:
 	void LoadSuperClass();
 	bool initialize(bool load_super = true);
 	bool FindMethod(LPSTR method_name, lpMethod& method);
+	bool FindMethodByParams(LPCSTR name, LPCSTR params, lpMethod& method);
 
 	// Assigns Field::slot for every instance field in the superclass chain
 	// and returns the total number of instance slots for objects of this

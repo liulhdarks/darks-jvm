@@ -1,16 +1,21 @@
 package java.security;
 
-/**
- * Placeholder access-control context.  With no SecurityManager installed,
- * {@link #checkPermission} always succeeds.
- */
 public final class AccessControlContext
 {
     public AccessControlContext()
     {
     }
 
-    public void checkPermission(Permission perm)
+    public AccessControlContext(ProtectionDomain[] context)
     {
+    }
+
+    public void checkPermission(Permission permission)
+    {
+    }
+
+    public ProtectionDomain[] getProtectionDomains()
+    {
+        return new ProtectionDomain[0];
     }
 }

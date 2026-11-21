@@ -4,6 +4,7 @@ import java.io.IOException;
 
 public abstract class URLConnection
 {
+    protected boolean connected;
     protected URL url;
     private boolean useCaches = true;
     private boolean doInput = true;

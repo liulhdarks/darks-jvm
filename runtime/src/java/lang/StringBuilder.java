@@ -80,6 +80,33 @@ public class StringBuilder implements CharSequence
         return this;
     }
 
+    public StringBuilder append(CharSequence sequence)
+    {
+        if (sequence == null)
+        {
+            return append("null");
+        }
+        return append(sequence, 0, sequence.length());
+    }
+
+    public StringBuilder append(CharSequence sequence, int start, int end)
+    {
+        if (sequence == null)
+        {
+            sequence = "null";
+        }
+        int n = end - start;
+        ensure(count + n);
+        int i = 0;
+        while (i < n)
+        {
+            value[count + i] = sequence.charAt(start + i);
+            i = i + 1;
+        }
+        count = count + n;
+        return this;
+    }
+
     public StringBuilder append(char[] chars)
     {
         if (chars == null)
@@ -121,33 +148,6 @@ public class StringBuilder implements CharSequence
     public StringBuilder append(Object o)
     {
         return append(String.valueOf(o));
-    }
-
-    public StringBuilder append(CharSequence s)
-    {
-        return append(s == null ? "null" : s.toString());
-    }
-
-    public StringBuilder append(CharSequence s, int start, int end)
-    {
-        if (s == null)
-        {
-            s = "null";
-        }
-        if (start < 0 || start > end || end > s.length())
-        {
-            throw new IndexOutOfBoundsException();
-        }
-        int n = end - start;
-        ensure(count + n);
-        int i = 0;
-        while (i < n)
-        {
-            value[count + i] = s.charAt(start + i);
-            i = i + 1;
-        }
-        count = count + n;
-        return this;
     }
 
     public StringBuilder append(float v)

@@ -11,6 +11,11 @@
 #include "jni/jni.h"
 using namespace std;
 
+// Innermost ThreadStack currently running interpreter code on this OS
+// thread.  Unlike Scheduler::CurrentStack() this also covers nested executors
+// (class initialisation) that deliberately run without a scheduler coroutine.
+JVM_API ThreadStack *DarksVM_ActiveThreadStack();
+
 class JVM_API ThreadStack
 {
 
@@ -66,6 +71,12 @@ public:
 	EventNotify execute(lpClass clazz, lpMethod method);
 
 	EventNotify execute(lpClass clazz, lpMethod method, lpVariant vars, int count);
+
+	// Invocation from a native (JNI Call*Method / Method.invoke).  A
+	// coroutine suspension inside the invoked method must not abort the
+	// native: this variant parks the coroutine, runs other work and resumes
+	// the invocation until it really returns.
+	EventNotify executeNested(lpClass clazz, lpMethod method, lpVariant vars, int count);
 
 	void AddFrame(lpClass clazz, lpMethod method, lpStackFrame &frame);
 

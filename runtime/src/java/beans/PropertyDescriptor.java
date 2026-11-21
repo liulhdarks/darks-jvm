@@ -8,6 +8,8 @@ public class PropertyDescriptor extends FeatureDescriptor
     private Method readMethod;
     private Method writeMethod;
     private Class propertyEditorClass;
+    private boolean bound;
+    private boolean constrained;
 
     public PropertyDescriptor(String propertyName, Class beanClass)
         throws IntrospectionException
@@ -86,6 +88,26 @@ public class PropertyDescriptor extends FeatureDescriptor
     public void setPropertyEditorClass(Class propertyEditorClass)
     {
         this.propertyEditorClass = propertyEditorClass;
+    }
+
+    public boolean isBound()
+    {
+        return bound;
+    }
+
+    public void setBound(boolean bound)
+    {
+        this.bound = bound;
+    }
+
+    public boolean isConstrained()
+    {
+        return constrained;
+    }
+
+    public void setConstrained(boolean constrained)
+    {
+        this.constrained = constrained;
     }
 
     public Method getReadMethod()

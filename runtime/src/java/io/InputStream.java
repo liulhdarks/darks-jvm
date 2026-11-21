@@ -43,19 +43,40 @@ public abstract class InputStream
         return count;
     }
 
+    public long skip(long count) throws IOException
+    {
+        long skipped = 0;
+        byte[] buffer = new byte[512];
+        while (skipped < count)
+        {
+            int want = (int)Math.min(buffer.length, count - skipped);
+            int read = read(buffer, 0, want);
+            if (read < 0)
+            {
+                break;
+            }
+            skipped += read;
+        }
+        return skipped;
+    }
+
     public int available() throws IOException
     {
         return 0;
     }
 
-    public long skip(long count) throws IOException
+    public void mark(int limit)
     {
-        long skipped = 0;
-        while (skipped < count && read() >= 0)
-        {
-            skipped = skipped + 1;
-        }
-        return skipped;
+    }
+
+    public void reset() throws IOException
+    {
+        throw new IOException("mark/reset not supported");
+    }
+
+    public boolean markSupported()
+    {
+        return false;
     }
 
     public void close() throws IOException

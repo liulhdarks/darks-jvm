@@ -1,22 +1,47 @@
 package java.lang;
 
 import java.util.Iterator;
+import java.util.Spliterator;
+import java.util.function.Consumer;
 
 public interface Iterable<T>
 {
     Iterator<T> iterator();
 
-    default java.util.Spliterator<T> spliterator()
+    default Spliterator<T> spliterator()
     {
-        return java.util.Spliterators.spliteratorUnknownSize(iterator(), 0);
+        final Iterator<T> it = iterator();
+        return new Spliterator<T>()
+        {
+            public boolean tryAdvance(Consumer<? super T> action)
+            {
+                if (!it.hasNext())
+                {
+                    return false;
+                }
+                action.accept(it.next());
+                return true;
+            }
+
+            public Spliterator<T> trySplit()
+            {
+                return null;
+            }
+
+            public long estimateSize()
+            {
+                return Long.MAX_VALUE;
+            }
+
+            public int characteristics()
+            {
+                return 0;
+            }
+        };
     }
 
-    default void forEach(java.util.function.Consumer<? super T> action)
+    default void forEach(Consumer<? super T> action)
     {
-        if (action == null)
-        {
-            throw new NullPointerException("action");
-        }
         Iterator<T> it = iterator();
         while (it.hasNext())
         {

@@ -28,7 +28,6 @@
 #include <iostream>
 #include <string>
 #include <vector>
-
 using namespace std;
 
 static const char *kVersion = "darks-jvm 1.0 (cross-platform build)";
@@ -224,6 +223,27 @@ static int run_class(const string &class_name, int argc, char **argv)
 		// Executors created internally for class initialisation stay nested.
 		Scheduler::Instance().AttachMain(exec->GetThreadStack());
 		exec->Execute(clazz, clazz->mainMethod, &args_var, 1);
+		if (!VMContext::pending_exception)
+		{
+			// Normal termination runs the hooks registered through
+			// Runtime.addShutdownHook on their own threads before teardown.
+			lpClass runtime_class = NULL;
+			if (VMContext::bootstrap_classloader->FindClass("java/lang/Runtime", runtime_class) &&
+			    runtime_class)
+			{
+				lpMethod hooks = NULL;
+				if (runtime_class->FindMethod((LPSTR)"runShutdownHooks:()V", hooks) && hooks)
+				{
+					try
+					{
+						exec->Execute(runtime_class, hooks);
+					}
+					catch (...)
+					{
+					}
+				}
+			}
+		}
 		if (VMContext::pending_exception)
 		{
 			// Uncaught Java exception: print a readable trace and exit with a
@@ -393,6 +413,17 @@ int main(int argc, char **argv)
 		for (size_t i = 0; i < jar_entries.size(); i++)
 		{
 			Environment::AddClassPath(jar_entries[i]);
+		}
+		// The jar only carries the application; the VM's runtime classes may
+		// be supplied through DARKS_JVM_CLASSPATH (in addition to -cp).
+		const char *env_cp = getenv("DARKS_JVM_CLASSPATH");
+		if (env_cp && *env_cp)
+		{
+			vector<string> items = split_classpath(env_cp);
+			for (size_t i = 0; i < items.size(); i++)
+			{
+				Environment::AddClassPath(items[i]);
+			}
 		}
 	}
 

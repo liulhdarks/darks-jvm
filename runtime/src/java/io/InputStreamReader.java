@@ -5,6 +5,7 @@ package java.io;
 public class InputStreamReader extends Reader
 {
     private InputStream in;
+    private java.nio.charset.Charset charset;
 
     public InputStreamReader(InputStream in)
     {
@@ -14,25 +15,27 @@ public class InputStreamReader extends Reader
     public InputStreamReader(InputStream in, java.nio.charset.Charset charset)
     {
         this.in = in;
+        this.charset = charset;
     }
 
     public InputStreamReader(InputStream in, String charsetName)
         throws UnsupportedEncodingException
     {
-        if (charsetName == null)
-        {
-            throw new UnsupportedEncodingException("null charset name");
-        }
         this.in = in;
+        this.charset = java.nio.charset.Charset.forName(charsetName);
     }
 
     public String getEncoding()
     {
-        return "UTF-8";
+        return charset == null ? "UTF-8" : charset.name();
     }
 
     public int read() throws IOException
     {
+        if (charset != null && charset != java.nio.charset.StandardCharsets.UTF_8)
+        {
+            return readEncoded();
+        }
         int first = in.read();
         if (first < 0)
         {
@@ -75,6 +78,39 @@ public class InputStreamReader extends Reader
             i = i + 1;
         }
         return value;
+    }
+
+    private int readEncoded() throws IOException
+    {
+        String name = charset.name();
+        if (name == "ISO-8859-1")
+        {
+            int value = in.read();
+            return value < 0 ? -1 : value;
+        }
+        if (name == "US-ASCII")
+        {
+            int value = in.read();
+            return value < 0 ? -1 : (value & 0x7F);
+        }
+        boolean bigEndian = name != "UTF-16LE";
+        if (name == "UTF-16")
+        {
+            // The first code unit decides the byte order; there is no build
+            // time platform default to consult, so big endian is assumed.
+            bigEndian = true;
+        }
+        int first = in.read();
+        if (first < 0)
+        {
+            return -1;
+        }
+        int second = in.read();
+        if (second < 0)
+        {
+            return 0xFFFD;
+        }
+        return bigEndian ? ((first << 8) | second) : ((second << 8) | first);
     }
 
     public int read(char[] buffer, int offset, int length) throws IOException

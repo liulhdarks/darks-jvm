@@ -19,8 +19,10 @@
 #include "vm/executor/vmmutex.h"
 #include "vm/classfiles/classloader.h"
 
+#include <cstdio>
 #include <chrono>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -61,7 +63,7 @@ void ThrowUnsupported(const char *what)
 		"java/lang/UnsupportedOperationException", what);
 }
 
-LPOBJECT_REF EnsureCurrentThreadObject()
+LPOBJECT_REF CreateThreadObject()
 {
 	lpCoroutine co = Scheduler::CurrentJavaThread();
 	if (!co)
@@ -87,9 +89,6 @@ LPOBJECT_REF EnsureCurrentThreadObject()
 	{
 		return NULL;
 	}
-	// Register as the coroutine's Thread object immediately: the slot is a GC
-	// root, so the object survives the string allocation below.
-	co->thread_ref = ref;
 
 	LPOBJECT_REF name_ref = NULL;
 	VMContext::object_heap->NewStringObject(const_cast<LPSTR>("main"), 4, name_ref);
@@ -109,6 +108,63 @@ LPOBJECT_REF EnsureCurrentThreadObject()
 	Variant tid;
 	tid.lValue = 0;
 	SetRawField(ref, "tid", tid);
+	return ref;
+}
+
+// Class initialisation runs on a nested executor with no coroutine attached,
+// so Scheduler::Current() is NULL while <clinit> executes.  Java code in a
+// static initializer may still ask for the current thread (ThreadLocal, for
+// example), which must not observe null.  Hand out one process-wide implicit
+// Thread object for that window.
+LPOBJECT_REF EnsureImplicitThreadObject()
+{
+	static LPOBJECT_REF implicit_ref = NULL;
+	static bool slot_registered = false;
+	static std::mutex implicit_mutex;
+	std::lock_guard<std::mutex> lock(implicit_mutex);
+	if (!VMContext::object_heap)
+	{
+		return NULL;
+	}
+	if (!slot_registered)
+	{
+		VMContext::object_heap->AddRootSlot(&implicit_ref);
+		slot_registered = true;
+	}
+	if (!implicit_ref)
+	{
+		implicit_ref = CreateThreadObject();
+	}
+	return implicit_ref;
+}
+
+LPOBJECT_REF EnsureCurrentThreadObject()
+{
+	lpCoroutine co = Scheduler::Current();
+	if (!co)
+	{
+		// Nested executor (class initialisation) cleared the coroutine for
+		// this OS thread; keep reporting the owning Java thread so that its
+		// context class loader and thread locals remain visible.
+		LPOBJECT_REF owner = Scheduler::CurrentThreadObject();
+		if (owner)
+		{
+			return owner;
+		}
+		return EnsureImplicitThreadObject();
+	}
+	if (co->thread_ref)
+	{
+		return co->thread_ref;
+	}
+	LPOBJECT_REF ref = CreateThreadObject();
+	if (!ref)
+	{
+		return NULL;
+	}
+	// Register as the coroutine's Thread object immediately: the slot is a GC
+	// root, so the object survives while it is populated.
+	co->thread_ref = ref;
 	return ref;
 }
 

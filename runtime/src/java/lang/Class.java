@@ -121,6 +121,53 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
 
     public native boolean desiredAssertionStatus();
 
+    private native String getSource0();
+
+    public java.security.ProtectionDomain getProtectionDomain()
+    {
+        if (isPrimitive() || isArray())
+        {
+            return null;
+        }
+        String source = getSource0();
+        if (source == null)
+        {
+            return null;
+        }
+        String location = source;
+        int marker = source.indexOf("!/");
+        if (marker >= 0)
+        {
+            location = source.substring(0, marker);
+        }
+        else
+        {
+            String suffix = name.replace('.', '/') + ".class";
+            if (location.endsWith(suffix))
+            {
+                location = location.substring(0, location.length() - suffix.length());
+                if (location.length() > 1 && location.endsWith("/"))
+                {
+                    location = location.substring(0, location.length() - 1);
+                }
+            }
+        }
+        try
+        {
+            java.net.URL url = new java.net.URL("file:" + location);
+            java.security.cert.Certificate[] certificates =
+                new java.security.cert.Certificate[0];
+            java.security.CodeSource codeSource =
+                new java.security.CodeSource(url, certificates);
+            return new java.security.ProtectionDomain(codeSource,
+                new java.security.Permission[0]);
+        }
+        catch (java.net.MalformedURLException e)
+        {
+            return null;
+        }
+    }
+
     public String toString()
     {
         return name;
@@ -131,91 +178,6 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
     public native boolean isArray();
 
     public native boolean isPrimitive();
-
-    public boolean isAnnotation()
-    {
-        return (getModifiers0() & 0x2000) != 0;
-    }
-
-    public boolean isEnum()
-    {
-        Class parent = getSuperclass();
-        return parent != null && parent.getName().equals("java.lang.Enum");
-    }
-
-    public boolean isSynthetic()
-    {
-        return (getModifiers0() & 0x1000) != 0;
-    }
-
-    private String lastBinarySegment()
-    {
-        String n = name == null ? "" : name;
-        int dollar = n.lastIndexOf('$');
-        return dollar < 0 ? n : n.substring(dollar + 1);
-    }
-
-    public boolean isAnonymousClass()
-    {
-        if (isArray() || isPrimitive())
-        {
-            return false;
-        }
-        String segment = lastBinarySegment();
-        return segment.length() > 0 &&
-            segment.charAt(0) >= '0' && segment.charAt(0) <= '9';
-    }
-
-    public boolean isMemberClass()
-    {
-        if (isArray() || isPrimitive() || name == null || name.indexOf('$') < 0)
-        {
-            return false;
-        }
-        return !isAnonymousClass();
-    }
-
-    public boolean isLocalClass()
-    {
-        return false;
-    }
-
-    public String getTypeName()
-    {
-        if (!isArray())
-        {
-            return getName();
-        }
-        String n = getName();
-        int dims = 0;
-        while (dims < n.length() && n.charAt(dims) == '[')
-        {
-            dims++;
-        }
-        char kind = n.charAt(dims);
-        String base;
-        if (kind == 'L')
-        {
-            int end = n.lastIndexOf(';');
-            base = end > dims ? n.substring(dims + 1, end).replace('/', '.') : "";
-        }
-        else
-        {
-            base = getSimpleName();
-        }
-        String result = base;
-        for (int i = 0; i < dims; i++)
-        {
-            result = result + "[]";
-        }
-        return result;
-    }
-
-    public String getCanonicalName()
-    {
-        String n = getName();
-        return n == null ? null : n.replace('$', '.').replace('/', '.');
-    }
 
     public native Class getComponentType();
 
@@ -232,18 +194,248 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
         return getModifiers0();
     }
 
+    public boolean isEnum()
+    {
+        return (getModifiers0() & 0x4000) != 0;
+    }
+
+    public boolean isAnnotation()
+    {
+        return isInterface() && (getModifiers0() & 0x2000) != 0;
+    }
+
+    public boolean isSynthetic()
+    {
+        return (getModifiers0() & 0x1000) != 0;
+    }
+
+    private boolean nameHasNestedPart()
+    {
+        return name != null && name.indexOf('$') >= 0 && name.charAt(0) != '[';
+    }
+
+    private static boolean binaryTailIsDigits(String binaryName)
+    {
+        int dollar = binaryName.lastIndexOf('$');
+        if (dollar < 0 || dollar + 1 >= binaryName.length())
+        {
+            return false;
+        }
+        for (int i = dollar + 1; i < binaryName.length(); i++)
+        {
+            char c = binaryName.charAt(i);
+            if (c < '0' || c > '9')
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean binaryTailIsLocal(String binaryName)
+    {
+        int dollar = binaryName.lastIndexOf('$');
+        if (dollar < 0 || dollar + 1 >= binaryName.length())
+        {
+            return false;
+        }
+        int i = dollar + 1;
+        int digits = 0;
+        while (i < binaryName.length() && binaryName.charAt(i) >= '0' && binaryName.charAt(i) <= '9')
+        {
+            i++;
+            digits++;
+        }
+        return digits > 0 && i < binaryName.length();
+    }
+
+    public boolean isAnonymousClass()
+    {
+        return nameHasNestedPart() && binaryTailIsDigits(name);
+    }
+
+    public boolean isLocalClass()
+    {
+        return nameHasNestedPart() && binaryTailIsLocal(name);
+    }
+
+    public boolean isMemberClass()
+    {
+        return getDeclaringClass() != null;
+    }
+
+    private String enclosingBinaryName()
+    {
+        if (!nameHasNestedPart())
+        {
+            return null;
+        }
+        int dollar = name.lastIndexOf('$');
+        return dollar > 0 ? name.substring(0, dollar) : null;
+    }
+
+    public Class<?> getDeclaringClass()
+    {
+        if (isAnonymousClass() || isLocalClass())
+        {
+            return null;
+        }
+        String enclosing = enclosingBinaryName();
+        if (enclosing == null)
+        {
+            return null;
+        }
+        try
+        {
+            return Class.forName(enclosing, false, getClassLoader());
+        }
+        catch (ClassNotFoundException e)
+        {
+            return null;
+        }
+    }
+
+    public Class<?> getEnclosingClass()
+    {
+        Class<?> declaring = getDeclaringClass();
+        if (declaring != null)
+        {
+            return declaring;
+        }
+        String enclosing = enclosingBinaryName();
+        if (enclosing == null)
+        {
+            return null;
+        }
+        try
+        {
+            return Class.forName(enclosing, false, getClassLoader());
+        }
+        catch (ClassNotFoundException e)
+        {
+            return null;
+        }
+    }
+
+    public String getTypeName()
+    {
+        return getName();
+    }
+
+    public String getCanonicalName()
+    {
+        String binary = getName();
+        if (binary == null || binary.length() == 0)
+        {
+            return binary;
+        }
+        if (binary.charAt(0) == '[')
+        {
+            return getSimpleName().replace('$', '.');
+        }
+        if (isAnonymousClass() || isLocalClass())
+        {
+            return null;
+        }
+        return binary.replace('$', '.');
+    }
+
+    public T cast(Object obj)
+    {
+        if (obj != null && !isInstance(obj))
+        {
+            throw new ClassCastException();
+        }
+        return (T)obj;
+    }
+
+    public <U> Class<? extends U> asSubclass(Class<U> clazz)
+    {
+        if (clazz.isAssignableFrom(this))
+        {
+            return (Class<? extends U>)this;
+        }
+        throw new ClassCastException(toString());
+    }
+
+    public T[] getEnumConstants()
+    {
+        if (!isEnum())
+        {
+            return null;
+        }
+        try
+        {
+            Field[] fields = getDeclaredFields();
+            ArrayList<T> constants = new ArrayList<T>();
+            for (int i = 0; i < fields.length; i++)
+            {
+                Field field = fields[i];
+                if (field.getType() == this &&
+                    (field.getModifiers() & 0x0008) != 0)
+                {
+                    constants.add((T)field.get(null));
+                }
+            }
+            T[] result = (T[])java.lang.reflect.Array.newInstance(this, constants.size());
+            for (int i = 0; i < constants.size(); i++)
+            {
+                result[i] = constants.get(i);
+            }
+            return result;
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
     public ClassLoader getClassLoader()
     {
         ClassLoader loader = getClassLoader0();
         return loader != null ? loader : ClassLoader.getSystemClassLoader();
     }
 
-    private native ClassLoader getClassLoader0();
-
-    public java.security.ProtectionDomain getProtectionDomain()
+    private String packageName()
     {
-        return null;
+        if (isArray())
+        {
+            Class<?> component = getComponentType();
+            return component == null ? null : component.packageName();
+        }
+        if (isPrimitive() || name == null)
+        {
+            return null;
+        }
+        int dot = name.lastIndexOf('.');
+        return dot < 0 ? "" : name.substring(0, dot);
     }
+
+    public String getPackageName()
+    {
+        return packageName();
+    }
+
+    public Package getPackage()
+    {
+        String packageName = packageName();
+        if (packageName == null)
+        {
+            return null;
+        }
+        ClassLoader loader = getClassLoader0();
+        if (loader == null)
+        {
+            loader = ClassLoader.getSystemClassLoader();
+        }
+        if (loader == null)
+        {
+            return null;
+        }
+        return loader.getPackage(packageName);
+    }
+
+    private native ClassLoader getClassLoader0();
 
     public java.io.InputStream getResourceAsStream(String name)
     {
@@ -279,16 +471,9 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
 
     public native Class[] getDeclaredClasses0();
 
-    public Class[] getDeclaredClasses()
+    public Class<?>[] getDeclaredClasses()
     {
         return getDeclaredClasses0();
-    }
-
-    public native Class getEnclosingClass0();
-
-    public Class getEnclosingClass()
-    {
-        return getEnclosingClass0();
     }
 
     public native Method[] getDeclaredMethods0();
@@ -564,7 +749,21 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
 
     public static Class<?> forName(String name) throws ClassNotFoundException
     {
-        return forName(name, true, null);
+        if (name == null)
+        {
+            throw new NullPointerException("name");
+        }
+        ClassLoader loader = null;
+        Thread thread = Thread.currentThread();
+        if (thread != null)
+        {
+            loader = thread.getContextClassLoader();
+        }
+        if (loader == null)
+        {
+            loader = ClassLoader.getSystemClassLoader();
+        }
+        return forName(name, true, loader);
     }
 
     public static Class<?> forName(String name, boolean initialize,

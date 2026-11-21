@@ -1,55 +1,113 @@
 package java.util;
 
 /**
- * Minimal time-zone value object.  Regions use their standard offset all
- * year, mirroring the reduced java.time implementation.
+ * Time zone with a fixed raw offset from UTC.  The default zone is GMT.
  */
-public class TimeZone implements java.io.Serializable
+public class TimeZone implements java.io.Serializable, Cloneable
 {
     public static final int SHORT = 0;
     public static final int LONG = 1;
+
+    private static final TimeZone GMT = new TimeZone("GMT", 0);
+    private static TimeZone defaultZone = GMT;
 
     private String id;
     private int rawOffset;
 
     public TimeZone()
     {
-        this("UTC", 0);
+        this.id = "GMT";
     }
 
-    protected TimeZone(String id, int rawOffset)
+    private TimeZone(String id, int rawOffset)
     {
         this.id = id;
         this.rawOffset = rawOffset;
     }
 
-    public static TimeZone getDefault()
+    public static synchronized TimeZone getDefault()
     {
-        return getTimeZone(java.time.ZoneId.systemDefault());
+        return defaultZone;
+    }
+
+    public static synchronized void setDefault(TimeZone zone)
+    {
+        defaultZone = zone == null ? GMT : zone;
+    }
+
+    public static String[] getAvailableIDs()
+    {
+        return new String[] {"GMT", "UTC"};
+    }
+
+    public static String[] getAvailableIDs(int rawOffset)
+    {
+        return new String[] {"GMT"};
     }
 
     public static TimeZone getTimeZone(String id)
     {
         if (id == null)
         {
-            throw new NullPointerException("id");
+            return GMT;
         }
-        java.time.ZoneId zone = java.time.ZoneId.of(id);
-        return new TimeZone(zone.getId(), zone.getOffsetSeconds(0));
-    }
-
-    public static TimeZone getTimeZone(java.time.ZoneId zone)
-    {
-        if (zone == null)
+        String value = id.trim();
+        if (value.length() == 0 || value.equals("GMT") || value.equals("UTC")
+                || value.equals("Z") || value.equals("UT"))
         {
-            throw new NullPointerException("zone");
+            return new TimeZone("GMT", 0);
         }
-        return new TimeZone(zone.getId(), zone.getOffsetSeconds(0));
+        if (value.startsWith("GMT") || value.startsWith("UTC"))
+        {
+            String rest = value.substring(3);
+            if (rest.length() > 0)
+            {
+                try
+                {
+                    int minutes = parseOffset(rest);
+                    return new TimeZone(value, minutes * 60000);
+                }
+                catch (RuntimeException ex)
+                {
+                    return new TimeZone("GMT", 0);
+                }
+            }
+        }
+        return new TimeZone(value, 0);
     }
 
-    public java.time.ZoneId toZoneId()
+    private static int parseOffset(String value)
     {
-        return java.time.ZoneId.of(id);
+        int sign = 1;
+        int index = 0;
+        if (value.charAt(0) == '+')
+        {
+            index = 1;
+        }
+        else if (value.charAt(0) == '-')
+        {
+            sign = -1;
+            index = 1;
+        }
+        String rest = value.substring(index);
+        int hours;
+        int minutes = 0;
+        int colon = rest.indexOf(':');
+        if (colon >= 0)
+        {
+            hours = Integer.parseInt(rest.substring(0, colon));
+            minutes = Integer.parseInt(rest.substring(colon + 1));
+        }
+        else if (rest.length() > 2)
+        {
+            hours = Integer.parseInt(rest.substring(0, rest.length() - 2));
+            minutes = Integer.parseInt(rest.substring(rest.length() - 2));
+        }
+        else
+        {
+            hours = Integer.parseInt(rest);
+        }
+        return sign * (hours * 60 + minutes);
     }
 
     public String getID()
@@ -64,12 +122,6 @@ public class TimeZone implements java.io.Serializable
             throw new NullPointerException("id");
         }
         this.id = id;
-        this.rawOffset = java.time.ZoneId.of(id).getOffsetSeconds(0);
-    }
-
-    public int getOffset(long date)
-    {
-        return rawOffset;
     }
 
     public int getRawOffset()
@@ -82,6 +134,22 @@ public class TimeZone implements java.io.Serializable
         this.rawOffset = offsetMillis;
     }
 
+    public int getOffset(long date)
+    {
+        return rawOffset;
+    }
+
+    public int getOffset(int era, int year, int month, int day, int dayOfWeek,
+                        int milliseconds)
+    {
+        return rawOffset;
+    }
+
+    public int getDSTSavings()
+    {
+        return 0;
+    }
+
     public boolean inDaylightTime(Date date)
     {
         return false;
@@ -92,12 +160,32 @@ public class TimeZone implements java.io.Serializable
         return false;
     }
 
+    public boolean observesDaylightTime()
+    {
+        return false;
+    }
+
+    public boolean hasSameRules(TimeZone other)
+    {
+        return other != null && other.rawOffset == rawOffset;
+    }
+
     public String getDisplayName()
     {
-        return getDisplayName(false, LONG);
+        return id;
+    }
+
+    public String getDisplayName(Locale locale)
+    {
+        return id;
     }
 
     public String getDisplayName(boolean daylight, int style)
+    {
+        return id;
+    }
+
+    public String getDisplayName(boolean daylight, int style, Locale locale)
     {
         return id;
     }
@@ -109,21 +197,21 @@ public class TimeZone implements java.io.Serializable
 
     public boolean equals(Object other)
     {
-        if (!(other instanceof TimeZone))
-        {
-            return false;
-        }
-        TimeZone o = (TimeZone)other;
-        return id.equals(o.id) && rawOffset == o.rawOffset;
+        return other instanceof TimeZone && ((TimeZone)other).id.equals(id);
     }
 
     public int hashCode()
     {
-        return id.hashCode() ^ rawOffset;
+        return id.hashCode();
     }
 
     public String toString()
     {
-        return id;
+        return getClass().getName() + "[id=" + id + ",offset=" + rawOffset + "]";
+    }
+
+    public java.time.ZoneId toZoneId()
+    {
+        return java.time.ZoneId.of(getID());
     }
 }

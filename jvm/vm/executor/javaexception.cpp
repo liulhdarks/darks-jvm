@@ -34,6 +34,78 @@ lpClass FindClassSafe(const char *name)
 	return clazz;
 }
 
+// Array assignability compares element classes, which may come from an
+// application loader rather than the bootstrap loader.
+lpClass FindClassAnywhere(const char *name)
+{
+	lpClass clazz = NULL;
+	if (name && DarksVM_LoadClassWithoutInitializing(std::string(name), clazz) && clazz)
+	{
+		return clazz;
+	}
+	return FindClassSafe(name);
+}
+
+// Interfaces are parsed lazily; resolve one through its defining loader.
+// A missing interface simply leaves the type check incomplete.
+lpClass ResolveInterface(lpClassLoader loader, const char *name)
+{
+	if (!loader || !name)
+	{
+		return NULL;
+	}
+	lpClass iface = NULL;
+	try
+	{
+		if (!loader->FindClass(name, iface))
+		{
+			return NULL;
+		}
+	}
+	catch (...)
+	{
+		return NULL;
+	}
+	return iface;
+}
+
+// Interfaces may extend other interfaces; a class is assignable to every
+// superinterface, not only the ones listed directly in its own class file.
+bool InterfaceAssignable(lpClass iface, const char *target_name, int depth)
+{
+	if (!iface || !target_name)
+	{
+		return false;
+	}
+	const char *name = iface->thisClass ? iface->thisClass->GetName() : NULL;
+	if (name && strcmp(name, target_name) == 0)
+	{
+		return true;
+	}
+	if (depth <= 0)
+	{
+		return false;
+	}
+	for (U2 i = 0; i < iface->interfaceCount; i++)
+	{
+		lpClassConstant ic = iface->interfaces ? iface->interfaces[i] : NULL;
+		if (!ic || !ic->GetName())
+		{
+			continue;
+		}
+		if (strcmp(ic->GetName(), target_name) == 0)
+		{
+			return true;
+		}
+		lpClass parent = ResolveInterface(iface->classloader, ic->GetName());
+		if (parent && InterfaceAssignable(parent, target_name, depth - 1))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 bool SameClassName(lpClass a, lpClass b)
 {
 	if (a == b)

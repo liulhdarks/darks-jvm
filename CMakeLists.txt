@@ -180,7 +180,10 @@ set(DARKS_JVM_NATIVE_SOURCES
     native/java/lang/string_md.cpp
     native/java/io/file_md.cpp
     native/java/io/printstream.cpp
+    native/java/io/randomaccessfile_md.cpp
     native/java/util/regex_md.cpp
+    native/java/util/zip/inflater_md.cpp
+    native/java/util/zip/zipfile_md.cpp
     native/java/util/concurrent/structured_scope_md.cpp
     native/darks/deterministic_md.cpp
 )
@@ -193,6 +196,10 @@ target_include_directories(native PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/platform"
     "${CMAKE_CURRENT_SOURCE_DIR}/jvm/jni"
 )
+if(ZLIB_FOUND)
+    target_link_libraries(native PRIVATE ${ZLIB_LIBRARIES})
+    target_include_directories(native PRIVATE ${ZLIB_INCLUDE_DIRS})
+endif()
 if(WIN32)
     target_link_libraries(native PRIVATE darksvm)
 else()

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -90,6 +91,24 @@ bool MakeDirectory(const std::string &path)
 #else
 	return mkdir(path.c_str(), 0755) == 0;
 #endif
+}
+
+std::vector<std::string> &DeleteOnExitPaths()
+{
+	static std::vector<std::string> paths;
+	return paths;
+}
+
+bool delete_on_exit_registered = false;
+
+void DeleteOnExitFiles()
+{
+	std::vector<std::string> &paths = DeleteOnExitPaths();
+	for (size_t i = 0; i < paths.size(); i++)
+	{
+		std::remove(paths[i].c_str());
+	}
+	paths.clear();
 }
 
 } // namespace
@@ -192,6 +211,23 @@ jboolean JNICALL Java_java_io_File_mkdirs0(JNIEnv *env, jobject thiz)
 	return JNI_TRUE;
 }
 
+jboolean JNICALL Java_java_io_File_mkdir0(JNIEnv *env, jobject thiz)
+{
+	std::string path = FilePath(env, thiz);
+	if (path.empty())
+	{
+		return JNI_FALSE;
+	}
+	if (!MakeDirectory(path))
+	{
+		bool is_file = false;
+		bool is_dir = false;
+		long long size = 0;
+		return (StatPath(path, is_file, is_dir, size) && is_dir) ? JNI_TRUE : JNI_FALSE;
+	}
+	return JNI_TRUE;
+}
+
 jobjectArray JNICALL Java_java_io_File_list0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
@@ -251,6 +287,21 @@ jobjectArray JNICALL Java_java_io_File_list0(JNIEnv *env, jobject thiz)
 		}
 	}
 	return result;
+}
+
+void JNICALL Java_java_io_File_deleteOnExit0(JNIEnv *env, jobject thiz)
+{
+	std::string path = FilePath(env, thiz);
+	if (path.empty())
+	{
+		return;
+	}
+	if (!delete_on_exit_registered)
+	{
+		std::atexit(DeleteOnExitFiles);
+		delete_on_exit_registered = true;
+	}
+	DeleteOnExitPaths().push_back(path);
 }
 
 // ---------------------------------------------------------------------------

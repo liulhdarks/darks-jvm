@@ -18,18 +18,27 @@ public abstract class AbstractMap<K, V> implements Map<K, V>
         return size() == 0;
     }
 
-    public boolean containsKey(Object key)
-    {
-        return get(key) != null || entryForKey(key) != null;
-    }
-
     public boolean containsValue(Object value)
     {
         Iterator<Map.Entry<K, V>> it = entrySet().iterator();
         while (it.hasNext())
         {
-            Object candidate = it.next().getValue();
-            if (candidate == value || (candidate != null && candidate.equals(value)))
+            V current = it.next().getValue();
+            if (value == null ? current == null : value.equals(current))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean containsKey(Object key)
+    {
+        Iterator<Map.Entry<K, V>> it = entrySet().iterator();
+        while (it.hasNext())
+        {
+            K current = it.next().getKey();
+            if (key == null ? current == null : key.equals(current))
             {
                 return true;
             }
@@ -39,20 +48,14 @@ public abstract class AbstractMap<K, V> implements Map<K, V>
 
     public V get(Object key)
     {
-        Map.Entry<K, V> entry = entryForKey(key);
-        return entry == null ? null : entry.getValue();
-    }
-
-    private Map.Entry<K, V> entryForKey(Object key)
-    {
         Iterator<Map.Entry<K, V>> it = entrySet().iterator();
         while (it.hasNext())
         {
             Map.Entry<K, V> entry = it.next();
-            Object candidate = entry.getKey();
-            if (candidate == key || (candidate != null && candidate.equals(key)))
+            K current = entry.getKey();
+            if (key == null ? current == null : key.equals(current))
             {
-                return entry;
+                return entry.getValue();
             }
         }
         return null;
@@ -69,12 +72,12 @@ public abstract class AbstractMap<K, V> implements Map<K, V>
         while (it.hasNext())
         {
             Map.Entry<K, V> entry = it.next();
-            Object candidate = entry.getKey();
-            if (candidate == key || (candidate != null && candidate.equals(key)))
+            K current = entry.getKey();
+            if (key == null ? current == null : key.equals(current))
             {
-                V value = entry.getValue();
+                V old = entry.getValue();
                 it.remove();
-                return value;
+                return old;
             }
         }
         return null;
@@ -95,20 +98,96 @@ public abstract class AbstractMap<K, V> implements Map<K, V>
         entrySet().clear();
     }
 
-    public V getOrDefault(Object key, V defaultValue)
-    {
-        V value = get(key);
-        return value == null && !containsKey(key) ? defaultValue : value;
-    }
-
     public Set<K> keySet()
     {
-        return new KeySetView();
+        return new AbstractSet<K>()
+        {
+            public Iterator<K> iterator()
+            {
+                final Iterator<Map.Entry<K, V>> entries = entrySet().iterator();
+                return new Iterator<K>()
+                {
+                    public boolean hasNext()
+                    {
+                        return entries.hasNext();
+                    }
+
+                    public K next()
+                    {
+                        return entries.next().getKey();
+                    }
+
+                    public void remove()
+                    {
+                        entries.remove();
+                    }
+                };
+            }
+
+            public int size()
+            {
+                return AbstractMap.this.size();
+            }
+
+            public boolean contains(Object key)
+            {
+                return containsKey(key);
+            }
+
+            public boolean remove(Object key)
+            {
+                boolean present = containsKey(key);
+                if (present)
+                {
+                    AbstractMap.this.remove(key);
+                }
+                return present;
+            }
+        };
     }
 
     public Collection<V> values()
     {
-        return new ValuesView();
+        return new AbstractCollection<V>()
+        {
+            public Iterator<V> iterator()
+            {
+                final Iterator<Map.Entry<K, V>> entries = entrySet().iterator();
+                return new Iterator<V>()
+                {
+                    public boolean hasNext()
+                    {
+                        return entries.hasNext();
+                    }
+
+                    public V next()
+                    {
+                        return entries.next().getValue();
+                    }
+
+                    public void remove()
+                    {
+                        entries.remove();
+                    }
+                };
+            }
+
+            public int size()
+            {
+                return AbstractMap.this.size();
+            }
+
+            public boolean contains(Object value)
+            {
+                return containsValue(value);
+            }
+        };
+    }
+
+    public V getOrDefault(Object key, V defaultValue)
+    {
+        V value = get(key);
+        return value != null || containsKey(key) ? value : defaultValue;
     }
 
     public boolean equals(Object other)
@@ -121,28 +200,39 @@ public abstract class AbstractMap<K, V> implements Map<K, V>
         {
             return false;
         }
-        Map<?, ?> map = (Map<?, ?>)other;
+        Map map = (Map)other;
         if (map.size() != size())
         {
             return false;
         }
-        Iterator<Map.Entry<K, V>> it = entrySet().iterator();
-        while (it.hasNext())
+        try
         {
-            Map.Entry<K, V> entry = it.next();
-            Object key = entry.getKey();
-            Object value = entry.getValue();
-            if (value == null)
+            Iterator<Map.Entry<K, V>> it = entrySet().iterator();
+            while (it.hasNext())
             {
-                if (!(map.get(key) == null && map.containsKey(key)))
+                Map.Entry<K, V> entry = it.next();
+                K key = entry.getKey();
+                V value = entry.getValue();
+                if (value == null)
+                {
+                    if (!(map.get(key) == null && map.containsKey(key)))
+                    {
+                        return false;
+                    }
+                }
+                else if (!value.equals(map.get(key)))
                 {
                     return false;
                 }
             }
-            else if (!value.equals(map.get(key)))
-            {
-                return false;
-            }
+        }
+        catch (ClassCastException e)
+        {
+            return false;
+        }
+        catch (NullPointerException e)
+        {
+            return false;
         }
         return true;
     }
@@ -153,8 +243,7 @@ public abstract class AbstractMap<K, V> implements Map<K, V>
         Iterator<Map.Entry<K, V>> it = entrySet().iterator();
         while (it.hasNext())
         {
-            Map.Entry<K, V> entry = it.next();
-            result += Objects.hashCode(entry.getKey()) ^ Objects.hashCode(entry.getValue());
+            result += it.next().hashCode();
         }
         return result;
     }
@@ -162,8 +251,8 @@ public abstract class AbstractMap<K, V> implements Map<K, V>
     public String toString()
     {
         StringBuilder sb = new StringBuilder("{");
-        boolean first = true;
         Iterator<Map.Entry<K, V>> it = entrySet().iterator();
+        boolean first = true;
         while (it.hasNext())
         {
             Map.Entry<K, V> entry = it.next();
@@ -171,102 +260,11 @@ public abstract class AbstractMap<K, V> implements Map<K, V>
             {
                 sb.append(", ");
             }
-            sb.append(String.valueOf(entry.getKey())).append("=")
-              .append(String.valueOf(entry.getValue()));
+            sb.append(String.valueOf(entry.getKey())).append("=").append(String.valueOf(entry.getValue()));
             first = false;
         }
         sb.append("}");
         return sb.toString();
-    }
-
-    private final class KeySetView extends AbstractSet<K>
-    {
-        public int size()
-        {
-            return AbstractMap.this.size();
-        }
-
-        public Iterator<K> iterator()
-        {
-            final Iterator<Map.Entry<K, V>> entries = entrySet().iterator();
-            return new Iterator<K>()
-            {
-                public boolean hasNext()
-                {
-                    return entries.hasNext();
-                }
-
-                public K next()
-                {
-                    return entries.next().getKey();
-                }
-
-                public void remove()
-                {
-                    entries.remove();
-                }
-            };
-        }
-
-        public boolean contains(Object value)
-        {
-            return containsKey(value);
-        }
-
-        public boolean remove(Object value)
-        {
-            if (!containsKey(value))
-            {
-                return false;
-            }
-            AbstractMap.this.remove(value);
-            return true;
-        }
-
-        public void clear()
-        {
-            AbstractMap.this.clear();
-        }
-    }
-
-    private final class ValuesView extends AbstractCollection<V>
-    {
-        public int size()
-        {
-            return AbstractMap.this.size();
-        }
-
-        public Iterator<V> iterator()
-        {
-            final Iterator<Map.Entry<K, V>> entries = entrySet().iterator();
-            return new Iterator<V>()
-            {
-                public boolean hasNext()
-                {
-                    return entries.hasNext();
-                }
-
-                public V next()
-                {
-                    return entries.next().getValue();
-                }
-
-                public void remove()
-                {
-                    entries.remove();
-                }
-            };
-        }
-
-        public boolean contains(Object value)
-        {
-            return containsValue(value);
-        }
-
-        public void clear()
-        {
-            AbstractMap.this.clear();
-        }
     }
 
     public static class SimpleEntry<K, V> implements Map.Entry<K, V>
@@ -310,15 +308,13 @@ public abstract class AbstractMap<K, V> implements Map<K, V>
                 return false;
             }
             Map.Entry entry = (Map.Entry)other;
-            Object otherKey = entry.getKey();
-            Object otherValue = entry.getValue();
-            return (key == otherKey || (key != null && key.equals(otherKey))) &&
-                (value == otherValue || (value != null && value.equals(otherValue)));
+            return (key == null ? entry.getKey() == null : key.equals(entry.getKey()))
+                && (value == null ? entry.getValue() == null : value.equals(entry.getValue()));
         }
 
         public int hashCode()
         {
-            return Objects.hashCode(key) ^ Objects.hashCode(value);
+            return (key == null ? 0 : key.hashCode()) ^ (value == null ? 0 : value.hashCode());
         }
 
         public String toString()
@@ -356,7 +352,7 @@ public abstract class AbstractMap<K, V> implements Map<K, V>
 
         public V setValue(V newValue)
         {
-            throw new UnsupportedOperationException("immutable entry");
+            throw new UnsupportedOperationException("setValue");
         }
 
         public boolean equals(Object other)
@@ -366,15 +362,13 @@ public abstract class AbstractMap<K, V> implements Map<K, V>
                 return false;
             }
             Map.Entry entry = (Map.Entry)other;
-            Object otherKey = entry.getKey();
-            Object otherValue = entry.getValue();
-            return (key == otherKey || (key != null && key.equals(otherKey))) &&
-                (value == otherValue || (value != null && value.equals(otherValue)));
+            return (key == null ? entry.getKey() == null : key.equals(entry.getKey()))
+                && (value == null ? entry.getValue() == null : value.equals(entry.getValue()));
         }
 
         public int hashCode()
         {
-            return Objects.hashCode(key) ^ Objects.hashCode(value);
+            return (key == null ? 0 : key.hashCode()) ^ (value == null ? 0 : value.hashCode());
         }
 
         public String toString()

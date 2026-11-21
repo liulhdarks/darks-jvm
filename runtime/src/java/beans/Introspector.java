@@ -29,7 +29,10 @@ public final class Introspector
     public static BeanInfo getBeanInfo(Class<?> beanClass, int flags)
         throws IntrospectionException
     {
-        return getBeanInfo(beanClass, null);
+        // BeanInfo classes shipped by a library are not consulted: the
+        // reflection-derived descriptors are always used, matching the
+        // IGNORE_ALL_BEANINFO behaviour.
+        return getBeanInfo(beanClass, (Class<?>) null);
     }
 
     public static BeanInfo getBeanInfo(Class<?> beanClass, Class<?> stopClass)

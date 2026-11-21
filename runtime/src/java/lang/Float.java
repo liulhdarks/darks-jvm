@@ -14,6 +14,11 @@ public final class Float extends Number implements Comparable<Float>
         this.value = value;
     }
 
+    public static Float valueOf(String s)
+    {
+        return new Float(parseFloat(s));
+    }
+
     public static Float valueOf(float value)
     {
         return new Float(value);
@@ -39,6 +44,49 @@ public final class Float extends Number implements Comparable<Float>
         return (long)value;
     }
 
+
+    public static native int floatToRawIntBits(float value);
+
+    public static native float intBitsToFloat(int bits);
+
+    public static int floatToIntBits(float value)
+    {
+        if (isNaN(value))
+        {
+            return 0x7fc00000;
+        }
+        return floatToRawIntBits(value);
+    }
+
+    public static boolean equals(float a, float b)
+    {
+        return (a == b) && (a != 0.0f || floatToIntBits(a) == floatToIntBits(b));
+    }
+
+    public static int hashCode(float value)
+    {
+        return floatToIntBits(value);
+    }
+
+    public static int compare(float a, float b)
+    {
+        if (a < b)
+        {
+            return -1;
+        }
+        if (a > b)
+        {
+            return 1;
+        }
+        int bitsA = floatToIntBits(a);
+        int bitsB = floatToIntBits(b);
+        return bitsA == bitsB ? 0 : (bitsA < bitsB ? -1 : 1);
+    }
+
+    public static float parseFloat(String s)
+    {
+        return (float)Double.parseDouble(s);
+    }
     public static boolean isNaN(float v)
     {
         return v != v;

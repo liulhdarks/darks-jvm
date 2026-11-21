@@ -1,5 +1,9 @@
 package java.util;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.Reader;
+
 public class Properties extends HashMap<Object, Object>
 {
     public Properties()
@@ -30,202 +34,201 @@ public class Properties extends HashMap<Object, Object>
         return value == null ? defaultValue : value;
     }
 
-    public synchronized void load(java.io.InputStream input) throws java.io.IOException
+    public synchronized void load(InputStream input) throws IOException
     {
         if (input == null)
         {
-            throw new NullPointerException();
+            throw new NullPointerException("input");
         }
         StringBuilder text = new StringBuilder();
-        int ch = input.read();
-        while (ch >= 0)
+        int b = input.read();
+        while (b >= 0)
         {
-            text.append((char)(ch & 0xff));
-            ch = input.read();
+            text.append((char)(b & 0xff));
+            b = input.read();
         }
-        parse(text.toString());
+        loadText(text);
     }
 
-    public synchronized void load(java.io.Reader reader) throws java.io.IOException
+    public synchronized void load(Reader reader) throws IOException
     {
         if (reader == null)
         {
-            throw new NullPointerException();
+            throw new NullPointerException("reader");
         }
         StringBuilder text = new StringBuilder();
-        int ch = reader.read();
-        while (ch >= 0)
+        int c = reader.read();
+        while (c >= 0)
         {
-            text.append((char)ch);
-            ch = reader.read();
+            text.append((char)c);
+            c = reader.read();
         }
-        parse(text.toString());
+        loadText(text);
     }
 
-    private void parse(String text)
+    private void loadText(StringBuilder text)
     {
-        int position = 0;
+        int pos = 0;
         int length = text.length();
-        while (position < length)
+        while (pos < length)
         {
-            int lineStart = position;
-            int lineEnd = text.indexOf('\n', position);
-            if (lineEnd < 0)
+            StringBuilder logical = new StringBuilder();
+            boolean more = true;
+            while (more && pos < length)
             {
-                lineEnd = length;
-            }
-            position = lineEnd + 1;
-            String line = text.substring(lineStart, lineEnd);
-            if (line.endsWith("\r"))
-            {
-                line = line.substring(0, line.length() - 1);
-            }
-            line = stripLeading(line);
-            if (line.length() == 0 || line.charAt(0) == '#' || line.charAt(0) == '!')
-            {
-                continue;
-            }
-            while (endsWithContinuation(line) && position < length)
-            {
-                int nextEnd = text.indexOf('\n', position);
-                if (nextEnd < 0)
+                int start = pos;
+                while (pos < length && text.charAt(pos) != '\n' && text.charAt(pos) != '\r')
                 {
-                    nextEnd = length;
+                    pos++;
                 }
-                String next = text.substring(position, nextEnd);
-                position = nextEnd + 1;
-                if (next.endsWith("\r"))
+                String physical = text.substring(start, pos);
+                if (pos < length && text.charAt(pos) == '\r')
                 {
-                    next = next.substring(0, next.length() - 1);
-                }
-                line = line.substring(0, line.length() - 1) + stripLeading(next);
-            }
-            int separator = findSeparator(line);
-            String key;
-            String value;
-            if (separator < 0)
-            {
-                key = line;
-                value = "";
-            }
-            else
-            {
-                key = line.substring(0, separator);
-                int valueStart = separator;
-                if (line.charAt(valueStart) == '=' || line.charAt(valueStart) == ':')
-                {
-                    valueStart = valueStart + 1;
-                }
-                value = stripLeading(line.substring(valueStart));
-            }
-            put(unescape(key), unescape(value));
-        }
-    }
-
-    private static String stripLeading(String text)
-    {
-        int index = 0;
-        while (index < text.length())
-        {
-            char ch = text.charAt(index);
-            if (ch != ' ' && ch != '\t' && ch != '\f')
-            {
-                break;
-            }
-            index = index + 1;
-        }
-        return text.substring(index);
-    }
-
-    private static boolean endsWithContinuation(String line)
-    {
-        int slashes = 0;
-        int index = line.length() - 1;
-        while (index >= 0 && line.charAt(index) == '\\')
-        {
-            slashes = slashes + 1;
-            index = index - 1;
-        }
-        return (slashes % 2) == 1;
-    }
-
-    private static int findSeparator(String line)
-    {
-        int index = 0;
-        while (index < line.length())
-        {
-            char ch = line.charAt(index);
-            if (ch == '\\')
-            {
-                index = index + 2;
-                continue;
-            }
-            if (ch == '=' || ch == ':' || ch == ' ' || ch == '\t' || ch == '\f')
-            {
-                return index;
-            }
-            index = index + 1;
-        }
-        return -1;
-    }
-
-    private static String unescape(String text)
-    {
-        StringBuilder result = new StringBuilder();
-        int index = 0;
-        while (index < text.length())
-        {
-            char ch = text.charAt(index);
-            if (ch != '\\' || index + 1 >= text.length())
-            {
-                result.append(ch);
-                index = index + 1;
-                continue;
-            }
-            char next = text.charAt(index + 1);
-            index = index + 2;
-            if (next == 't')
-            {
-                result.append('\t');
-            }
-            else if (next == 'n')
-            {
-                result.append('\n');
-            }
-            else if (next == 'r')
-            {
-                result.append('\r');
-            }
-            else if (next == 'f')
-            {
-                result.append('\f');
-            }
-            else if (next == 'u')
-            {
-                if (index + 4 <= text.length())
-                {
-                    try
+                    pos++;
+                    if (pos < length && text.charAt(pos) == '\n')
                     {
-                        result.append((char)Integer.parseInt(
-                            text.substring(index, index + 4), 16));
-                        index = index + 4;
+                        pos++;
                     }
-                    catch (RuntimeException ignored)
+                }
+                else if (pos < length && text.charAt(pos) == '\n')
+                {
+                    pos++;
+                }
+                int backslashes = 0;
+                int k = physical.length() - 1;
+                while (k >= 0 && physical.charAt(k) == '\\')
+                {
+                    backslashes++;
+                    k--;
+                }
+                if (backslashes % 2 == 1)
+                {
+                    logical.append(physical.substring(0, physical.length() - 1));
+                    while (pos < length &&
+                           (text.charAt(pos) == ' ' || text.charAt(pos) == '\t' ||
+                            text.charAt(pos) == '\f'))
                     {
-                        result.append('u');
+                        pos++;
                     }
                 }
                 else
                 {
-                    result.append('u');
+                    logical.append(physical);
+                    more = false;
                 }
             }
-            else
+            parseLine(logical.toString());
+        }
+    }
+
+    private void parseLine(String line)
+    {
+        int start = 0;
+        int length = line.length();
+        while (start < length &&
+               (line.charAt(start) == ' ' || line.charAt(start) == '\t' ||
+                line.charAt(start) == '\f'))
+        {
+            start++;
+        }
+        if (start >= length || line.charAt(start) == '#' || line.charAt(start) == '!')
+        {
+            return;
+        }
+        int keyEnd = start;
+        boolean escaped = false;
+        while (keyEnd < length)
+        {
+            char c = line.charAt(keyEnd);
+            if (escaped)
             {
-                result.append(next);
+                escaped = false;
+            }
+            else if (c == '\\')
+            {
+                escaped = true;
+            }
+            else if (c == '=' || c == ':' || c == ' ' || c == '\t' || c == '\f')
+            {
+                break;
+            }
+            keyEnd++;
+        }
+        String key = unescape(line.substring(start, keyEnd));
+        int valueStart = keyEnd;
+        while (valueStart < length &&
+               (line.charAt(valueStart) == ' ' || line.charAt(valueStart) == '\t' ||
+                line.charAt(valueStart) == '\f'))
+        {
+            valueStart++;
+        }
+        if (valueStart < length &&
+            (line.charAt(valueStart) == '=' || line.charAt(valueStart) == ':'))
+        {
+            valueStart++;
+            while (valueStart < length &&
+                   (line.charAt(valueStart) == ' ' || line.charAt(valueStart) == '\t' ||
+                    line.charAt(valueStart) == '\f'))
+            {
+                valueStart++;
             }
         }
-        return result.toString();
+        String value = unescape(line.substring(valueStart));
+        put(key, value);
+    }
+
+    private static String unescape(String text)
+    {
+        if (text.indexOf('\\') < 0)
+        {
+            return text;
+        }
+        StringBuilder out = new StringBuilder(text.length());
+        int i = 0;
+        while (i < text.length())
+        {
+            char c = text.charAt(i++);
+            if (c != '\\' || i >= text.length())
+            {
+                out.append(c);
+                continue;
+            }
+            char next = text.charAt(i++);
+            switch (next)
+            {
+            case 't':
+                out.append('\t');
+                break;
+            case 'n':
+                out.append('\n');
+                break;
+            case 'r':
+                out.append('\r');
+                break;
+            case 'f':
+                out.append('\f');
+                break;
+            case 'u':
+                if (i + 4 <= text.length())
+                {
+                    try
+                    {
+                        out.append((char)Integer.parseInt(text.substring(i, i + 4), 16));
+                        i += 4;
+                        break;
+                    }
+                    catch (NumberFormatException ignored)
+                    {
+                    }
+                }
+                out.append('u');
+                break;
+            default:
+                out.append(next);
+                break;
+            }
+        }
+        return out.toString();
     }
 
     // Lexicographically sorted key set, matching java.util.Properties.

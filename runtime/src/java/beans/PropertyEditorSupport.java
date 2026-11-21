@@ -1,12 +1,10 @@
 package java.beans;
 
-import java.util.ArrayList;
-
 public class PropertyEditorSupport implements PropertyEditor
 {
     private Object value;
     private Object source;
-    private ArrayList<PropertyChangeListener> listeners;
+    private java.util.List<PropertyChangeListener> listeners;
 
     public PropertyEditorSupport()
     {
@@ -29,7 +27,9 @@ public class PropertyEditorSupport implements PropertyEditor
 
     public void setValue(Object value)
     {
+        Object old = this.value;
         this.value = value;
+        firePropertyChange(old, value);
     }
 
     public Object getValue()
@@ -44,7 +44,7 @@ public class PropertyEditorSupport implements PropertyEditor
 
     public String getJavaInitializationString()
     {
-        return "null";
+        return "???";
     }
 
     public String getAsText()
@@ -54,11 +54,13 @@ public class PropertyEditorSupport implements PropertyEditor
 
     public void setAsText(String text) throws IllegalArgumentException
     {
-        if (text == null)
+        if (value instanceof String)
         {
-            throw new IllegalArgumentException();
+            setValue(text);
+            return;
         }
-        setValue(text);
+        throw new IllegalArgumentException("No setAsText support for "
+            + (value == null ? "null" : value.getClass().getName()));
     }
 
     public String[] getTags()
@@ -73,9 +75,13 @@ public class PropertyEditorSupport implements PropertyEditor
 
     public void addPropertyChangeListener(PropertyChangeListener listener)
     {
+        if (listener == null)
+        {
+            return;
+        }
         if (listeners == null)
         {
-            listeners = new ArrayList<PropertyChangeListener>();
+            listeners = new java.util.ArrayList<PropertyChangeListener>();
         }
         listeners.add(listener);
     }
@@ -88,18 +94,20 @@ public class PropertyEditorSupport implements PropertyEditor
         }
     }
 
-    protected void firePropertyChange(String propertyName,
-                                      Object oldValue, Object newValue)
+    public void firePropertyChange(Object oldValue, Object newValue)
     {
-        if (listeners == null)
+        if (listeners == null || oldValue == newValue ||
+            (oldValue != null && oldValue.equals(newValue)))
         {
             return;
         }
-        PropertyChangeEvent event = new PropertyChangeEvent(source,
-            propertyName, oldValue, newValue);
-        for (int i = 0; i < listeners.size(); i++)
+        PropertyChangeEvent event = new PropertyChangeEvent(source, null,
+            oldValue, newValue);
+        PropertyChangeListener[] copy = new PropertyChangeListener[listeners.size()];
+        copy = listeners.toArray(copy);
+        for (int i = 0; i < copy.length; i++)
         {
-            listeners.get(i).propertyChange(event);
+            copy[i].propertyChange(event);
         }
     }
 }

@@ -19,14 +19,9 @@ public final class Integer extends Number implements Comparable<Integer>
         return new Integer(value);
     }
 
-    public static Integer valueOf(String text)
+    public static Integer valueOf(String s)
     {
-        return valueOf(parseInt(text));
-    }
-
-    public static Integer valueOf(String text, int radix)
-    {
-        return valueOf(parseInt(text, radix));
+        return new Integer(parseInt(s));
     }
 
     public int intValue()
@@ -81,6 +76,11 @@ public final class Integer extends Number implements Comparable<Integer>
 
     public static int parseInt(String s, int radix)
     {
+        return (int)parseLong(s, radix);
+    }
+
+    public static long parseLong(String s, int radix)
+    {
         if (s == null || s.length() == 0)
         {
             throw new NumberFormatException("empty string");
@@ -104,11 +104,28 @@ public final class Integer extends Number implements Comparable<Integer>
         {
             throw new NumberFormatException(s);
         }
-        int result = 0;
+        long result = 0;
         while (i < s.length())
         {
-            int digit = Character.digit(s.charAt(i), radix);
-            if (digit < 0)
+            char c = s.charAt(i);
+            int digit;
+            if (c >= '0' && c <= '9')
+            {
+                digit = c - '0';
+            }
+            else if (c >= 'a' && c <= 'z')
+            {
+                digit = c - 'a' + 10;
+            }
+            else if (c >= 'A' && c <= 'Z')
+            {
+                digit = c - 'A' + 10;
+            }
+            else
+            {
+                throw new NumberFormatException(s);
+            }
+            if (digit >= radix)
             {
                 throw new NumberFormatException(s);
             }

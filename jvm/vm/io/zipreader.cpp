@@ -52,6 +52,27 @@ bool ZipFile::Open(const std::string &file_path)
 	return true;
 }
 
+bool ZipFile::OpenMemory(const uint8_t *bytes, size_t size)
+{
+	path.clear();
+	opened = false;
+	last_error.clear();
+	entries.clear();
+	data.clear();
+	if (!bytes || size == 0)
+	{
+		last_error = "empty archive";
+		return false;
+	}
+	data.assign(bytes, bytes + size);
+	if (!ParseCentralDirectory())
+	{
+		return false;
+	}
+	opened = true;
+	return true;
+}
+
 bool ZipFile::ParseCentralDirectory()
 {
 	if (data.size() < 22)

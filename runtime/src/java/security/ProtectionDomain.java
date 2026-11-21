@@ -1,19 +1,20 @@
 package java.security;
 
-/**
- * Protection domain attached to a class.  The runtime does not implement an
- * access-control policy, so {@link #implies} always returns true and there is
- * no code source unless one is supplied explicitly.
- */
 public class ProtectionDomain
 {
     private final CodeSource codeSource;
-    private final PermissionCollection permissions;
+    private final Permission[] permissions;
+
+    public ProtectionDomain(CodeSource codeSource, Permission[] permissions)
+    {
+        this.codeSource = codeSource;
+        this.permissions = permissions;
+    }
 
     public ProtectionDomain(CodeSource codeSource, PermissionCollection permissions)
     {
         this.codeSource = codeSource;
-        this.permissions = permissions;
+        this.permissions = permissions == null ? null : permissions.toArray();
     }
 
     public final CodeSource getCodeSource()
@@ -23,16 +24,27 @@ public class ProtectionDomain
 
     public final PermissionCollection getPermissions()
     {
-        return permissions;
+        return new PermissionCollection(permissions);
     }
 
     public boolean implies(Permission permission)
     {
-        return true;
+        if (permissions == null)
+        {
+            return false;
+        }
+        for (int i = 0; i < permissions.length; i++)
+        {
+            if (permissions[i] != null && permissions[i].implies(permission))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     public String toString()
     {
-        return "ProtectionDomain " + codeSource;
+        return "ProtectionDomain " + (codeSource == null ? "<null>" : codeSource.toString());
     }
 }
