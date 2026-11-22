@@ -138,6 +138,15 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/M2LoadingChecks.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/M2AnnotationChecks.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/m2loading/M2DefaultMethodChecks.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m3semantics/M3SemLog.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m3semantics/M3SemFail.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m3semantics/M3SemError.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m3semantics/M3SemBase.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m3semantics/M3SemChild.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m3semantics/M3SemLazy.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m3semantics/M3SemOk.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m3semantics/M3SemanticsChecks.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/m3semantics/M3InheritableChecks.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkIdentityHashMapTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkWeakReferenceTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkReflectArrayTest.java"
@@ -337,6 +346,29 @@ if(JAVAC)
                     -DEXPECT_RC=0
                     "-DEXPECT_TEXT=m2\ broken-load\ checks=[0-9]+\ failures=0"
                     "-DEXPECT_TEXT2=m2\ broken\ loads:\ ok" -P "${CHECK}")
+        endforeach()
+
+        # M3 <clinit> failure semantics (JVMS 5.5): the first active use wraps
+        # a non-Error throwable in ExceptionInInitializerError, every later use
+        # throws NoClassDefFoundError, Errors propagate unchanged, and a
+        # failing superclass leaves the subclass erroneous without running its
+        # own <clinit>.  Run under both scheduler modes.
+        foreach(mp 1 4)
+            add_test(NAME m3_inheritable_threadlocal_mp${mp}
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DPROG=${CMAKE_COMMAND}"
+                    "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};M3InheritableChecks"
+                    -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=m3\ inheritable\ checks=[0-9]+\ failures=0"
+                    "-DEXPECT_TEXT2=m3\ inheritable:\ ok" -P "${CHECK}")
+
+            add_test(NAME m3_init_semantics_mp${mp}
+                COMMAND "${CMAKE_COMMAND}"
+                    "-DPROG=${CMAKE_COMMAND}"
+                    "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR};M3SemanticsChecks"
+                    -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=m3\ init\ checks=[0-9]+\ failures=0"
+                    "-DEXPECT_TEXT2=m3\ init:\ ok" -P "${CHECK}")
         endforeach()
 
 

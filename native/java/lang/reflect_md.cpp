@@ -2192,6 +2192,25 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_invoke0(JNIEnv *env,
 		return VariantToObject(env, return_type,
 			JValueToVariant(proxy_result, return_type));
 	}
+	if (target->isStatic())
+	{
+		bool initialized = false;
+		try
+		{
+			initialized = declaring->initialize();
+		}
+		catch (...)
+		{
+			initialized = false;
+		}
+		if (!initialized)
+		{
+			// A failing <clinit> is reported while the method is being
+			// entered, so the pending ExceptionInInitializerError or
+			// NoClassDefFoundError is not wrapped in InvocationTargetException.
+			return NULL;
+		}
+	}
 	jvalue result = JniInvokeMethod(env, receiver,
 		reinterpret_cast<jclass>(declaring), reinterpret_cast<jmethodID>(target),
 		values.empty() ? NULL : &values[0], target->isStatic(), false);

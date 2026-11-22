@@ -259,6 +259,25 @@ bool DarksVM_LoadClassWithoutInitializing(const std::string &name, lpClass &out)
 	{
 		return false;
 	}
+	// The native bootstrap loader owns the class path.  Asking it first keeps a
+	// single Class object per name: a Java loader whose parent is the bootstrap
+	// (for example the system loader) would otherwise read the same bytes again
+	// and define a second copy, breaking Class identity checks such as Spring's
+	// `annotationType() == Annotation.class` in @AliasFor resolution.
+	if (VMContext::bootstrap_classloader)
+	{
+		try
+		{
+			if (VMContext::bootstrap_classloader->FindClass(name.c_str(), out, false) && out)
+			{
+				return true;
+			}
+		}
+		catch (...)
+		{
+			out = NULL;
+		}
+	}
 	for (std::map<ClassLoader*, LPOBJECT_REF>::iterator it = JavaLoaders().begin();
 	     it != JavaLoaders().end(); ++it)
 	{

@@ -62,7 +62,12 @@ jint DarksVM_EnsureInitialized(lpClass clazz)
 	}
 	try
 	{
-		clazz->initialize();
+		if (!clazz->initialize())
+		{
+			// Failed <clinit>: the initialization error is pending and the
+			// caller must observe it instead of continuing with default state.
+			return JNI_ERR;
+		}
 	}
 	catch (...)
 	{

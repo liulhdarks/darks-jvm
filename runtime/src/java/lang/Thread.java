@@ -119,6 +119,11 @@ public class Thread implements Runnable
         this.tid = nextThreadId();
         this.priority = 5;
         this.virtual = false;
+        Thread parent = currentThread();
+        if (parent != null)
+        {
+            this.tls = ThreadLocal.inherit(parent.tls);
+        }
     }
 
     public Thread()
