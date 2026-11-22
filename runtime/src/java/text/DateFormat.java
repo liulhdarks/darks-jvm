@@ -1,7 +1,9 @@
 package java.text;
 
+import java.util.Calendar;
 import java.util.Date;
 import java.util.Locale;
+import java.util.TimeZone;
 
 /** Base class for date/time formats.  The pattern implementation lives in
  *  SimpleDateFormat. */
@@ -13,8 +15,32 @@ public class DateFormat
     public static final int SHORT = 3;
     public static final int DEFAULT = MEDIUM;
 
+    private TimeZone timeZone = TimeZone.getTimeZone("UTC");
+
     public DateFormat()
     {
+    }
+
+    public void setTimeZone(TimeZone zone)
+    {
+        if (zone != null)
+        {
+            timeZone = zone;
+        }
+    }
+
+    public TimeZone getTimeZone()
+    {
+        return timeZone;
+    }
+
+    public void setCalendar(Calendar calendar)
+    {
+    }
+
+    public Calendar getCalendar()
+    {
+        return null;
     }
 
     public static DateFormat getInstance()

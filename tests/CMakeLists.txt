@@ -60,10 +60,16 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/temporal/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/time/chrono/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/channels/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/channels/spi/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/charset/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/file/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/nio/file/attribute/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/security/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/org/ietf/jgss/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/javax/management/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/javax/management/modelmbean/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/javax/management/openmbean/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/security/cert/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/zip/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/jar/*.java"
@@ -153,6 +159,10 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkGcReferenceTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkReflectionEqualityTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/JdkBitSetTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/M3CompatTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/M3ConcurrencyTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/M3NioTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/M3HttpLoopbackTest.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
     add_custom_command(
@@ -761,6 +771,36 @@ if(JAVAC)
                 "-DARGS=-cp;${CLASSES_DIR};JdkBitSetTest" -DEXPECT_RC=0
                 "-DEXPECT_TEXT=bitset\ checks=[0-9]+\ failures=0"
                 "-DEXPECT_TEXT2=bitset:\ ok" -P "${CHECK}")
+
+    # M3 runtime surface: JMX, java.beans, charset, timer/executor polling,
+    # NIO selector/socket channels and an end-to-end HTTP request/response.
+    add_test(NAME m3_jdk_compat
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};M3CompatTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=m3\ compat\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=m3\ compat:\ ok" -P "${CHECK}")
+
+    foreach(mp 1 4)
+        add_test(NAME m3_concurrency_mp${mp}
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};M3ConcurrencyTest" -DEXPECT_RC=0
+                    "-DENV_VARS=DARKS_JVM_MP=${mp}"
+                    "-DEXPECT_TEXT=m3\ concurrency\ checks=[0-9]+\ failures=0"
+                    "-DEXPECT_TEXT2=m3\ concurrency:\ ok" -P "${CHECK}")
+
+        add_test(NAME m3_nio_mp${mp}
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};M3NioTest" -DEXPECT_RC=0
+                    "-DENV_VARS=DARKS_JVM_MP=${mp}"
+                    "-DEXPECT_TEXT=m3\ nio\ checks=[0-9]+\ failures=0"
+                    "-DEXPECT_TEXT2=m3\ nio:\ ok" -P "${CHECK}")
+    endforeach()
+
+    add_test(NAME m3_http_loopback
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};M3HttpLoopbackTest" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=m3\ http\ loopback\ checks=[0-9]+\ failures=0"
+                "-DEXPECT_TEXT2=m3\ http\ loopback:\ ok" -P "${CHECK}")
 
     add_test(NAME long_array_init
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}

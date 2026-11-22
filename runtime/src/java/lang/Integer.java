@@ -24,6 +24,46 @@ public final class Integer extends Number implements Comparable<Integer>
         return new Integer(parseInt(s));
     }
 
+    public static Integer getInteger(String name)
+    {
+        return getInteger(name, (Integer)null);
+    }
+
+    public static Integer getInteger(String name, int defaultValue)
+    {
+        Integer result = getInteger(name, (Integer)null);
+        return result == null ? valueOf(defaultValue) : result;
+    }
+
+    public static Integer getInteger(String name, Integer defaultValue)
+    {
+        if (name == null)
+        {
+            return defaultValue;
+        }
+        String value;
+        try
+        {
+            value = System.getProperty(name);
+        }
+        catch (RuntimeException ignored)
+        {
+            return defaultValue;
+        }
+        if (value == null)
+        {
+            return defaultValue;
+        }
+        try
+        {
+            return valueOf(parseInt(value));
+        }
+        catch (NumberFormatException ignored)
+        {
+            return defaultValue;
+        }
+    }
+
     public int intValue()
     {
         return value;

@@ -202,6 +202,91 @@ public class ByteBuffer extends Buffer
         return this;
     }
 
+    public boolean isDirect()
+    {
+        return false;
+    }
+
+    public ByteBuffer compact()
+    {
+        int remaining = remaining();
+        System.arraycopy(data, offset + position, data, offset, remaining);
+        position = remaining;
+        limit = capacity;
+        mark = -1;
+        return this;
+    }
+
+    public char getChar()
+    {
+        checkBounds(position, 2);
+        char value = (char)(((data[offset + position] & 0xFF) << 8)
+            | (data[offset + position + 1] & 0xFF));
+        position += 2;
+        return value;
+    }
+
+    public char getChar(int index)
+    {
+        checkBounds(index, 2);
+        return (char)(((data[offset + index] & 0xFF) << 8)
+            | (data[offset + index + 1] & 0xFF));
+    }
+
+    public ByteBuffer putChar(char value)
+    {
+        checkBounds(position, 2);
+        data[offset + position++] = (byte)(value >> 8);
+        data[offset + position++] = (byte)value;
+        return this;
+    }
+
+    public ByteBuffer putChar(int index, char value)
+    {
+        checkBounds(index, 2);
+        data[offset + index] = (byte)(value >> 8);
+        data[offset + index + 1] = (byte)value;
+        return this;
+    }
+
+    public short getShort()
+    {
+        checkBounds(position, 2);
+        short value = (short)(((data[offset + position] & 0xFF) << 8)
+            | (data[offset + position + 1] & 0xFF));
+        position += 2;
+        return value;
+    }
+
+    public ByteBuffer putShort(short value)
+    {
+        checkBounds(position, 2);
+        data[offset + position++] = (byte)(value >> 8);
+        data[offset + position++] = (byte)value;
+        return this;
+    }
+
+    public int getInt()
+    {
+        checkBounds(position, 4);
+        int value = ((data[offset + position] & 0xFF) << 24)
+            | ((data[offset + position + 1] & 0xFF) << 16)
+            | ((data[offset + position + 2] & 0xFF) << 8)
+            | (data[offset + position + 3] & 0xFF);
+        position += 4;
+        return value;
+    }
+
+    public ByteBuffer putInt(int value)
+    {
+        checkBounds(position, 4);
+        data[offset + position++] = (byte)(value >> 24);
+        data[offset + position++] = (byte)(value >> 16);
+        data[offset + position++] = (byte)(value >> 8);
+        data[offset + position++] = (byte)value;
+        return this;
+    }
+
     public boolean equals(Object other)
     {
         if (!(other instanceof ByteBuffer))

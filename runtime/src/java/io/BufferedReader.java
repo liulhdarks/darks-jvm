@@ -9,6 +9,15 @@ public class BufferedReader extends Reader
         this.in = in;
     }
 
+    public BufferedReader(Reader in, int size)
+    {
+        if (size <= 0)
+        {
+            throw new IllegalArgumentException("size <= 0");
+        }
+        this.in = in;
+    }
+
     public int read() throws IOException
     {
         return in.read();

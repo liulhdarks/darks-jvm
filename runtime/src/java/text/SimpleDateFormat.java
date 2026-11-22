@@ -64,9 +64,10 @@ public class SimpleDateFormat extends DateFormat
         {
             throw new NullPointerException("date");
         }
+        long millis = date.getTime() + getTimeZone().getOffset(date.getTime());
         LocalDateTime ldt = LocalDateTime.ofEpochSecond(
-            Math.floorDiv(date.getTime(), 1000L),
-            (int)(Math.floorMod(date.getTime(), 1000L) * 1000000L),
+            Math.floorDiv(millis, 1000L),
+            (int)(Math.floorMod(millis, 1000L) * 1000000L),
             ZoneOffset.UTC);
         return formatter.format(ldt);
     }
@@ -107,6 +108,13 @@ public class SimpleDateFormat extends DateFormat
         {
             throw new ParseException(error.getMessage(), 0);
         }
+    }
+
+    public Object clone()
+    {
+        SimpleDateFormat copy = new SimpleDateFormat(pattern);
+        copy.lenient = lenient;
+        return copy;
     }
 
     public static SimpleDateFormat isoDateTimeFormat()

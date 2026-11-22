@@ -511,6 +511,18 @@ public class ThreadPoolExecutor extends AbstractExecutorService
         return unit.convert(keepAliveMillis, TimeUnit.MILLISECONDS);
     }
 
+    public void setKeepAliveTime(long time, TimeUnit unit)
+    {
+        if (time < 0L)
+        {
+            throw new IllegalArgumentException("time < 0");
+        }
+        synchronized (mainLock)
+        {
+            keepAliveMillis = unit.toMillis(time);
+        }
+    }
+
     public ThreadFactory getThreadFactory()
     {
         return threadFactory;

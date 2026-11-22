@@ -72,6 +72,20 @@ public interface Comparator<T>
         };
     }
 
+    static <T> Comparator<T> comparingLong(java.util.function.ToLongFunction<? super T> keyExtractor)
+    {
+        final java.util.function.ToLongFunction<? super T> key = keyExtractor;
+        return new Comparator<T>()
+        {
+            public int compare(T a, T b)
+            {
+                long first = key.applyAsLong(a);
+                long second = key.applyAsLong(b);
+                return first < second ? -1 : (first == second ? 0 : 1);
+            }
+        };
+    }
+
     static <T> Comparator<T> comparingInt(java.util.function.ToIntFunction<? super T> keyExtractor)
     {
         final java.util.function.ToIntFunction<? super T> key = keyExtractor;

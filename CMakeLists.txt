@@ -181,6 +181,7 @@ set(DARKS_JVM_NATIVE_SOURCES
     native/java/io/file_md.cpp
     native/java/io/printstream.cpp
     native/java/io/randomaccessfile_md.cpp
+    native/java/net/socket_md.cpp
     native/java/util/regex_md.cpp
     native/java/util/zip/inflater_md.cpp
     native/java/util/zip/zipfile_md.cpp

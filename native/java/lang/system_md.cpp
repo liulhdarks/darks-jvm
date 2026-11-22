@@ -355,10 +355,15 @@ void JNICALL Java_java_lang_System_gc0
 jlong JNICALL Java_java_lang_System_currentTimeMillis
 	(JNIEnv *, jclass)
 {
-	// Probe printed by the native method itself; the end-to-end test uses it
-	// to prove that native dispatch reached this function.
-	fprintf(stdout, "probe: entered native System.currentTimeMillis()\n");
-	fflush(stdout);
+	// Probe printed once; the end-to-end test uses it to prove that native
+	// dispatch reached this function without flooding server logs.
+	static bool probe_printed = false;
+	if (!probe_printed)
+	{
+		probe_printed = true;
+		fprintf(stdout, "probe: entered native System.currentTimeMillis()\n");
+		fflush(stdout);
+	}
 	DarksDeterministic &det = DarksDeterministic::Instance();
 	if (det.Enabled())
 	{
