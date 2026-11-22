@@ -81,6 +81,27 @@ public final class LocalDateTime implements java.time.temporal.Temporal,
         return ofEpochSecond(now.getEpochSecond(), now.getNano(), ZoneId.systemDefault());
     }
 
+    public static LocalDateTime from(java.time.temporal.TemporalAccessor temporal)
+    {
+        if (temporal == null)
+        {
+            throw new NullPointerException("temporal");
+        }
+        if (temporal instanceof LocalDateTime)
+        {
+            return (LocalDateTime)temporal;
+        }
+        if (temporal instanceof ZonedDateTime)
+        {
+            return ((ZonedDateTime)temporal).toLocalDateTime();
+        }
+        if (temporal instanceof OffsetDateTime)
+        {
+            return ((OffsetDateTime)temporal).toLocalDateTime();
+        }
+        throw new DateTimeException("Unable to obtain LocalDateTime from TemporalAccessor");
+    }
+
     public static LocalDateTime parse(CharSequence text)
     {
         if (text == null)

@@ -12,6 +12,7 @@
 #include "utils/DebugUtils.h"
 #include "vm/executor/scheduler.h"
 #include "vm/executor/threadstack.h"
+#include "vm/executor/javaexception.h"
 #include "jni/jni_impl.h"
 
 #include <map>
@@ -406,6 +407,16 @@ bool FindClassThroughJava(ClassLoader *loader, LPCSTR classname, lpClass &out)
 		reinterpret_cast<jmethodID>(method), &arg, false, false);
 	if (!result.l || VMContext::pending_exception)
 	{
+		if (getenv("DARKS_JVM_TRACE_DEFINE"))
+		{
+			fprintf(stderr, "[trace java loadClass] failed for %s result=%p pending=%p\n",
+				classname, (void *)result.l, (void *)VMContext::pending_exception);
+			if (VMContext::pending_exception)
+			{
+				PrintUncaughtException(VMContext::pending_exception);
+			}
+			fflush(stderr);
+		}
 		VMContext::pending_exception = NULL;
 		return false;
 	}
@@ -555,6 +566,9 @@ void ClassLoader::LinkClass(lpClass clazz)
 		}
 		clazz->super_class = super;
 	}
+	// Field resolution walks superinterfaces as well as the superclass
+	// chain (JVMS 5.4.3.2), so keep the resolved direct interfaces.
+	clazz->interface_classes.clear();
 	for (U2 i = 0; i < clazz->interfaceCount; i++)
 	{
 		lpClassConstant ic = clazz->interfaces ? clazz->interfaces[i] : NULL;
@@ -589,6 +603,7 @@ void ClassLoader::LinkClass(lpClass clazz)
 		{
 			throw new ClassLinkageException(name);
 		}
+		clazz->interface_classes.push_back(iface);
 	}
 }
 

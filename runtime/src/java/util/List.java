@@ -18,6 +18,24 @@ public interface List<E> extends Collection<E>
 
     int lastIndexOf(Object value);
 
+    ListIterator<E> listIterator();
+
+    ListIterator<E> listIterator(int index);
+
+    default List<E> subList(int fromIndex, int toIndex)
+    {
+        if (fromIndex < 0 || toIndex > size() || fromIndex > toIndex)
+        {
+            throw new IndexOutOfBoundsException();
+        }
+        ArrayList<E> copy = new ArrayList<E>(toIndex - fromIndex);
+        for (int i = fromIndex; i < toIndex; i++)
+        {
+            copy.add(get(i));
+        }
+        return copy;
+    }
+
     default void sort(Comparator<? super E> comparator)
     {
         Object[] values = toArray();

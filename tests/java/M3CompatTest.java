@@ -4,6 +4,7 @@ import java.beans.PropertyChangeSupport;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.CharConversionException;
 import java.io.File;
 import java.io.OutputStreamWriter;
 import java.io.StringReader;
@@ -30,6 +31,7 @@ import javax.management.MBeanServer;
 import javax.management.MBeanServerFactory;
 import javax.management.ObjectInstance;
 import javax.management.ObjectName;
+import javax.net.ssl.SSLParameters;
 
 // Coverage for the JDK surface added while bringing up the embedded Tomcat
 // runtime: java.beans, charset/CharBuffer, string readers, date formatting,
@@ -73,6 +75,7 @@ public class M3CompatTest
         randomSource();
         management();
         filesAndSecurity();
+        extraJdkSurface();
         System.out.println("m3 compat checks=" + checks + " failures=" + failures);
         if (failures != 0)
         {
@@ -293,6 +296,8 @@ public class M3CompatTest
         check("security default", "fallback".equals(Security.getProperty("m3.absent", "fallback")));
         Security.setProperty("m3.num", "9");
         check("security integer", Security.getInteger("m3.num", 0) == 9);
+        check("security algorithms",
+            Security.getAlgorithms("SecureRandom").contains("SHA1PRNG"));
 
         Locale locale = Locale.US;
         check("locale language", "en".equals(locale.getLanguage()));
@@ -317,5 +322,43 @@ public class M3CompatTest
         };
         check("principal name", "alice".equals(principal.getName()));
         check("principal tostring", "alice".equals(principal.toString()));
+    }
+
+    private static void extraJdkSurface() throws Exception
+    {
+        CharConversionException conversion = new CharConversionException("bad");
+        check("char conversion is io", conversion instanceof java.io.IOException);
+        check("char conversion message", "bad".equals(conversion.getMessage()));
+
+        SSLParameters params = new SSLParameters(new String[] { "TLS_AES_128_GCM_SHA256" },
+            new String[] { "TLSv1.3" });
+        String[] ciphers = params.getCipherSuites();
+        ciphers[0] = "changed";
+        check("sslparams cipher copy", "TLS_AES_128_GCM_SHA256".equals(params.getCipherSuites()[0]));
+        check("sslparams protocol", "TLSv1.3".equals(params.getProtocols()[0]));
+        params.setApplicationProtocols(new String[] { "h2", "http/1.1" });
+        check("sslparams alpn", "h2".equals(params.getApplicationProtocols()[0]));
+        params.setNeedClientAuth(true);
+        check("sslparams need auth", params.getNeedClientAuth() && !params.getWantClientAuth());
+        params.setWantClientAuth(true);
+        check("sslparams want auth", params.getWantClientAuth() && !params.getNeedClientAuth());
+
+        Class<?> engine = Class.forName("javax.net.ssl.SSLEngine");
+        check("ssl engine method",
+            engine.getMethod("getApplicationProtocol").getReturnType() == String.class);
+        Class<?> result = Class.forName("javax.net.ssl.SSLEngineResult");
+        check("ssl result handshake",
+            result.getMethod("getHandshakeStatus").getReturnType() != null);
+
+        ThreadLocal<Integer> local = ThreadLocal.withInitial(
+            new java.util.function.Supplier<Integer>()
+            {
+                public Integer get()
+                {
+                    return Integer.valueOf(7);
+                }
+            });
+        check("threadlocal withInitial", Integer.valueOf(7).equals(local.get()));
+        local.remove();
     }
 }

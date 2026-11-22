@@ -742,6 +742,16 @@ public class Arrays
             this.values = values;
         }
 
+        public ListIterator<E> listIterator()
+        {
+            return listIterator(0);
+        }
+
+        public ListIterator<E> listIterator(int index)
+        {
+            return ListIterators.create(this, index, true);
+        }
+
         public int size()
         {
             return values.length;

@@ -36,6 +36,24 @@ public final class OffsetDateTime implements Temporal, Comparable<OffsetDateTime
         return of(LocalDateTime.of(year, month, day, hour, minute, second, nano), offset);
     }
 
+    public static OffsetDateTime from(java.time.temporal.TemporalAccessor temporal)
+    {
+        if (temporal == null)
+        {
+            throw new NullPointerException("temporal");
+        }
+        if (temporal instanceof OffsetDateTime)
+        {
+            return (OffsetDateTime)temporal;
+        }
+        if (temporal instanceof ZonedDateTime)
+        {
+            ZonedDateTime zoned = (ZonedDateTime)temporal;
+            return of(zoned.toLocalDateTime(), zoned.getOffset());
+        }
+        throw new DateTimeException("Unable to obtain OffsetDateTime from TemporalAccessor");
+    }
+
     public static OffsetDateTime ofInstant(Instant instant, ZoneId zone)
     {
         ZonedDateTime zoned = ZonedDateTime.ofInstant(instant, zone);

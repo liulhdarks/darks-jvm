@@ -54,6 +54,19 @@ public final class Instant implements java.time.temporal.Temporal,
         return ofEpochMilli(date.getTime());
     }
 
+    public static Instant from(java.time.temporal.TemporalAccessor temporal)
+    {
+        if (temporal == null)
+        {
+            throw new NullPointerException("temporal");
+        }
+        if (temporal instanceof Instant)
+        {
+            return (Instant)temporal;
+        }
+        throw new DateTimeException("Unable to obtain Instant from TemporalAccessor");
+    }
+
     public static Instant parse(CharSequence text)
     {
         if (text == null)

@@ -285,7 +285,7 @@ public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor
     {
         super(corePoolSize, Integer.MAX_VALUE, 0L, TimeUnit.MILLISECONDS,
               new LinkedBlockingQueue<Runnable>(), threadFactory,
-              new RejectedExecutionHandler.AbortPolicy());
+              new AbortPolicy());
     }
 
     public ScheduledThreadPoolExecutor(int corePoolSize, RejectedExecutionHandler handler)

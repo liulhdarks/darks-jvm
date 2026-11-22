@@ -200,6 +200,16 @@ public class ArrayList<E> implements List<E>
         return new Itr();
     }
 
+    public ListIterator<E> listIterator()
+    {
+        return listIterator(0);
+    }
+
+    public ListIterator<E> listIterator(int index)
+    {
+        return ListIterators.create(this, index, true);
+    }
+
     public String toString()
     {
         StringBuilder sb = new StringBuilder("[");

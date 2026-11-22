@@ -155,6 +155,9 @@ public:
 	void DetachMain();
 	EventNotify RunMain(ThreadStack *ts, lpClass clazz, lpMethod method,
 	                    lpVariant vars, int count);
+	// After main returns, the JVM may not exit while non-daemon Java threads
+	// are still alive.  Runs them on carrier 0 until only daemons remain.
+	void RunNonDaemonThreads();
 
 	static lpCoroutine Current();
 	// The Java thread an interpreter frame belongs to.  Unlike Current() this

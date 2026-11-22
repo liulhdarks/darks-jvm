@@ -71,6 +71,31 @@ public final class LocalTime implements java.time.temporal.Temporal, Comparable<
         return LocalDateTime.now().toLocalTime();
     }
 
+    public static LocalTime from(java.time.temporal.TemporalAccessor temporal)
+    {
+        if (temporal == null)
+        {
+            throw new NullPointerException("temporal");
+        }
+        if (temporal instanceof LocalTime)
+        {
+            return (LocalTime)temporal;
+        }
+        if (temporal instanceof LocalDateTime)
+        {
+            return ((LocalDateTime)temporal).toLocalTime();
+        }
+        if (temporal instanceof ZonedDateTime)
+        {
+            return ((ZonedDateTime)temporal).toLocalTime();
+        }
+        if (temporal instanceof OffsetDateTime)
+        {
+            return ((OffsetDateTime)temporal).toLocalDateTime().toLocalTime();
+        }
+        throw new DateTimeException("Unable to obtain LocalTime from TemporalAccessor");
+    }
+
     public static LocalTime parse(CharSequence text)
     {
         if (text == null)

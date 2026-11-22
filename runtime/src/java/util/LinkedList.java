@@ -206,6 +206,16 @@ public class LinkedList<E> implements List<E>, Deque<E>
         return new Itr();
     }
 
+    public ListIterator<E> listIterator()
+    {
+        return listIterator(0);
+    }
+
+    public ListIterator<E> listIterator(int index)
+    {
+        return ListIterators.create(this, index, true);
+    }
+
     public String toString()
     {
         StringBuilder sb = new StringBuilder("[");

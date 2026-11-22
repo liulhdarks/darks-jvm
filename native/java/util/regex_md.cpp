@@ -163,6 +163,219 @@ std::wstring AdjustPattern(const std::wstring &pattern, int flags)
 	return out;
 }
 
+struct CodePointRange
+{
+	unsigned int lo;
+	unsigned int hi;
+};
+
+// std::regex knows neither \p{...} nor Unicode categories.  Translate the
+// properties that show up in practice into explicit character ranges.  The
+// ranges are written as literal wchar values, which the ECMAScript grammar
+// accepts inside a character class.
+bool PropertyRanges(const std::wstring &raw, std::vector<CodePointRange> &out)
+{
+	std::wstring name = raw;
+	if (name.size() > 2 && (name[0] == L'I' || name[0] == L'i') &&
+	    name[1] == L's')
+	{
+		name = name.substr(2);
+	}
+	else if (name.size() > 2 && (name[0] == L'I' || name[0] == L'i') &&
+	         name[1] == L'n')
+	{
+		name = name.substr(2);
+	}
+	if (name == L"Cc" || name == L"Cntrl")
+	{
+		out.push_back(CodePointRange{0x00, 0x1F});
+		out.push_back(CodePointRange{0x7F, 0x9F});
+		return true;
+	}
+	if (name == L"Cf")
+	{
+		out.push_back(CodePointRange{0x00AD, 0x00AD});
+		out.push_back(CodePointRange{0x0600, 0x0605});
+		out.push_back(CodePointRange{0x200B, 0x200F});
+		out.push_back(CodePointRange{0x202A, 0x202E});
+		out.push_back(CodePointRange{0x2060, 0x2064});
+		out.push_back(CodePointRange{0xFEFF, 0xFEFF});
+		return true;
+	}
+	if (name == L"Lu" || name == L"Upper" || name == L"javaUpperCase")
+	{
+		out.push_back(CodePointRange{0x0041, 0x005A});
+		out.push_back(CodePointRange{0x00C0, 0x00D6});
+		out.push_back(CodePointRange{0x00D8, 0x00DE});
+		return true;
+	}
+	if (name == L"Ll" || name == L"Lower" || name == L"javaLowerCase")
+	{
+		out.push_back(CodePointRange{0x0061, 0x007A});
+		out.push_back(CodePointRange{0x00DF, 0x00F6});
+		out.push_back(CodePointRange{0x00F8, 0x00FF});
+		return true;
+	}
+	if (name == L"L" || name == L"Lt" || name == L"Lm" || name == L"Lo" ||
+	    name == L"Alpha" || name == L"IsAlphabetic")
+	{
+		out.push_back(CodePointRange{0x0041, 0x005A});
+		out.push_back(CodePointRange{0x0061, 0x007A});
+		out.push_back(CodePointRange{0x00C0, 0x00D6});
+		out.push_back(CodePointRange{0x00D8, 0x00F6});
+		out.push_back(CodePointRange{0x00F8, 0x00FF});
+		return true;
+	}
+	if (name == L"Nd" || name == L"Digit" || name == L"IsDigit")
+	{
+		out.push_back(CodePointRange{0x0030, 0x0039});
+		return true;
+	}
+	if (name == L"N" || name == L"Nl" || name == L"No")
+	{
+		out.push_back(CodePointRange{0x0030, 0x0039});
+		out.push_back(CodePointRange{0x00B2, 0x00B3});
+		out.push_back(CodePointRange{0x00B9, 0x00B9});
+		out.push_back(CodePointRange{0x00BC, 0x00BE});
+		return true;
+	}
+	if (name == L"Z" || name == L"Space" || name == L"Blank" ||
+	    name == L"javaWhitespace")
+	{
+		out.push_back(CodePointRange{0x0009, 0x000D});
+		out.push_back(CodePointRange{0x0020, 0x0020});
+		out.push_back(CodePointRange{0x00A0, 0x00A0});
+		out.push_back(CodePointRange{0x2000, 0x200A});
+		out.push_back(CodePointRange{0x2028, 0x2029});
+		out.push_back(CodePointRange{0x202F, 0x202F});
+		out.push_back(CodePointRange{0x205F, 0x205F});
+		out.push_back(CodePointRange{0x3000, 0x3000});
+		return true;
+	}
+	if (name == L"P" || name == L"Punct")
+	{
+		out.push_back(CodePointRange{0x0021, 0x0023});
+		out.push_back(CodePointRange{0x0025, 0x002A});
+		out.push_back(CodePointRange{0x002C, 0x002F});
+		out.push_back(CodePointRange{0x003A, 0x003B});
+		out.push_back(CodePointRange{0x003F, 0x0040});
+		out.push_back(CodePointRange{0x005B, 0x005D});
+		out.push_back(CodePointRange{0x005F, 0x005F});
+		out.push_back(CodePointRange{0x007B, 0x007B});
+		out.push_back(CodePointRange{0x007D, 0x007D});
+		return true;
+	}
+	if (name == L"S")
+	{
+		out.push_back(CodePointRange{0x0024, 0x0024});
+		out.push_back(CodePointRange{0x002B, 0x002B});
+		out.push_back(CodePointRange{0x003C, 0x003E});
+		out.push_back(CodePointRange{0x005E, 0x005E});
+		out.push_back(CodePointRange{0x0060, 0x0060});
+		out.push_back(CodePointRange{0x007C, 0x007C});
+		out.push_back(CodePointRange{0x007E, 0x007E});
+		return true;
+	}
+	if (name == L"M")
+	{
+		out.push_back(CodePointRange{0x0300, 0x036F});
+		out.push_back(CodePointRange{0x20D0, 0x20FF});
+		return true;
+	}
+	if (name == L"Graph")
+	{
+		out.push_back(CodePointRange{0x0021, 0x007E});
+		out.push_back(CodePointRange{0x00A1, 0x00FF});
+		return true;
+	}
+	if (name == L"Print")
+	{
+		out.push_back(CodePointRange{0x0020, 0x007E});
+		out.push_back(CodePointRange{0x00A0, 0x00FF});
+		return true;
+	}
+	if (name == L"XDigit")
+	{
+		out.push_back(CodePointRange{0x0030, 0x0039});
+		out.push_back(CodePointRange{0x0041, 0x0046});
+		out.push_back(CodePointRange{0x0061, 0x0066});
+		return true;
+	}
+	return false;
+}
+
+void AppendRanges(std::wstring &out, const std::vector<CodePointRange> &ranges)
+{
+	for (size_t i = 0; i < ranges.size(); i++)
+	{
+		unsigned int lo = ranges[i].lo;
+		unsigned int hi = ranges[i].hi;
+		if (lo == hi)
+		{
+			out.push_back(static_cast<wide_char>(lo));
+			continue;
+		}
+		out.push_back(static_cast<wide_char>(lo));
+		out.push_back(L'-');
+		out.push_back(static_cast<wide_char>(hi));
+	}
+}
+
+std::wstring TranslateUnicodeProperties(const std::wstring &pattern)
+{
+	std::wstring out;
+	bool in_class = false;
+	for (size_t i = 0; i < pattern.size(); i++)
+	{
+		wide_char c = pattern[i];
+		if (c == L'\\' && i + 1 < pattern.size())
+		{
+			wide_char next = pattern[i + 1];
+			if ((next == L'p' || next == L'P') && i + 2 < pattern.size() &&
+			    pattern[i + 2] == L'{')
+			{
+				size_t close = pattern.find(L'}', i + 3);
+				if (close != std::wstring::npos)
+				{
+					std::vector<CodePointRange> ranges;
+					if (PropertyRanges(pattern.substr(i + 3, close - i - 3), ranges))
+					{
+						if (!in_class)
+						{
+							out.push_back(L'[');
+							if (next == L'P')
+							{
+								out.push_back(L'^');
+							}
+						}
+						AppendRanges(out, ranges);
+						if (!in_class)
+						{
+							out.push_back(L']');
+						}
+						i = close;
+						continue;
+					}
+				}
+			}
+			out.push_back(c);
+			out.push_back(next);
+			i++;
+			continue;
+		}
+		if (c == L'[')
+		{
+			in_class = true;
+		}
+		else if (c == L']')
+		{
+			in_class = false;
+		}
+		out.push_back(c);
+	}
+	return out;
+}
+
 std::wregex *WideRegexHandle(jlong handle)
 {
 	return reinterpret_cast<std::wregex *>(static_cast<intptr_t>(handle));
@@ -218,6 +431,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_java_util_regex_Pattern_nativeCompile
 		source = EscapeLiteral(source);
 	}
 	source = AdjustPattern(source, flags);
+	source = TranslateUnicodeProperties(source);
 
 	std::regex_constants::syntax_option_type options =
 		std::regex_constants::ECMAScript;

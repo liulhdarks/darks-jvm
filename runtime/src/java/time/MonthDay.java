@@ -1,7 +1,8 @@
 package java.time;
 
 /** Minimal month-day value object (no year). */
-public final class MonthDay implements Comparable<MonthDay>
+public final class MonthDay implements java.time.temporal.TemporalAccessor,
+        Comparable<MonthDay>
 {
     private final int month;
     private final int day;
@@ -68,6 +69,27 @@ public final class MonthDay implements Comparable<MonthDay>
             }
             throw ex;
         }
+    }
+
+    public static MonthDay parse(CharSequence text,
+            java.time.format.DateTimeFormatter formatter)
+    {
+        if (formatter == null)
+        {
+            throw new NullPointerException("formatter");
+        }
+        Object parsed = formatter.parse(text);
+        if (parsed instanceof MonthDay)
+        {
+            return (MonthDay) parsed;
+        }
+        if (parsed instanceof LocalDate)
+        {
+            LocalDate date = (LocalDate) parsed;
+            return of(date.getMonthValue(), date.getDayOfMonth());
+        }
+        throw new java.time.format.DateTimeParseException(
+            "Invalid month-day", text == null ? "null" : text.toString(), 0);
     }
 
     public int getMonthValue()

@@ -1,6 +1,8 @@
 package java.security;
 
+import java.util.HashSet;
 import java.util.Properties;
+import java.util.Set;
 
 /**
  * Minimal security properties table.  Only the lookups performed while
@@ -32,6 +34,20 @@ public final class Security
     public static String getAlgorithmProperty(String algName, String propName)
     {
         return null;
+    }
+
+    public static Set<String> getAlgorithms(String serviceName)
+    {
+        if (serviceName == null)
+        {
+            throw new NullPointerException("serviceName");
+        }
+        Set<String> algorithms = new HashSet<String>();
+        if ("SecureRandom".equals(serviceName))
+        {
+            algorithms.add("SHA1PRNG");
+        }
+        return algorithms;
     }
 
     public static int getInteger(String key, int defaultValue)

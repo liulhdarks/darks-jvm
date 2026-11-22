@@ -18,6 +18,11 @@ public class DecimalFormat extends NumberFormat
         applyPattern(pattern);
     }
 
+    public DecimalFormat(String pattern, DecimalFormatSymbols symbols)
+    {
+        this(pattern);
+    }
+
     public void applyPattern(String pattern)
     {
         if (pattern == null)

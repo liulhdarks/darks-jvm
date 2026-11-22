@@ -33,6 +33,9 @@ public:
 	lpBootstrapMethods bootstrap_methods;
 	ClassType class_type;
 	lpClass super_class;
+	// Resolved direct superinterfaces, in declaration order.  Field
+	// resolution (JVMS 5.4.3.2) searches these before the superclass.
+	std::vector<lpClass> interface_classes;
 	// For CT_ARRAY classes: the element class when it is already known.
 	lpClass component_class;
 

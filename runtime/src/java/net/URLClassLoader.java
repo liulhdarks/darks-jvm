@@ -192,4 +192,8 @@ public class URLClassLoader extends ClassLoader
         return definePackage(name, specTitle, specVersion, specVendor,
             implTitle, implVersion, implVendor, url);
     }
+
+    public void close() throws IOException
+    {
+    }
 }

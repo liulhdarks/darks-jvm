@@ -5,6 +5,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.MonthDay;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -771,6 +773,18 @@ public final class DateTimeFormatter
         if (year != Integer.MIN_VALUE || month != Integer.MIN_VALUE ||
             day != Integer.MIN_VALUE)
         {
+            if (month != Integer.MIN_VALUE && day != Integer.MIN_VALUE &&
+                year == Integer.MIN_VALUE &&
+                hour == Integer.MIN_VALUE && minute == Integer.MIN_VALUE)
+            {
+                return MonthDay.of(month, day);
+            }
+            if (year != Integer.MIN_VALUE && month != Integer.MIN_VALUE &&
+                day == Integer.MIN_VALUE &&
+                hour == Integer.MIN_VALUE && minute == Integer.MIN_VALUE)
+            {
+                return YearMonth.of(year, month);
+            }
             if (month == Integer.MIN_VALUE || day == Integer.MIN_VALUE)
             {
                 throw parseError(s, 0, "Incomplete date");

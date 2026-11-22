@@ -352,6 +352,16 @@ public class Collections
             this.delegate = delegate;
         }
 
+        public ListIterator<E> listIterator()
+        {
+            return delegate.listIterator();
+        }
+
+        public ListIterator<E> listIterator(int index)
+        {
+            return delegate.listIterator(index);
+        }
+
         public int size()
         {
             return delegate.size();
@@ -571,6 +581,16 @@ public class Collections
             return new UnsupportedOperationException("unmodifiable list");
         }
 
+        public ListIterator<E> listIterator()
+        {
+            return listIterator(0);
+        }
+
+        public ListIterator<E> listIterator(int index)
+        {
+            return ListIterators.create(this, index, false);
+        }
+
         public int size()
         {
             return list.size();
@@ -702,6 +722,16 @@ public class Collections
 
     private static final class EmptyList<E> implements List<E>
     {
+        public ListIterator<E> listIterator()
+        {
+            return listIterator(0);
+        }
+
+        public ListIterator<E> listIterator(int index)
+        {
+            return ListIterators.create(this, index, false);
+        }
+
         public int size()
         {
             return 0;
@@ -913,6 +943,16 @@ public class Collections
         SingletonList(E value)
         {
             this.value = value;
+        }
+
+        public ListIterator<E> listIterator()
+        {
+            return listIterator(0);
+        }
+
+        public ListIterator<E> listIterator(int index)
+        {
+            return ListIterators.create(this, index, false);
         }
 
         public int size()

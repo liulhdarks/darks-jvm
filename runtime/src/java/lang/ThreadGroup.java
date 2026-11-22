@@ -54,6 +54,32 @@ public class ThreadGroup
         return 0;
     }
 
+    public int enumerate(Thread[] list)
+    {
+        return enumerate(list, true);
+    }
+
+    public int enumerate(Thread[] list, boolean recurse)
+    {
+        if (list == null)
+        {
+            throw new NullPointerException("list");
+        }
+        Thread current = Thread.currentThread();
+        ThreadGroup group = current.getThreadGroup();
+        boolean match = group == this;
+        if (recurse && group != null)
+        {
+            match = parentOf(group);
+        }
+        if (match && list.length > 0)
+        {
+            list[0] = current;
+            return 1;
+        }
+        return 0;
+    }
+
     public boolean isDaemon()
     {
         return false;

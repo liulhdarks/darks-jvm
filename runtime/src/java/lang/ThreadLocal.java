@@ -121,6 +121,22 @@ public class ThreadLocal<T>
         return null;
     }
 
+    public static <S> ThreadLocal<S> withInitial(
+        java.util.function.Supplier<? extends S> supplier)
+    {
+        if (supplier == null)
+        {
+            throw new NullPointerException("supplier");
+        }
+        return new ThreadLocal<S>()
+        {
+            protected S initialValue()
+            {
+                return supplier.get();
+            }
+        };
+    }
+
     public T get()
     {
         Object[] tab = table(false);

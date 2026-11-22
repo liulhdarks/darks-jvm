@@ -33,19 +33,35 @@ std::string JniInternalName(const char *name)
 	return result;
 }
 
-lpClass DeclaringClass(lpClass clazz, lpField field)
+lpClass DeclaringClassRecursive(lpClass clazz, lpField field, int depth)
 {
-	for (lpClass c = clazz; c; c = c->super_class)
+	if (!clazz || !field || depth > 64)
 	{
-		for (U2 i = 0; i < c->fieldCount; i++)
+		return NULL;
+	}
+	for (U2 i = 0; i < clazz->fieldCount; i++)
+	{
+		if (clazz->fields && clazz->fields[i] == field)
 		{
-			if (c->fields && c->fields[i] == field)
-			{
-				return c;
-			}
+			return clazz;
 		}
 	}
-	return clazz;
+	for (size_t i = 0; i < clazz->interface_classes.size(); i++)
+	{
+		lpClass declaring = DeclaringClassRecursive(clazz->interface_classes[i],
+		                                            field, depth + 1);
+		if (declaring)
+		{
+			return declaring;
+		}
+	}
+	return DeclaringClassRecursive(clazz->super_class, field, depth + 1);
+}
+
+lpClass DeclaringClass(lpClass clazz, lpField field)
+{
+	lpClass declaring = DeclaringClassRecursive(clazz, field, 0);
+	return declaring ? declaring : clazz;
 }
 
 std::string StaticFieldKey(lpClass clazz, lpField field)
@@ -132,6 +148,67 @@ lpMethod JniFindMethod(lpClass clazz, const char *name, const char *sig, bool is
 	return NULL;
 }
 
+namespace {
+
+lpField MatchFieldInClass(lpClass c, const std::string &key, const char *name,
+                          const char *sig, bool isStatic)
+{
+	std::map<std::string, lpField>::iterator it = c->fields_map.find(key);
+	if (it != c->fields_map.end() && it->second)
+	{
+		bool field_static = (it->second->accFlag & ACF_STATIC) != 0;
+		if (field_static == isStatic)
+		{
+			return it->second;
+		}
+	}
+	for (U2 i = 0; i < c->fieldCount; i++)
+	{
+		lpField f = c->fields ? c->fields[i] : NULL;
+		if (!f || !f->fieldName || !f->fieldDesc)
+		{
+			continue;
+		}
+		if (strcmp(f->fieldName->GetName(), name) == 0 &&
+		    strcmp(f->fieldDesc->GetName(), sig) == 0 &&
+		    (((f->accFlag & ACF_STATIC) != 0) == isStatic))
+		{
+			return f;
+		}
+	}
+	return NULL;
+}
+
+// JVMS 5.4.3.2: the declared field, then the superinterfaces (recursively),
+// then the superclass.  Constants such as jackson's
+// PrettyPrinter.DEFAULT_SEPARATORS are inherited from an interface and would
+// otherwise report NoSuchFieldError.
+lpField FindFieldRecursive(lpClass c, const std::string &key, const char *name,
+                           const char *sig, bool isStatic, int depth)
+{
+	if (!c || depth > 64)
+	{
+		return NULL;
+	}
+	lpField found = MatchFieldInClass(c, key, name, sig, isStatic);
+	if (found)
+	{
+		return found;
+	}
+	for (size_t i = 0; i < c->interface_classes.size(); i++)
+	{
+		found = FindFieldRecursive(c->interface_classes[i], key, name, sig,
+		                           isStatic, depth + 1);
+		if (found)
+		{
+			return found;
+		}
+	}
+	return FindFieldRecursive(c->super_class, key, name, sig, isStatic, depth + 1);
+}
+
+} // namespace
+
 lpField JniFindField(lpClass clazz, const char *name, const char *sig, bool isStatic)
 {
 	if (!clazz || !name || !sig)
@@ -139,33 +216,12 @@ lpField JniFindField(lpClass clazz, const char *name, const char *sig, bool isSt
 		return NULL;
 	}
 	std::string key = std::string(name) + ":" + sig;
-	for (lpClass c = clazz; c; c = c->super_class)
-	{
-		std::map<std::string, lpField>::iterator it = c->fields_map.find(key);
-		if (it != c->fields_map.end() && it->second)
-		{
-			bool field_static = (it->second->accFlag & ACF_STATIC) != 0;
-			if (field_static == isStatic)
-			{
-				return it->second;
-			}
-		}
-		for (U2 i = 0; i < c->fieldCount; i++)
-		{
-			lpField f = c->fields ? c->fields[i] : NULL;
-			if (!f || !f->fieldName || !f->fieldDesc)
-			{
-				continue;
-			}
-			if (strcmp(f->fieldName->GetName(), name) == 0 &&
-			    strcmp(f->fieldDesc->GetName(), sig) == 0 &&
-			    (((f->accFlag & ACF_STATIC) != 0) == isStatic))
-			{
-				return f;
-			}
-		}
-	}
-	return NULL;
+	return FindFieldRecursive(clazz, key, name, sig, isStatic, 0);
+}
+
+lpClass JniDeclaringFieldClass(lpClass clazz, lpField field)
+{
+	return DeclaringClass(clazz, field);
 }
 
 lpFieldValue JniStaticFieldValue(lpClass clazz, lpField field, bool create)

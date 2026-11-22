@@ -21,7 +21,46 @@ public class ThreadPoolExecutor extends AbstractExecutorService
     private static final int STOP = 2;
 
     private static final RejectedExecutionHandler DEFAULT_HANDLER =
-        new RejectedExecutionHandler.AbortPolicy();
+        new AbortPolicy();
+
+    public static class AbortPolicy implements RejectedExecutionHandler
+    {
+        public void rejectedExecution(Runnable task, ThreadPoolExecutor executor)
+        {
+            throw new RejectedExecutionException("task rejected from " + executor);
+        }
+    }
+
+    public static class CallerRunsPolicy implements RejectedExecutionHandler
+    {
+        public void rejectedExecution(Runnable task, ThreadPoolExecutor executor)
+        {
+            if (!executor.isShutdown())
+            {
+                task.run();
+            }
+        }
+    }
+
+    public static class DiscardPolicy implements RejectedExecutionHandler
+    {
+        public void rejectedExecution(Runnable task, ThreadPoolExecutor executor)
+        {
+        }
+    }
+
+    public static class DiscardOldestPolicy implements RejectedExecutionHandler
+    {
+        public void rejectedExecution(Runnable task, ThreadPoolExecutor executor)
+        {
+            if (!executor.isShutdown())
+            {
+                executor.getQueue().poll();
+                executor.execute(task);
+            }
+        }
+    }
+
 
     /*
      * Idle workers are woken by placing a signal in the work queue instead of

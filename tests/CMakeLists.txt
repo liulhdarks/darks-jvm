@@ -38,6 +38,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/io/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/net/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/sql/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/function/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/concurrent/*.java"
@@ -70,6 +71,8 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/javax/management/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/javax/management/modelmbean/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/javax/management/openmbean/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/javax/net/ssl/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/javax/naming/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/security/cert/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/zip/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/jar/*.java"
@@ -163,6 +166,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/M3ConcurrencyTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/M3NioTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/M3HttpLoopbackTest.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/M3JarInputStreamTest.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
     add_custom_command(
@@ -595,6 +599,13 @@ if(JAVAC)
                     "-DARGS=-cp;${TEST_APP_JAR};SdkJarResourceTest" -DEXPECT_RC=0
                     "-DEXPECT_TEXT=jar\ resource\ checks=[0-9]+\ failures=0"
                     "-DEXPECT_TEXT2=sdk\ jar\ resource:\ ok" -P "${CHECK}")
+
+        add_test(NAME m3_jar_input_stream
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                    "-DARGS=-cp;${CLASSES_DIR};M3JarInputStreamTest;${TEST_APP_JAR}"
+                    -DEXPECT_RC=0
+                    "-DEXPECT_TEXT=m3\ jar\ input\ checks=[0-9]+\ failures=0"
+                    "-DEXPECT_TEXT2=m3\ jar\ input:\ ok" -P "${CHECK}")
     endif()
 
     add_test(NAME unit_tests

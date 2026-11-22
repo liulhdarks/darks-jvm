@@ -34,6 +34,11 @@ public class ConcurrentHashMap<K, V> implements ConcurrentMap<K, V>
         map = new HashMap<K, V>(initialCapacity);
     }
 
+    public ConcurrentHashMap(int initialCapacity, float loadFactor, int concurrencyLevel)
+    {
+        map = new HashMap<K, V>(initialCapacity);
+    }
+
     public ConcurrentHashMap(Map<? extends K, ? extends V> other)
     {
         map = new HashMap<K, V>();

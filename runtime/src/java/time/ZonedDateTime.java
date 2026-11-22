@@ -2,6 +2,7 @@ package java.time;
 
 /** A date-time with a time-zone. */
 public final class ZonedDateTime implements java.time.temporal.Temporal,
+        java.time.chrono.ChronoZonedDateTime,
         Comparable<ZonedDateTime>
 {
     private final LocalDateTime dateTime;
@@ -31,6 +32,24 @@ public final class ZonedDateTime implements java.time.temporal.Temporal,
                                    int minute, int second, int nano, ZoneId zone)
     {
         return of(LocalDateTime.of(year, month, day, hour, minute, second, nano), zone);
+    }
+
+    public static ZonedDateTime from(java.time.temporal.TemporalAccessor temporal)
+    {
+        if (temporal == null)
+        {
+            throw new NullPointerException("temporal");
+        }
+        if (temporal instanceof ZonedDateTime)
+        {
+            return (ZonedDateTime)temporal;
+        }
+        if (temporal instanceof OffsetDateTime)
+        {
+            OffsetDateTime offset = (OffsetDateTime)temporal;
+            return of(offset.toLocalDateTime(), offset.getOffset());
+        }
+        throw new DateTimeException("Unable to obtain ZonedDateTime from TemporalAccessor");
     }
 
     public static ZonedDateTime ofInstant(Instant instant, ZoneId zone)
@@ -159,6 +178,11 @@ public final class ZonedDateTime implements java.time.temporal.Temporal,
         long seconds = dateTime.toEpochSecond(ZoneOffset.UTC) -
                        zone.getOffsetSeconds(dateTime.toEpochSecond(ZoneOffset.UTC) * 1000L);
         return Instant.ofEpochSecond(seconds, dateTime.getNano());
+    }
+
+    public long toEpochSecond()
+    {
+        return toInstant().getEpochSecond();
     }
 
     public OffsetDateTime toOffsetDateTime()

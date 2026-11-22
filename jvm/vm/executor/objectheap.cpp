@@ -624,8 +624,27 @@ void ObjectHeap::gc()
 			weak_reference_objects.push_back(idx);
 		}
 		// Instance fields. Primitive values are tolerated: MarkObjectRef only
-		// accepts pointers that match a live object's index address.
+		// accepts pointers that match a live object's index address.  Slots
+		// are scanned first because a subclass field can hide a superclass
+		// field with the same name and descriptor; the name-keyed map below
+		// keeps only one of them, while every field has its own slot.
+		for (size_t k = 0; k < obj->instance_slots.size(); k++)
+		{
+			lpFieldValue fv = obj->instance_slots[k];
+			if (!fv)
+			{
+				continue;
+			}
+			if (reference && fv->field && fv->field->fieldName &&
+			    fv->field->fieldName->GetName() &&
+			    strcmp(fv->field->fieldName->GetName(), "referent") == 0)
+			{
+				continue;
+			}
+			MarkObjectRef(fv->field_value.heapPtr);
+		}
 		FIELD_MAP::iterator field_it = obj->varants.begin();
+
 		for (; field_it != obj->varants.end(); ++field_it)
 		{
 			// Reference.referent is a weak edge; it is handled after the

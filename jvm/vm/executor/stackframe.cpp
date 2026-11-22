@@ -306,6 +306,30 @@ bool ResolveStaticField(lpClassLoader loader, FieldRefConstant *frc,
 	}
 	if (!value)
 	{
+		// getstatic/putstatic initialise the field's declaring class or
+		// interface (JVMS 5.5).  An inherited interface constant such as
+		// jackson's PrettyPrinter.DEFAULT_SEPARATORS only gets its value once
+		// that interface's <clinit> has run.
+		lpClass declaring = JniDeclaringFieldClass(target, field);
+		if (declaring)
+		{
+			bool initialized = false;
+			try
+			{
+				initialized = declaring->initialize();
+			}
+			catch (VMException *error)
+			{
+				delete error;
+			}
+			catch (...)
+			{
+			}
+			if (!initialized)
+			{
+				return false;
+			}
+		}
 		// A static field without an explicit initializer has no <clinit>
 		// entry; create its default value lazily on first access.
 		value = JniStaticFieldValue(target, field, true);
@@ -3756,6 +3780,7 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		}
 	}
 
+	lpClass dispatch_receiver = NULL;
 	if (type != SPECIAL_METHOD
 		&& !method->isSpecial()
 		&& !method->isStatic()
@@ -3808,6 +3833,7 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		}
 		lpMethod tmp_method = NULL;
 		lpClass receiver_class = obj->obj_class;
+		dispatch_receiver = receiver_class;
 if (method_ref->cached_receiver_class.load(std::memory_order_acquire) == receiver_class)
 		{
 			tmp_method = method_ref->cached_method.load(std::memory_order_acquire);
@@ -3828,7 +3854,7 @@ if (method_ref->cached_receiver_class.load(std::memory_order_acquire) == receive
 				{
 					std::string name(full, static_cast<size_t>(colon - full));
 					std::string params(colon + 1,
-						static_cast<size_t>(close - colon));
+						static_cast<size_t>(close - colon) + 1);
 					matched = receiver_class->FindMethodByParams(
 						name.c_str(), params.c_str(), tmp_method);
 				}
@@ -3863,6 +3889,15 @@ if (method_ref->cached_receiver_class.load(std::memory_order_acquire) == receive
 		{
 			message += ".";
 			message += method->fullName;
+		}
+		if (getenv("DARKS_JVM_TRACE_DEFINE") && dispatch_receiver &&
+		    dispatch_receiver->thisClass && dispatch_receiver->thisClass->GetName())
+		{
+			fprintf(stderr, "[trace ame] receiver=%s decl=%s method=%s\n",
+				dispatch_receiver->thisClass->GetName(),
+				(method->clazz && method->clazz->thisClass) ? method->clazz->thisClass->GetName() : "?",
+				message.c_str());
+			fflush(stderr);
 		}
 		VMContext::pending_exception = CreateJavaException(
 			"java/lang/AbstractMethodError", message.c_str());

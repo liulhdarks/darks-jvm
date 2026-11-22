@@ -129,43 +129,43 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
         {
             return null;
         }
+        java.net.URL url = null;
         String source = getSource0();
-        if (source == null)
+        if (source != null)
         {
-            return null;
-        }
-        String location = source;
-        int marker = source.indexOf("!/");
-        if (marker >= 0)
-        {
-            location = source.substring(0, marker);
-        }
-        else
-        {
-            String suffix = name.replace('.', '/') + ".class";
-            if (location.endsWith(suffix))
+            String location = source;
+            int marker = source.indexOf("!/");
+            if (marker >= 0)
             {
-                location = location.substring(0, location.length() - suffix.length());
-                if (location.length() > 1 && location.endsWith("/"))
+                location = source.substring(0, marker);
+            }
+            else
+            {
+                String suffix = name.replace('.', '/') + ".class";
+                if (location.endsWith(suffix))
                 {
-                    location = location.substring(0, location.length() - 1);
+                    location = location.substring(0, location.length() - suffix.length());
+                    if (location.length() > 1 && location.endsWith("/"))
+                    {
+                        location = location.substring(0, location.length() - 1);
+                    }
                 }
             }
+            try
+            {
+                url = new java.net.URL("file:" + location);
+            }
+            catch (java.net.MalformedURLException e)
+            {
+                url = null;
+            }
         }
-        try
-        {
-            java.net.URL url = new java.net.URL("file:" + location);
-            java.security.cert.Certificate[] certificates =
-                new java.security.cert.Certificate[0];
-            java.security.CodeSource codeSource =
-                new java.security.CodeSource(url, certificates);
-            return new java.security.ProtectionDomain(codeSource,
-                new java.security.Permission[0]);
-        }
-        catch (java.net.MalformedURLException e)
-        {
-            return null;
-        }
+        java.security.cert.Certificate[] certificates =
+            new java.security.cert.Certificate[0];
+        java.security.CodeSource codeSource =
+            new java.security.CodeSource(url, certificates);
+        return new java.security.ProtectionDomain(codeSource,
+            new java.security.Permission[0]);
     }
 
     public String toString()
@@ -183,7 +183,14 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
 
     public native Class getSuperclass();
 
-    public native boolean isInstance(Object obj);
+    public boolean isInstance(Object obj)
+    {
+        if (obj == null)
+        {
+            return false;
+        }
+        return isAssignableFrom(obj.getClass());
+    }
 
     public native boolean isAssignableFrom(Class other);
 
@@ -638,11 +645,35 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
         return findConstructor(getConstructors(), parameterTypes);
     }
 
+    public T newInstance() throws InstantiationException, IllegalAccessException
+    {
+        try
+        {
+            return getDeclaredConstructor().newInstance();
+        }
+        catch (java.lang.reflect.InvocationTargetException e)
+        {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException)
+            {
+                throw (RuntimeException)cause;
+            }
+            if (cause instanceof Error)
+            {
+                throw (Error)cause;
+            }
+            throw new InstantiationException(cause == null ? e.toString() : cause.toString());
+        }
+        catch (NoSuchMethodException e)
+        {
+            throw new InstantiationException(e.toString());
+        }
+    }
+
     private static Constructor findConstructor(Constructor[] all,
         Class[] parameterTypes)
         throws NoSuchMethodException
-    {
-        int expected = parameterTypes == null ? 0 : parameterTypes.length;
+    {        int expected = parameterTypes == null ? 0 : parameterTypes.length;
         for (int i = 0; i < all.length; i++)
         {
             Class[] actual = all[i].getParameterTypes();

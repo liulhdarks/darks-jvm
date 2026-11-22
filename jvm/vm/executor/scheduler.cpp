@@ -2667,6 +2667,93 @@ EventNotify Scheduler::RunMain(ThreadStack *ts, lpClass clazz, lpMethod method,
 	return ev;
 }
 
+void Scheduler::RunNonDaemonThreads()
+{
+	if (!impl)
+	{
+		return;
+	}
+	for (;;)
+	{
+		std::vector<LPOBJECT_REF> refs;
+		{
+			std::lock_guard<std::recursive_mutex> lk(impl->m);
+			if (!impl->running)
+			{
+				return;
+			}
+			for (std::map<LPOBJECT_REF, lpCoroutine>::iterator it =
+			         impl->by_thread.begin(); it != impl->by_thread.end(); ++it)
+			{
+				refs.push_back(it->first);
+			}
+		}
+		bool pending = false;
+		for (size_t i = 0; i < refs.size(); i++)
+		{
+			bool daemon = false;
+			if (!GetBoolField(refs[i], "daemon", daemon) || !daemon)
+			{
+				pending = true;
+				break;
+			}
+		}
+		if (!pending)
+		{
+			return;
+		}
+		lpCoroutine co = NULL;
+		bool idle = false;
+		{
+			std::unique_lock<std::recursive_mutex> lk(impl->m);
+			if (!impl->running)
+			{
+				return;
+			}
+			ReapTimers();
+			if (!TakeReady(0, co))
+			{
+				if (!AdvanceVirtualTimeLocked())
+				{
+					idle = true;
+				}
+			}
+		}
+		if (idle)
+		{
+			MaybeRunDiagnostics(true);
+			std::unique_lock<std::recursive_mutex> lk(impl->m);
+			if (!impl->running)
+			{
+				return;
+			}
+			if (!TakeReady(0, co))
+			{
+				if (AdvanceVirtualTimeLocked())
+				{
+					continue;
+				}
+				if (t_worker)
+				{
+					t_worker->at_safepoint = true;
+					impl->stw_cv.notify_all();
+				}
+				impl->cv.wait_for(lk, std::chrono::milliseconds(1));
+				while (impl->stw_active && impl->running)
+				{
+					impl->stw_cv.wait_for(lk, std::chrono::milliseconds(2));
+				}
+				if (t_worker)
+				{
+					t_worker->at_safepoint = false;
+				}
+				continue;
+			}
+		}
+		RunOne(co);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Deadlock / starvation diagnostics
 // ---------------------------------------------------------------------------

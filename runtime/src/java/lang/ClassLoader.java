@@ -98,6 +98,11 @@ public class ClassLoader
         return loadClass(name, false);
     }
 
+    protected Object getClassLoadingLock(String className)
+    {
+        return this;
+    }
+
     protected synchronized Class<?> loadClass(String name, boolean resolve)
         throws ClassNotFoundException
     {

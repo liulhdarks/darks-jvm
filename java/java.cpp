@@ -225,6 +225,12 @@ static int run_class(const string &class_name, int argc, char **argv)
 		exec->Execute(clazz, clazz->mainMethod, &args_var, 1);
 		if (!VMContext::pending_exception)
 		{
+			// The JVM stays alive while non-daemon threads are still running;
+			// main returning is not process termination (e.g. embedded servers).
+			Scheduler::Instance().RunNonDaemonThreads();
+		}
+		if (!VMContext::pending_exception)
+		{
 			// Normal termination runs the hooks registered through
 			// Runtime.addShutdownHook on their own threads before teardown.
 			lpClass runtime_class = NULL;

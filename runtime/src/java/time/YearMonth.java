@@ -1,7 +1,8 @@
 package java.time;
 
 /** Minimal year-month value object. */
-public final class YearMonth implements Comparable<YearMonth>
+public final class YearMonth implements java.time.temporal.TemporalAccessor,
+        Comparable<YearMonth>
 {
     private final int year;
     private final int month;
@@ -65,6 +66,27 @@ public final class YearMonth implements Comparable<YearMonth>
             }
             throw ex;
         }
+    }
+
+    public static YearMonth parse(CharSequence text,
+            java.time.format.DateTimeFormatter formatter)
+    {
+        if (formatter == null)
+        {
+            throw new NullPointerException("formatter");
+        }
+        Object parsed = formatter.parse(text);
+        if (parsed instanceof YearMonth)
+        {
+            return (YearMonth) parsed;
+        }
+        if (parsed instanceof LocalDate)
+        {
+            LocalDate date = (LocalDate) parsed;
+            return of(date.getYear(), date.getMonthValue());
+        }
+        throw new java.time.format.DateTimeParseException(
+            "Invalid year-month", text == null ? "null" : text.toString(), 0);
     }
 
     public int getYear()

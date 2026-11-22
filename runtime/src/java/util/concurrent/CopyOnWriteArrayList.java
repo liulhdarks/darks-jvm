@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.NoSuchElementException;
 
 /**
@@ -363,6 +364,85 @@ public class CopyOnWriteArrayList<E> implements List<E>
                 throw new UnsupportedOperationException();
             }
         };
+    }
+
+    public ListIterator<E> listIterator()
+    {
+        return listIterator(0);
+    }
+
+    public ListIterator<E> listIterator(int index)
+    {
+        return new ListItr(toArray(), index);
+    }
+
+    private static final class ListItr<E> implements ListIterator<E>
+    {
+        private final Object[] snapshot;
+        private int cursor;
+
+        ListItr(Object[] snapshot, int index)
+        {
+            if (index < 0 || index > snapshot.length)
+            {
+                throw new IndexOutOfBoundsException("Index: " + index);
+            }
+            this.snapshot = snapshot;
+            this.cursor = index;
+        }
+
+        public boolean hasNext()
+        {
+            return cursor < snapshot.length;
+        }
+
+        public E next()
+        {
+            if (cursor >= snapshot.length)
+            {
+                throw new NoSuchElementException();
+            }
+            return (E)snapshot[cursor++];
+        }
+
+        public boolean hasPrevious()
+        {
+            return cursor > 0;
+        }
+
+        public E previous()
+        {
+            if (cursor <= 0)
+            {
+                throw new NoSuchElementException();
+            }
+            return (E)snapshot[--cursor];
+        }
+
+        public int nextIndex()
+        {
+            return cursor;
+        }
+
+        public int previousIndex()
+        {
+            return cursor - 1;
+        }
+
+        public void remove()
+        {
+            throw new UnsupportedOperationException();
+        }
+
+        public void set(E value)
+        {
+            throw new UnsupportedOperationException();
+        }
+
+        public void add(E value)
+        {
+            throw new UnsupportedOperationException();
+        }
     }
 
     public String toString()

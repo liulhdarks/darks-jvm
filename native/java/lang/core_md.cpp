@@ -699,6 +699,15 @@ JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_defineClass0(JNIEnv *env,
 	}
 	if (!initialized)
 	{
+		if (getenv("DARKS_JVM_TRACE_DEFINE") && clazz && clazz->thisClass && clazz->thisClass->GetName())
+		{
+			fprintf(stderr, "[trace defineClass0] failed to initialize %s\n", clazz->thisClass->GetName());
+			if (VMContext::pending_exception)
+			{
+				PrintUncaughtException(VMContext::pending_exception);
+			}
+			fflush(stderr);
+		}
 		// Leave the initialization error pending so the Java frame that called
 		// defineClass observes it; returning a mirror would let the caller
 		// continue with a class whose static state is only half built.

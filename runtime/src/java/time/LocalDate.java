@@ -65,6 +65,31 @@ public final class LocalDate implements java.time.temporal.Temporal,
         return LocalDateTime.now().toLocalDate();
     }
 
+    public static LocalDate from(java.time.temporal.TemporalAccessor temporal)
+    {
+        if (temporal == null)
+        {
+            throw new NullPointerException("temporal");
+        }
+        if (temporal instanceof LocalDate)
+        {
+            return (LocalDate)temporal;
+        }
+        if (temporal instanceof LocalDateTime)
+        {
+            return ((LocalDateTime)temporal).toLocalDate();
+        }
+        if (temporal instanceof ZonedDateTime)
+        {
+            return ((ZonedDateTime)temporal).toLocalDate();
+        }
+        if (temporal instanceof OffsetDateTime)
+        {
+            return ((OffsetDateTime)temporal).toLocalDateTime().toLocalDate();
+        }
+        throw new DateTimeException("Unable to obtain LocalDate from TemporalAccessor");
+    }
+
     public static LocalDate parse(CharSequence text)
     {
         if (text == null)

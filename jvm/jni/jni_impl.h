@@ -105,6 +105,8 @@ lpClass JniFindClass(JNIEnv *env, const char *name);
 // Recursive method/field lookup (class chain included).
 lpMethod JniFindMethod(lpClass clazz, const char *name, const char *sig, bool isStatic);
 lpField JniFindField(lpClass clazz, const char *name, const char *sig, bool isStatic);
+// Class or interface that declares the field (searches superinterfaces too).
+lpClass JniDeclaringFieldClass(lpClass clazz, lpField field);
 
 // String helpers.
 bool JniStringChars(LPOBJECT_REF string_ref, jchar **chars, jsize *length);
