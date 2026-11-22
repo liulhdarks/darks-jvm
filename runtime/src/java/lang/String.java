@@ -756,6 +756,26 @@ public final class String implements Comparable<String>, CharSequence
         return true;
     }
 
+    public void getChars(int srcBegin, int srcEnd, char[] dst, int dstBegin)
+    {
+        if (srcBegin < 0 || srcEnd > value.length || srcBegin > srcEnd)
+        {
+            throw new StringIndexOutOfBoundsException("range");
+        }
+        if (dstBegin < 0 || dstBegin + (srcEnd - srcBegin) > dst.length)
+        {
+            throw new ArrayIndexOutOfBoundsException("dstBegin");
+        }
+        int i = srcBegin;
+        int j = dstBegin;
+        while (i < srcEnd)
+        {
+            dst[j] = value[i];
+            i = i + 1;
+            j = j + 1;
+        }
+    }
+
     public char[] toCharArray()
     {
         char[] result = new char[value.length];

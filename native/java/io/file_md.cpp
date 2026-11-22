@@ -147,6 +147,36 @@ jboolean JNICALL Java_java_io_File_isDirectory0(JNIEnv *env, jobject thiz)
 	return is_dir ? JNI_TRUE : JNI_FALSE;
 }
 
+jboolean JNICALL Java_java_io_File_canRead0(JNIEnv *env, jobject thiz)
+{
+	std::string path = FilePath(env, thiz);
+#if defined(_WIN32)
+	return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES ? JNI_TRUE : JNI_FALSE;
+#else
+	return access(path.c_str(), R_OK) == 0 ? JNI_TRUE : JNI_FALSE;
+#endif
+}
+
+jboolean JNICALL Java_java_io_File_canWrite0(JNIEnv *env, jobject thiz)
+{
+	std::string path = FilePath(env, thiz);
+#if defined(_WIN32)
+	return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES ? JNI_TRUE : JNI_FALSE;
+#else
+	return access(path.c_str(), W_OK) == 0 ? JNI_TRUE : JNI_FALSE;
+#endif
+}
+
+jboolean JNICALL Java_java_io_File_canExecute0(JNIEnv *env, jobject thiz)
+{
+	std::string path = FilePath(env, thiz);
+#if defined(_WIN32)
+	return GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES ? JNI_TRUE : JNI_FALSE;
+#else
+	return access(path.c_str(), X_OK) == 0 ? JNI_TRUE : JNI_FALSE;
+#endif
+}
+
 jlong JNICALL Java_java_io_File_length0(JNIEnv *env, jobject thiz)
 {
 	bool is_file = false;

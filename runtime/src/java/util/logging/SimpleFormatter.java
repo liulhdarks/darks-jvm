@@ -8,7 +8,11 @@ public class SimpleFormatter extends Formatter
         sb.append(record.getLevel().getName()).append(": ").append(formatMessage(record)).append("\n");
         if (record.getThrown() != null)
         {
-            sb.append(record.getThrown().toString()).append("\n");
+            java.io.StringWriter buffer = new java.io.StringWriter();
+            java.io.PrintWriter writer = new java.io.PrintWriter(buffer);
+            record.getThrown().printStackTrace(writer);
+            writer.flush();
+            sb.append(buffer.toString());
         }
         return sb.toString();
     }

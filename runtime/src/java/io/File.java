@@ -140,6 +140,21 @@ public class File
         return isDirectory0();
     }
 
+    public boolean canRead()
+    {
+        return canRead0();
+    }
+
+    public boolean canWrite()
+    {
+        return canWrite0();
+    }
+
+    public boolean canExecute()
+    {
+        return canExecute0();
+    }
+
     public long length()
     {
         return length0();
@@ -164,6 +179,12 @@ public class File
     {
         return list0();
     }
+
+    private native boolean canRead0();
+
+    private native boolean canWrite0();
+
+    private native boolean canExecute0();
 
     public boolean createNewFile() throws java.io.IOException
     {

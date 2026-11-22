@@ -7,7 +7,21 @@ public class ByteArrayOutputStream extends OutputStream
 
     public ByteArrayOutputStream()
     {
-        data = new byte[32];
+        this(32);
+    }
+
+    public ByteArrayOutputStream(int size)
+    {
+        if (size < 0)
+        {
+            throw new IllegalArgumentException("size");
+        }
+        data = new byte[size > 0 ? size : 1];
+    }
+
+    public void reset()
+    {
+        count = 0;
     }
 
     private void ensure(int needed)

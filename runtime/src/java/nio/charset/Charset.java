@@ -1,5 +1,8 @@
 package java.nio.charset;
 
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+
 public class Charset implements Comparable<Charset>
 {
     static final int UTF8 = 0;
@@ -12,6 +15,11 @@ public class Charset implements Comparable<Charset>
     private final String name;
     private final String[] aliases;
     private final int kind;
+
+    protected Charset(String name, String[] aliases)
+    {
+        this(name, aliases, UTF8);
+    }
 
     protected Charset(String name, String[] aliases, int kind)
     {
@@ -28,11 +36,14 @@ public class Charset implements Comparable<Charset>
     public final java.util.Set<String> aliases()
     {
         java.util.HashSet<String> set = new java.util.HashSet<String>();
-        int i = 0;
-        while (i < aliases.length)
+        if (aliases != null)
         {
-            set.add(aliases[i]);
-            i = i + 1;
+            int i = 0;
+            while (i < aliases.length)
+            {
+                set.add(aliases[i]);
+                i = i + 1;
+            }
         }
         return set;
     }
@@ -50,6 +61,21 @@ public class Charset implements Comparable<Charset>
     public boolean canEncode()
     {
         return true;
+    }
+
+    public final CharBuffer decode(ByteBuffer buffer) throws CharacterCodingException
+    {
+        return newDecoder().decode(buffer);
+    }
+
+    public CharsetDecoder newDecoder()
+    {
+        return new CharsetDecoder(this);
+    }
+
+    public CharsetEncoder newEncoder()
+    {
+        return new CharsetEncoder(this);
     }
 
     public boolean contains(Charset other)

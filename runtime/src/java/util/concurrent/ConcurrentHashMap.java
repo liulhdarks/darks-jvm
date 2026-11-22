@@ -314,6 +314,85 @@ public class ConcurrentHashMap<K, V> implements ConcurrentMap<K, V>
         }
     }
 
+    public static <K> KeySetView<K, Boolean> newKeySet()
+    {
+        return new KeySetView<K, Boolean>(new ConcurrentHashMap<K, Boolean>(),
+            Boolean.TRUE);
+    }
+
+    public static <K> KeySetView<K, Boolean> newKeySet(int initialCapacity)
+    {
+        return new KeySetView<K, Boolean>(
+            new ConcurrentHashMap<K, Boolean>(initialCapacity), Boolean.TRUE);
+    }
+
+    public static final class KeySetView<K, V> extends java.util.AbstractSet<K>
+    {
+        private final ConcurrentHashMap<K, V> map;
+        private final V value;
+
+        KeySetView(ConcurrentHashMap<K, V> map, V value)
+        {
+            this.map = map;
+            this.value = value;
+        }
+
+        public V getMappedValue()
+        {
+            return value;
+        }
+
+        public boolean add(K key)
+        {
+            return map.put(key, value) == null;
+        }
+
+        public boolean contains(Object key)
+        {
+            return map.containsKey(key);
+        }
+
+        public boolean remove(Object key)
+        {
+            return map.remove(key) != null;
+        }
+
+        public java.util.Iterator<K> iterator()
+        {
+            return map.keySet().iterator();
+        }
+
+        public int size()
+        {
+            return map.size();
+        }
+
+        public boolean isEmpty()
+        {
+            return map.isEmpty();
+        }
+
+        public void clear()
+        {
+            map.clear();
+        }
+
+        public boolean removeIf(java.util.function.Predicate<? super K> filter)
+        {
+            boolean removed = false;
+            java.util.Iterator<K> keys = map.keySet().iterator();
+            while (keys.hasNext())
+            {
+                if (filter.test(keys.next()))
+                {
+                    keys.remove();
+                    removed = true;
+                }
+            }
+            return removed;
+        }
+    }
+
     public Set<K> keySet()
     {
         synchronized (lock)

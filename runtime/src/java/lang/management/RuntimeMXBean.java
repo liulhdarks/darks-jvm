@@ -1,5 +1,8 @@
 package java.lang.management;
 
+import java.util.List;
+import java.util.Map;
+
 public interface RuntimeMXBean
 {
     String getName();
@@ -20,17 +23,17 @@ public interface RuntimeMXBean
 
     long getUptime();
 
-    java.util.List<String> getInputArguments();
+    long getPid();
 
-    java.util.Map<String, String> getSystemProperties();
+    List<String> getInputArguments();
+
+    Map<String, String> getSystemProperties();
 
     String getClassPath();
 
-    String getLibraryPath();
-
     String getBootClassPath();
 
-    boolean isBootClassPathSupported();
+    String getLibraryPath();
 
     String getManagementSpecVersion();
 }

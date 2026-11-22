@@ -1,44 +1,25 @@
 package java.lang.management;
 
+import javax.management.MBeanServer;
+import javax.management.MBeanServerFactory;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 
 public final class ManagementFactory
 {
-    private static final long START_TIME = System.currentTimeMillis();
-
-    private ManagementFactory()
-    {
-    }
-
-    public static RuntimeMXBean getRuntimeMXBean()
-    {
-        return RuntimeBean.INSTANCE;
-    }
-
-    public static OperatingSystemMXBean getOperatingSystemMXBean()
-    {
-        return OperatingSystemBean.INSTANCE;
-    }
+    private static MBeanServer platformServer;
+    private static final RuntimeMXBean RUNTIME = new RuntimeBean();
+    private static final ThreadMXBean THREADS = new ThreadsBean();
 
     private static final class RuntimeBean implements RuntimeMXBean
     {
-        static final RuntimeBean INSTANCE = new RuntimeBean();
+        private final long startTime = System.currentTimeMillis();
 
         public String getName()
         {
-            String host = "localhost";
-            try
-            {
-                host = java.net.InetAddress.getLocalHost().getHostName();
-            }
-            catch (Throwable ignored)
-            {
-            }
-            return host + "@darks-jvm";
+            return "darks-jvm@" + getPid();
         }
 
         public String getVmName()
@@ -48,12 +29,12 @@ public final class ManagementFactory
 
         public String getVmVendor()
         {
-            return "darks-jvm";
+            return "darks";
         }
 
         public String getVmVersion()
         {
-            return System.getProperty("java.vm.version");
+            return System.getProperty("java.version", "1.8.0");
         }
 
         public String getSpecName()
@@ -73,12 +54,17 @@ public final class ManagementFactory
 
         public long getStartTime()
         {
-            return START_TIME;
+            return startTime;
         }
 
         public long getUptime()
         {
-            return System.currentTimeMillis() - START_TIME;
+            return System.currentTimeMillis() - startTime;
+        }
+
+        public long getPid()
+        {
+            return 1L;
         }
 
         public List<String> getInputArguments()
@@ -88,79 +74,104 @@ public final class ManagementFactory
 
         public Map<String, String> getSystemProperties()
         {
-            Map<String, String> result = new HashMap<String, String>();
-            Properties properties = System.getProperties();
-            java.util.Iterator<Object> iterator = properties.keySet().iterator();
-            while (iterator.hasNext())
-            {
-                Object key = iterator.next();
-                if (key instanceof String)
-                {
-                    Object value = properties.get(key);
-                    result.put((String)key, value == null ? null : value.toString());
-                }
-            }
-            return result;
+            return new HashMap<String, String>();
         }
 
         public String getClassPath()
         {
-            String value = System.getProperty("java.class.path");
-            return value == null ? "" : value;
-        }
-
-        public String getLibraryPath()
-        {
-            String value = System.getProperty("java.library.path");
-            return value == null ? "" : value;
+            return System.getProperty("java.class.path", "");
         }
 
         public String getBootClassPath()
         {
-            throw new UnsupportedOperationException("boot class path is not supported");
+            return "";
         }
 
-        public boolean isBootClassPathSupported()
+        public String getLibraryPath()
         {
-            return false;
+            return System.getProperty("java.library.path", "");
         }
 
         public String getManagementSpecVersion()
         {
-            return "1.4";
+            return "1.2";
         }
     }
 
-    private static final class OperatingSystemBean implements OperatingSystemMXBean
+    private static final class ThreadsBean implements ThreadMXBean
     {
-        static final OperatingSystemBean INSTANCE = new OperatingSystemBean();
-
-        public String getName()
+        public int getThreadCount()
         {
-            String value = System.getProperty("os.name");
-            return value == null ? "unknown" : value;
+            return 1;
         }
 
-        public String getArch()
+        public int getPeakThreadCount()
         {
-            String value = System.getProperty("os.arch");
-            return value == null ? "unknown" : value;
+            return 1;
         }
 
-        public String getVersion()
+        public long getTotalStartedThreadCount()
         {
-            String value = System.getProperty("os.version");
-            return value == null ? "" : value;
+            return 1L;
         }
 
-        public int getAvailableProcessors()
+        public long[] getAllThreadIds()
         {
-            return Runtime.getRuntime().availableProcessors();
+            return new long[] { Thread.currentThread().getId() };
         }
 
-        public double getSystemLoadAverage()
+        public ThreadInfo getThreadInfo(long id)
         {
-            return -1.0d;
+            return new ThreadInfo(id, Thread.currentThread().getName(),
+                                  Thread.currentThread().getState());
         }
+
+        public ThreadInfo getThreadInfo(long id, int maxDepth)
+        {
+            return getThreadInfo(id);
+        }
+
+        public boolean isThreadCpuTimeSupported()
+        {
+            return false;
+        }
+
+        public boolean isCurrentThreadCpuTimeSupported()
+        {
+            return false;
+        }
+
+        public long getCurrentThreadCpuTime()
+        {
+            return -1L;
+        }
+
+        public long getThreadCpuTime(long id)
+        {
+            return -1L;
+        }
+    }
+
+    private ManagementFactory()
+    {
+    }
+
+    public static synchronized MBeanServer getPlatformMBeanServer()
+    {
+        if (platformServer == null)
+        {
+            platformServer = MBeanServerFactory.createMBeanServer("DefaultDomain");
+        }
+        return platformServer;
+    }
+
+    public static RuntimeMXBean getRuntimeMXBean()
+    {
+        return RUNTIME;
+    }
+
+    public static ThreadMXBean getThreadMXBean()
+    {
+        return THREADS;
     }
 }

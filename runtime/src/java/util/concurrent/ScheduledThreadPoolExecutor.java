@@ -176,13 +176,20 @@ public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor
 
         public V get() throws InterruptedException, ExecutionException
         {
-            synchronized (this)
+            // Poll instead of Object.wait(): a wait/notify handoff can move a
+            // parked coroutine back into the ready queue while its carrier is
+            // still unwinding the parked native frame, which leaves the
+            // dispatch queue with an entry for a running coroutine.
+            for (;;)
             {
-                while (!done && !cancelled)
+                synchronized (this)
                 {
-                    wait();
+                    if (done || cancelled)
+                    {
+                        return report();
+                    }
                 }
-                return report();
+                Thread.sleep(1);
             }
         }
 
@@ -190,18 +197,20 @@ public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor
             throws InterruptedException, ExecutionException, TimeoutException
         {
             long deadline = System.currentTimeMillis() + unit.toMillis(timeout);
-            synchronized (this)
+            for (;;)
             {
-                while (!done && !cancelled)
+                synchronized (this)
                 {
-                    long remaining = deadline - System.currentTimeMillis();
-                    if (remaining <= 0)
+                    if (done || cancelled)
                     {
-                        throw new TimeoutException("task did not complete in time");
+                        return report();
                     }
-                    wait(remaining);
                 }
-                return report();
+                if (System.currentTimeMillis() >= deadline)
+                {
+                    throw new TimeoutException("task did not complete in time");
+                }
+                Thread.sleep(1);
             }
         }
 
@@ -363,7 +372,6 @@ public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor
             }
             task.sequence = taskSequence++;
             insertSorted(task);
-            tasksLock.notifyAll();
         }
         startTimer();
         return task;
@@ -381,76 +389,67 @@ public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor
 
     private void startTimer()
     {
+        Thread threadToStart;
         synchronized (tasksLock)
         {
-            if (timerThread == null && !stopped)
+            if (timerThread != null || stopped)
             {
-                timerThread = getThreadFactory().newThread(timerLoop);
-                timerThread.start();
+                return;
             }
+            timerThread = getThreadFactory().newThread(timerLoop);
+            threadToStart = timerThread;
         }
+        // Start the timer coroutine outside the lock: the new thread enters
+        // timerMain and takes tasksLock before doing any work, so starting it
+        // while holding the monitor would deadlock a cooperative scheduler.
+        threadToStart.start();
     }
 
     private void timerMain()
     {
         while (true)
         {
-            ScheduledTask<?> task;
+            ScheduledTask<?> due = null;
             synchronized (tasksLock)
             {
-                while (true)
+                if (stopped)
                 {
-                    if (stopped)
-                    {
-                        return;
-                    }
-                    if (tasks.isEmpty())
-                    {
-                        try
-                        {
-                            tasksLock.wait();
-                        }
-                        catch (InterruptedException interrupted)
-                        {
-                            if (stopped)
-                            {
-                                return;
-                            }
-                        }
-                        continue;
-                    }
-                    task = tasks.get(0);
-                    if (task.isCancelled())
+                    return;
+                }
+                if (!tasks.isEmpty())
+                {
+                    ScheduledTask<?> head = tasks.get(0);
+                    if (head.time - System.currentTimeMillis() <= 0)
                     {
                         tasks.remove(0);
-                        continue;
-                    }
-                    long delay = task.time - System.currentTimeMillis();
-                    if (delay <= 0)
-                    {
-                        tasks.remove(0);
-                        break;
-                    }
-                    try
-                    {
-                        tasksLock.wait(delay);
-                    }
-                    catch (InterruptedException interrupted)
-                    {
-                        if (stopped)
-                        {
-                            return;
-                        }
+                        due = head;
                     }
                 }
             }
+            if (due != null)
+            {
+                try
+                {
+                    super.execute(due);
+                }
+                catch (RejectedExecutionException rejected)
+                {
+                    due.fail(rejected);
+                }
+                continue;
+            }
+            // Sleep outside the monitor: wait()/notify() handoffs are avoided
+            // entirely, so the timer never parks while holding tasksLock.
             try
             {
-                super.execute(task);
+                Thread.sleep(1);
             }
-            catch (RejectedExecutionException rejected)
+            catch (InterruptedException interrupted)
             {
-                task.fail(rejected);
+                if (stopped)
+                {
+                    return;
+                }
             }
         }
     }
@@ -465,7 +464,6 @@ public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor
             }
             task.computeNextTime(System.currentTimeMillis());
             insertSorted(task);
-            tasksLock.notifyAll();
         }
     }
 
@@ -474,7 +472,6 @@ public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor
         synchronized (tasksLock)
         {
             tasks.remove(task);
-            tasksLock.notifyAll();
         }
     }
 
@@ -490,7 +487,6 @@ public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor
             {
                 timerThread.interrupt();
             }
-            tasksLock.notifyAll();
         }
         for (int i = 0; i < pending.size(); i++)
         {
@@ -557,6 +553,24 @@ public class ScheduledThreadPoolExecutor extends ThreadPoolExecutor
     public boolean getRemoveOnCancelPolicy()
     {
         return true;
+    }
+
+    public void setExecuteExistingDelayedTasksAfterShutdownPolicy(boolean value)
+    {
+    }
+
+    public boolean getExecuteExistingDelayedTasksAfterShutdownPolicy()
+    {
+        return true;
+    }
+
+    public void setContinueExistingPeriodicTasksAfterShutdownPolicy(boolean value)
+    {
+    }
+
+    public boolean getContinueExistingPeriodicTasksAfterShutdownPolicy()
+    {
+        return false;
     }
 
     public String toString()

@@ -21,6 +21,23 @@ public class EnumSet<E extends Enum<E>> extends AbstractSet<E>
         return new EnumSet<E>(elementType);
     }
 
+    public static <E extends Enum<E>> EnumSet<E> allOf(Class<E> elementType)
+    {
+        EnumSet<E> set = noneOf(elementType);
+        E[] constants = elementType.getEnumConstants();
+        if (constants == null)
+        {
+            throw new IllegalArgumentException("not an enum type");
+        }
+        int i = 0;
+        while (i < constants.length)
+        {
+            set.add(constants[i]);
+            i = i + 1;
+        }
+        return set;
+    }
+
     public static <E extends Enum<E>> EnumSet<E> of(E first)
     {
         EnumSet<E> set = noneOf(elementTypeOf(first));

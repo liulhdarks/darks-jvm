@@ -25,6 +25,40 @@ public abstract class Reader
         return count == 0 ? -1 : count;
     }
 
+    public boolean markSupported()
+    {
+        return false;
+    }
+
+    public void mark(int readAheadLimit) throws IOException
+    {
+        throw new IOException("mark not supported");
+    }
+
+    public void reset() throws IOException
+    {
+        throw new IOException("reset not supported");
+    }
+
+    public long skip(long count) throws IOException
+    {
+        long skipped = 0;
+        while (skipped < count)
+        {
+            if (read() < 0)
+            {
+                break;
+            }
+            skipped = skipped + 1;
+        }
+        return skipped;
+    }
+
+    public boolean ready() throws IOException
+    {
+        return false;
+    }
+
     public void close() throws IOException
     {
     }
