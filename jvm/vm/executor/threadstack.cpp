@@ -67,6 +67,20 @@ bool ThreadStack::HoldsMonitor() const
 	return false;
 }
 
+void ThreadStack::ReleaseMonitors()
+{
+	std::stack<lpStackFrame> copy = frames;
+	while (!copy.empty())
+	{
+		lpStackFrame frame = copy.top();
+		copy.pop();
+		if (frame)
+		{
+			Scheduler::Instance().ReleaseFrameMonitors(frame);
+		}
+	}
+}
+
 lpClassLoader ThreadStack::TopFrameClassLoader() const
 {
 	if (frames.empty())

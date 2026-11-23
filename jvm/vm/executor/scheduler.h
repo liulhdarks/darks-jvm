@@ -282,6 +282,12 @@ private:
 	// enqueue sequence).  All wakeups must go through this helper so ordering
 	// is consistent.
 	void PushReady(lpCoroutine co, size_t hint);
+	// Drops every ready-queue entry of co and clears its queued flag.  A
+	// coroutine that parks, or that resumes directly from its own suspended
+	// invocation, must not be left in a ready queue: the stale entry would be
+	// claimed later, and a busy entry at the head would hide the runnable
+	// entries behind it.  Caller holds the scheduler lock.
+	void ForgetReady(lpCoroutine co);
 	// Advances the virtual clock to the earliest pending timer.  Returns false
 	// when there is nothing to advance to.
 	bool AdvanceVirtualTimeLocked();

@@ -90,6 +90,12 @@ public:
 	// while holding a monitor may pin the carrier thread.
 	bool HoldsMonitor() const;
 
+	// Releases every monitor still recorded on the stack.  Called when a
+	// coroutine terminates with frames left (uncaught exception unwinding
+	// stops at the outermost frame): a dead thread must not keep a monitor
+	// owned, or nobody can ever enter the synchronized region again.
+	void ReleaseMonitors();
+
 	// Class loader of the innermost frame, used to resolve Class.forName and
 	// other symbolic lookups performed from that frame's code.
 	lpClassLoader TopFrameClassLoader() const;

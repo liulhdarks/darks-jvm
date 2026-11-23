@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <map>
+#include <mutex>
 
 #ifdef DARKS_HAVE_PCRE2
 #define PCRE2_CODE_UNIT_WIDTH 32
@@ -1083,6 +1085,39 @@ std::string Utf8Of(const std::wstring &text)
 	return out;
 }
 
+// Process-lifetime store of compiled patterns.  Every handle returned to
+// java.util.regex.Pattern lives here, so the allocations stay reachable and
+// are shared by all Pattern objects with the same expression and flags.
+std::mutex g_regex_cache_mutex;
+std::map<std::string, CompiledRegex *> g_regex_cache;
+
+struct RegexCacheCleanup
+{
+	~RegexCacheCleanup()
+	{
+		for (std::map<std::string, CompiledRegex *>::iterator it =
+			     g_regex_cache.begin();
+		     it != g_regex_cache.end(); ++it)
+		{
+			delete it->second;
+		}
+		g_regex_cache.clear();
+	}
+};
+
+RegexCacheCleanup g_regex_cache_cleanup;
+
+std::string RegexCacheKey(const std::wstring &source, int flags)
+{
+	std::string key = Utf8Of(source);
+	key.push_back('\0');
+	for (int i = 0; i < 4; i++)
+	{
+		key.push_back(static_cast<char>((flags >> (i * 8)) & 0xFF));
+	}
+	return key;
+}
+
 } // namespace
 
 extern "C" JNIEXPORT jlong JNICALL Java_java_util_regex_Pattern_nativeCompile
@@ -1108,6 +1143,22 @@ extern "C" JNIEXPORT jlong JNICALL Java_java_util_regex_Pattern_nativeCompile
 	source = AdjustPattern(source, flags);
 	source = TranslateUnicodeProperties(source);
 
+	// Pattern stores only the integer handle and the runtime has no
+	// finalization, so a compiled handle could never be freed once the Java
+	// object became garbage.  Intern by (translated expression, flags)
+	// instead: identical patterns share one handle, which also avoids
+	// recompiling patterns that String.split and matcher helpers rebuild.
+	std::string cache_key = RegexCacheKey(source, flags);
+	{
+		std::lock_guard<std::mutex> lk(g_regex_cache_mutex);
+		std::map<std::string, CompiledRegex *>::iterator it =
+			g_regex_cache.find(cache_key);
+		if (it != g_regex_cache.end())
+		{
+			return static_cast<jlong>(reinterpret_cast<intptr_t>(it->second));
+		}
+	}
+
 	std::regex_constants::syntax_option_type options =
 		std::regex_constants::ECMAScript;
 	if ((flags & FLAG_CASE_INSENSITIVE) != 0)
@@ -1119,7 +1170,6 @@ extern "C" JNIEXPORT jlong JNICALL Java_java_util_regex_Pattern_nativeCompile
 	{
 		compiled->std_regex = new std::wregex(source, options);
 		compiled->group_count = static_cast<int>(compiled->std_regex->mark_count());
-		return static_cast<jlong>(reinterpret_cast<intptr_t>(compiled));
 	}
 	catch (const std::regex_error &error)
 	{
@@ -1165,21 +1215,23 @@ extern "C" JNIEXPORT jlong JNICALL Java_java_util_regex_Pattern_nativeCompile
 			uint32_t capture_count = 0;
 			pcre2_pattern_info(code, PCRE2_INFO_CAPTURECOUNT, &capture_count);
 			compiled->group_count = static_cast<int>(capture_count);
-			return static_cast<jlong>(reinterpret_cast<intptr_t>(compiled));
 		}
-		PCRE2_UCHAR buffer[256];
-		pcre2_get_error_message(error_code, buffer, sizeof(buffer));
-		std::string message = Utf8Of(source);
-		message += ": ";
-		message += Utf8Of(std::wstring(reinterpret_cast<wchar_t *>(buffer)));
-		jclass error_class = reinterpret_cast<jclass>(
-			JniFindClass(env, "java/util/regex/PatternSyntaxException"));
-		if (error_class)
+		else
 		{
-			env->ThrowNew(error_class, message.c_str());
+			PCRE2_UCHAR buffer[256];
+			pcre2_get_error_message(error_code, buffer, sizeof(buffer));
+			std::string message = Utf8Of(source);
+			message += ": ";
+			message += Utf8Of(std::wstring(reinterpret_cast<wchar_t *>(buffer)));
+			jclass error_class = reinterpret_cast<jclass>(
+				JniFindClass(env, "java/util/regex/PatternSyntaxException"));
+			if (error_class)
+			{
+				env->ThrowNew(error_class, message.c_str());
+			}
+			delete compiled;
+			return 0;
 		}
-		delete compiled;
-		return 0;
 #else
 		std::string message = Utf8Of(source);
 		message += ": ";
@@ -1196,6 +1248,7 @@ extern "C" JNIEXPORT jlong JNICALL Java_java_util_regex_Pattern_nativeCompile
 	}
 	catch (const std::bad_alloc &)
 	{
+		delete compiled;
 		jclass error_class = reinterpret_cast<jclass>(
 			JniFindClass(env, "java/lang/OutOfMemoryError"));
 		if (error_class)
@@ -1204,6 +1257,20 @@ extern "C" JNIEXPORT jlong JNICALL Java_java_util_regex_Pattern_nativeCompile
 		}
 		return 0;
 	}
+
+	{
+		std::lock_guard<std::mutex> lk(g_regex_cache_mutex);
+		std::pair<std::map<std::string, CompiledRegex *>::iterator, bool> inserted =
+			g_regex_cache.insert(std::make_pair(cache_key, compiled));
+		if (!inserted.second)
+		{
+			// Another thread compiled the same expression first; keep the
+			// canonical handle so the cache is the only owner.
+			delete compiled;
+			compiled = inserted.first->second;
+		}
+	}
+	return static_cast<jlong>(reinterpret_cast<intptr_t>(compiled));
 }
 
 extern "C" JNIEXPORT void JNICALL Java_java_util_regex_Pattern_nativeFree
@@ -1211,7 +1278,23 @@ extern "C" JNIEXPORT void JNICALL Java_java_util_regex_Pattern_nativeFree
 {
 	(void)env;
 	(void)clazz;
-	delete WideRegexHandle(handle);
+	CompiledRegex *regex = WideRegexHandle(handle);
+	if (!regex)
+	{
+		return;
+	}
+	// Handles are interned and may be shared with other Pattern objects, so
+	// only a handle that never entered the cache can be destroyed here.
+	std::lock_guard<std::mutex> lk(g_regex_cache_mutex);
+	for (std::map<std::string, CompiledRegex *>::iterator it = g_regex_cache.begin();
+	     it != g_regex_cache.end(); ++it)
+	{
+		if (it->second == regex)
+		{
+			return;
+		}
+	}
+	delete regex;
 }
 
 extern "C" JNIEXPORT jint JNICALL Java_java_util_regex_Pattern_nativeGroupCount

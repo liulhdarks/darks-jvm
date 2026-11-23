@@ -13,6 +13,10 @@ class BaseMBeanServer implements MBeanServer
     BaseMBeanServer(String domain)
     {
         this.domain = domain == null ? "DefaultDomain" : domain;
+        // The JDK registers the standard delegate in every MBeanServer it
+        // creates, so a fresh server reports one MBean and code that looks the
+        // delegate up by name finds it.
+        this.beans.put(MBeanServerDelegate.DELEGATE_NAME, new MBeanServerDelegate());
     }
 
     public String getDefaultDomain()

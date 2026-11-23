@@ -28,6 +28,11 @@ public final class ZonedDateTime implements java.time.temporal.Temporal,
         return new ZonedDateTime(dateTime, zone);
     }
 
+    public static ZonedDateTime of(LocalDate date, LocalTime time, ZoneId zone)
+    {
+        return of(LocalDateTime.of(date, time), zone);
+    }
+
     public static ZonedDateTime of(int year, int month, int day, int hour,
                                    int minute, int second, int nano, ZoneId zone)
     {

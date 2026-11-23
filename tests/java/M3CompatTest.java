@@ -245,16 +245,18 @@ public class M3CompatTest
 
         MBeanServer server = MBeanServerFactory.createMBeanServer("m3compat");
         check("default domain", "m3compat".equals(server.getDefaultDomain()));
-        check("initial count", server.getMBeanCount().intValue() == 0);
+        // A freshly created server already holds the MBeanServerDelegate, as
+        // in the JDK; the counts below are relative to that baseline.
+        check("initial count", server.getMBeanCount().intValue() == 1);
 
         ObjectName name = new ObjectName("m3compat:type=Probe");
         ObjectInstance instance = server.registerMBean(new Object(), name);
         check("registered", server.isRegistered(name));
-        check("count after register", server.getMBeanCount().intValue() == 1);
+        check("count after register", server.getMBeanCount().intValue() == 2);
         check("instance name", instance.getObjectName().equals(name));
         server.unregisterMBean(name);
         check("unregistered", !server.isRegistered(name));
-        check("count after unregister", server.getMBeanCount().intValue() == 0);
+        check("count after unregister", server.getMBeanCount().intValue() == 1);
 
         final int[] calls = new int[1];
         MBeanRegistration bean = new MBeanRegistration() {

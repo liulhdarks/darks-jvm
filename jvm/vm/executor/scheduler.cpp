@@ -866,6 +866,38 @@ void Scheduler::PushReady(lpCoroutine co, size_t hint)
 	co->queued = true;
 }
 
+void Scheduler::ForgetReady(lpCoroutine co)
+{
+	if (!impl || !co)
+	{
+		return;
+	}
+	if (impl->deterministic)
+	{
+		for (std::multimap<ReadyKey, lpCoroutine>::iterator it = impl->ready.begin();
+		     it != impl->ready.end();)
+		{
+			if (it->second == co)
+			{
+				it = impl->ready.erase(it);
+			}
+			else
+			{
+				++it;
+			}
+		}
+	}
+	else
+	{
+		for (size_t i = 0; i < impl->queues.size(); i++)
+		{
+			std::deque<lpCoroutine> &dq = impl->queues[i];
+			dq.erase(std::remove(dq.begin(), dq.end(), co), dq.end());
+		}
+	}
+	co->queued = false;
+}
+
 bool Scheduler::TakeReady(int worker_index, lpCoroutine &co)
 {
 	if (!impl)
@@ -882,6 +914,10 @@ bool Scheduler::TakeReady(int worker_index, lpCoroutine &co)
 			bool expected = false;
 			if (!c->busy.compare_exchange_strong(expected, true))
 			{
+				// Another worker still owns the coroutine (it may be
+				// unwinding RunOne after a handoff pushed this entry).
+				// Leave the entry in place; its owner will either consume it
+				// or the park path will drop it.
 				continue;
 			}
 			c->queued = false;
@@ -913,6 +949,8 @@ bool Scheduler::TakeReady(int worker_index, lpCoroutine &co)
 		bool expected = false;
 		if (!c->busy.compare_exchange_strong(expected, true))
 		{
+			// A handoff may have pushed this entry while the previous worker
+			// is still unwinding RunOne; leave it for the next attempt.
 			continue;
 		}
 		if (k == 0)
@@ -1217,6 +1255,7 @@ bool Scheduler::MonitorEnter(StackFrame *frame, LPOBJECT_REF obj)
 		frame->monitors_held.push_back(std::make_pair(obj, static_cast<lpClass>(NULL)));
 		return true;
 	}
+	ForgetReady(co);
 	co->state = CO_MONITOR;
 	co->block_obj = obj;
 	co->block_class = NULL;
@@ -1265,6 +1304,7 @@ bool Scheduler::MonitorEnterClass(StackFrame *frame, lpClass clazz)
 		frame->monitors_held.push_back(std::make_pair(static_cast<LPOBJECT_REF>(NULL), clazz));
 		return true;
 	}
+	ForgetReady(co);
 	co->state = CO_MONITOR;
 	co->block_obj = NULL;
 	co->block_class = clazz;
@@ -1428,6 +1468,7 @@ bool Scheduler::SleepCurrent(ThreadStack *ts, int64_t millis)
 			co->deadline_ns = SchedulerNowNs() + millis * 1000000LL;
 			co->timer_generation++;
 			impl->timers.insert(std::make_pair(co->deadline_ns, co));
+			ForgetReady(co);
 			co->state = CO_SLEEPING;
 			return true;
 		}
@@ -1489,6 +1530,7 @@ bool Scheduler::JoinCurrent(ThreadStack *ts, LPOBJECT_REF target, int64_t millis
 	}
 	co->join_target = target_co;
 	target_co->joiners.push_back(co);
+	ForgetReady(co);
 	co->state = CO_JOINING;
 	if (millis > 0)
 	{
@@ -1531,6 +1573,7 @@ bool Scheduler::WaitCurrent(ThreadStack *ts, LPOBJECT_REF obj, int64_t millis)
 	mon->count = 0;
 	co->resume_from_wait = true;
 	co->block_obj = obj;
+	ForgetReady(co);
 	co->state = CO_WAITING;
 	mon->waiters.push_back(co);
 	// Let a coroutine blocked on monitorenter proceed while we wait.
@@ -1624,6 +1667,9 @@ bool Scheduler::AwaitCurrentResume(ThreadStack *ts)
 			}
 			if (co->state == CO_READY || co->state == CO_RUNNING)
 			{
+				// Resuming from here does not go through TakeReady, so any
+				// queue entry left by a handoff must be dropped as well.
+				ForgetReady(co);
 				co->state = CO_RUNNING;
 				t_co = co;
 				t_owner = co;
@@ -2420,6 +2466,29 @@ void Scheduler::FinishCoroutine(lpCoroutine co, bool)
 				++ti;
 			}
 		}
+		// A coroutine that dies while queued for a monitor would otherwise be
+		// granted ownership when the current owner releases it, and the
+		// monitor would be stuck behind a thread that can never run again.
+		for (std::map<LPOBJECT_REF, Monitor *>::iterator mi = impl->monitors.begin();
+		     mi != impl->monitors.end(); ++mi)
+		{
+			Monitor *mon = mi->second;
+			mon->entry.erase(std::remove(mon->entry.begin(), mon->entry.end(), co),
+			                 mon->entry.end());
+			mon->waiters.erase(
+				std::remove(mon->waiters.begin(), mon->waiters.end(), co),
+				mon->waiters.end());
+		}
+		for (std::map<lpClass, Monitor *>::iterator ci = impl->class_monitors.begin();
+		     ci != impl->class_monitors.end(); ++ci)
+		{
+			Monitor *mon = ci->second;
+			mon->entry.erase(std::remove(mon->entry.begin(), mon->entry.end(), co),
+			                 mon->entry.end());
+			mon->waiters.erase(
+				std::remove(mon->waiters.begin(), mon->waiters.end(), co),
+				mon->waiters.end());
+		}
 		co->state = CO_TERMINATED;
 		co->finished = true;
 		co->deadline_ns = 0;
@@ -2451,6 +2520,15 @@ void Scheduler::FinishCoroutine(lpCoroutine co, bool)
 	}
 	if (co->ts)
 	{
+		// An uncaught exception unwinds only down to the outermost frame, so
+		// monitors acquired by that frame (or by synchronized methods inside
+		// it) would stay owned by a thread that no longer exists and could
+		// never be released.  MonitorExit uses Current(), so make co current
+		// for the duration of the release.
+		lpCoroutine saved = t_co;
+		t_co = co;
+		co->ts->ReleaseMonitors();
+		t_co = saved;
 		delete co->ts;
 		co->ts = NULL;
 	}
