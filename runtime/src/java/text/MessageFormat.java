@@ -16,6 +16,14 @@ public class MessageFormat
         applyPattern(pattern);
     }
 
+    public MessageFormat(String pattern, Locale locale)
+    {
+        // The locale only affects parsing/formatting of arguments that need
+        // locale-aware number or date formatting.
+        this.locale = locale == null ? Locale.getDefault() : locale;
+        applyPattern(pattern);
+    }
+
     public void setLocale(Locale locale)
     {
         this.locale = locale;

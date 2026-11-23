@@ -32,8 +32,13 @@ public class CharBuffer extends Buffer implements Comparable<CharBuffer>, CharSe
         {
             throw new IndexOutOfBoundsException();
         }
-        CharBuffer buffer = new CharBuffer(length, offset, array);
-        buffer.limit = length;
+        // JDK semantics: the buffer spans the whole array (capacity is the
+        // array length and arrayOffset() is zero); offset and length only
+        // position it.  Tomcat's C2BConverter relies on this when it raises
+        // the limit of a previously wrapped buffer.
+        CharBuffer buffer = new CharBuffer(array.length, 0, array);
+        buffer.position = offset;
+        buffer.limit = offset + length;
         return buffer;
     }
 

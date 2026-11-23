@@ -54,6 +54,7 @@ public class CharsetDecoder
             throw new IllegalArgumentException();
         }
         malformedInputAction = action;
+        implOnMalformedInput(action);
         return this;
     }
 
@@ -69,6 +70,7 @@ public class CharsetDecoder
             throw new IllegalArgumentException();
         }
         unmappableCharacterAction = action;
+        implOnUnmappableCharacter(action);
         return this;
     }
 
@@ -84,6 +86,7 @@ public class CharsetDecoder
             throw new IllegalArgumentException();
         }
         replacement = newReplacement;
+        implReplaceWith(newReplacement);
         return this;
     }
 
@@ -93,6 +96,7 @@ public class CharsetDecoder
         pendingPosition = 0;
         malformedInputAction = CodingErrorAction.REPORT;
         unmappableCharacterAction = CodingErrorAction.REPORT;
+        implReset();
         return this;
     }
 
@@ -167,5 +171,21 @@ public class CharsetDecoder
     public Charset detectedCharset()
     {
         return charset;
+    }
+
+    protected void implReplaceWith(String newReplacement)
+    {
+    }
+
+    protected void implOnMalformedInput(CodingErrorAction newAction)
+    {
+    }
+
+    protected void implOnUnmappableCharacter(CodingErrorAction newAction)
+    {
+    }
+
+    protected void implReset()
+    {
     }
 }

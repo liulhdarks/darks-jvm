@@ -444,6 +444,10 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
                 if (field.getType() == this &&
                     (field.getModifiers() & 0x0008) != 0)
                 {
+                    // The JDK reads the constants from inside Class, which is
+                    // not a nestmate of (and usually not in the package of) the
+                    // enum class, so it makes the field accessible first.
+                    field.setAccessible(true);
                     constants.add((T)field.get(null));
                 }
             }
@@ -519,6 +523,29 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
     }
 
     private native ClassLoader getClassLoader0();
+
+    public java.net.URL getResource(String name)
+    {
+        if (name == null)
+        {
+            throw new NullPointerException("name");
+        }
+        String absolute;
+        if (name.startsWith("/"))
+        {
+            absolute = name.substring(1);
+        }
+        else
+        {
+            String own = getName();
+            int dot = own.lastIndexOf('.');
+            String pkg = dot < 0 ? "" : own.substring(0, dot + 1).replace('.', '/');
+            absolute = pkg + name;
+        }
+        ClassLoader loader = getClassLoader();
+        return loader == null ? ClassLoader.getSystemResource(absolute)
+            : loader.getResource(absolute);
+    }
 
     public java.io.InputStream getResourceAsStream(String name)
     {
@@ -715,6 +742,19 @@ public final class Class<T> implements GenericDeclaration, AnnotatedElement, Typ
             genericInterfacesCache = GenericSignatureParser.getGenericInterfaces(this);
         }
         return genericInterfacesCache;
+    }
+
+    public java.lang.reflect.AnnotatedType getAnnotatedSuperclass()
+    {
+        Type superType = getGenericSuperclass();
+        return superType == null
+            ? null : java.lang.reflect.AnnotatedType.of(superType);
+    }
+
+    public java.lang.reflect.AnnotatedType[] getAnnotatedInterfaces()
+    {
+        Type[] interfaces = getGenericInterfaces();
+        return java.lang.reflect.AnnotatedType.ofArray(interfaces);
     }
 
     public TypeVariable<Class<T>>[] getTypeParameters()

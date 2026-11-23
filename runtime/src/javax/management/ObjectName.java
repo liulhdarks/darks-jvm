@@ -13,6 +13,7 @@ public class ObjectName implements Comparable<ObjectName>
 {
     private final String domain;
     private final TreeMap<String, String> properties;
+    private final boolean propertyListPattern;
 
     public ObjectName(String name) throws MalformedObjectNameException
     {
@@ -30,7 +31,9 @@ public class ObjectName implements Comparable<ObjectName>
         {
             throw new MalformedObjectNameException("empty domain: " + name);
         }
-        this.properties = parseProperties(name.substring(colon + 1));
+        this.properties = new TreeMap<String, String>();
+        this.propertyListPattern = parseProperties(name.substring(colon + 1),
+                                                    this.properties);
     }
 
     public ObjectName(String domain, Hashtable<String, String> table)
@@ -42,21 +45,28 @@ public class ObjectName implements Comparable<ObjectName>
         }
         this.domain = domain;
         this.properties = new TreeMap<String, String>();
+        boolean pattern = false;
         if (table != null)
         {
             Iterator<String> keys = table.keySet().iterator();
             while (keys.hasNext())
             {
                 String key = keys.next();
+                if (key.equals("*"))
+                {
+                    pattern = true;
+                    continue;
+                }
                 this.properties.put(key, table.get(key));
             }
         }
+        this.propertyListPattern = pattern;
     }
 
-    private static TreeMap<String, String> parseProperties(String text)
+    private static boolean parseProperties(String text, TreeMap<String, String> result)
         throws MalformedObjectNameException
     {
-        TreeMap<String, String> result = new TreeMap<String, String>();
+        boolean propertyListPattern = false;
         int index = 0;
         int length = text.length();
         while (index < length)
@@ -68,6 +78,21 @@ public class ObjectName implements Comparable<ObjectName>
             }
             if (index >= length)
             {
+                break;
+            }
+            if (text.charAt(index) == '*')
+            {
+                index++;
+                while (index < length && (text.charAt(index) == ' '
+                    || text.charAt(index) == '\t'))
+                {
+                    index++;
+                }
+                if (index < length)
+                {
+                    throw new MalformedObjectNameException("malformed wildcard in: " + text);
+                }
+                propertyListPattern = true;
                 break;
             }
             int equals = text.indexOf('=', index);
@@ -142,7 +167,7 @@ public class ObjectName implements Comparable<ObjectName>
                 }
             }
         }
-        return result;
+        return propertyListPattern;
     }
 
     public String getDomain()
@@ -239,7 +264,12 @@ public class ObjectName implements Comparable<ObjectName>
 
     public boolean isPattern()
     {
-        return isDomainPattern() || isPropertyPattern();
+        return isDomainPattern() || isPropertyPattern() || propertyListPattern;
+    }
+
+    public boolean isPropertyListPattern()
+    {
+        return propertyListPattern;
     }
 
     public boolean isDomainPattern()

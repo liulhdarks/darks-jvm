@@ -1,8 +1,45 @@
+/*
+ * Copyright (c) 2000, 2019, Oracle and/or its affiliates. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+ *
+ * This code is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 only, as
+ * published by the Free Software Foundation.  Oracle designates this
+ * particular file as subject to the "Classpath" exception as provided
+ * by Oracle in the LICENSE file that accompanied this code.
+ *
+ * This code is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+ * version 2 for more details (a copy is included in the LICENSE file that
+ * accompanied this code).
+ *
+ * You should have received a copy of the GNU General Public License version
+ * 2 along with this work; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ * Please contact Oracle, 500 Oracle Parkway, Redwood Shores, CA 94065 USA
+ * or visit www.oracle.com if you need additional information or have any
+ * questions.
+ */
+
 package java.nio.charset;
 
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 
+/**
+ * A named mapping between sequences of sixteen-bit Unicode code units and
+ * sequences of bytes.
+ *
+ * <p> This runtime keeps the JDK 11 public surface of {@code Charset} for a
+ * fixed, built-in set of charsets (UTF-8, UTF-16, UTF-16BE, UTF-16LE,
+ * US-ASCII, ISO-8859-1).  The JDK obtains charsets through
+ * {@code CharsetProvider} services and {@code sun.nio.cs.StandardCharsets};
+ * neither is ported, so lookups consult the built-in table below directly.
+ * {@link #availableCharsets()} therefore returns those charsets only, and
+ * {@link #displayName(java.util.Locale)} is not localized.
+ */
 public class Charset implements Comparable<Charset>
 {
     static final int UTF8 = 0;
@@ -53,6 +90,17 @@ public class Charset implements Comparable<Charset>
         return name;
     }
 
+    public String displayName(java.util.Locale locale)
+    {
+        if (locale == null)
+        {
+            throw new NullPointerException("locale");
+        }
+        // Provider-supplied localized names are not ported; the canonical
+        // name is the best available answer.
+        return name;
+    }
+
     public final boolean isRegistered()
     {
         return true;
@@ -99,13 +147,31 @@ public class Charset implements Comparable<Charset>
         return other.kind == ASCII;
     }
 
-    public byte[] encode(String text)
+    public byte[] encodeBytes(String text)
     {
         if (text == null)
         {
             throw new NullPointerException("text");
         }
         return encode(text, 0, text.length());
+    }
+
+    public final ByteBuffer encode(String text)
+    {
+        if (text == null)
+        {
+            throw new NullPointerException("text");
+        }
+        return ByteBuffer.wrap(encodeBytes(text));
+    }
+
+    public final ByteBuffer encode(CharBuffer buffer)
+    {
+        if (buffer == null)
+        {
+            throw new NullPointerException("buffer");
+        }
+        return ByteBuffer.wrap(encodeBytes(buffer.toString()));
     }
 
     public byte[] encode(String text, int offset, int length)
@@ -233,6 +299,35 @@ public class Charset implements Comparable<Charset>
         return StandardCharsets.UTF_8;
     }
 
+    private static Charset[] builtInCharsets()
+    {
+        Charset[] all = {
+            StandardCharsets.UTF_8,
+            StandardCharsets.UTF_16,
+            StandardCharsets.UTF_16BE,
+            StandardCharsets.UTF_16LE,
+            StandardCharsets.US_ASCII,
+            StandardCharsets.ISO_8859_1
+        };
+        return all;
+    }
+
+    public static java.util.SortedMap<String, Charset> availableCharsets()
+    {
+        // The JDK caches an unmodifiable sorted view; this runtime returns a
+        // fresh sorted map of the built-in charsets instead.
+        java.util.TreeMap<String, Charset> map =
+            new java.util.TreeMap<String, Charset>();
+        Charset[] all = builtInCharsets();
+        int i = 0;
+        while (i < all.length)
+        {
+            map.put(all[i].name(), all[i]);
+            i = i + 1;
+        }
+        return map;
+    }
+
     public static Charset forName(String name)
     {
         if (name == null)
@@ -287,14 +382,7 @@ public class Charset implements Comparable<Charset>
 
     private static Charset lookup(String name)
     {
-        Charset[] all = {
-            StandardCharsets.UTF_8,
-            StandardCharsets.UTF_16,
-            StandardCharsets.UTF_16BE,
-            StandardCharsets.UTF_16LE,
-            StandardCharsets.US_ASCII,
-            StandardCharsets.ISO_8859_1
-        };
+        Charset[] all = builtInCharsets();
         int i = 0;
         while (i < all.length)
         {

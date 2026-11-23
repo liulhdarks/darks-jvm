@@ -94,6 +94,12 @@ public:
 	// other symbolic lookups performed from that frame's code.
 	lpClassLoader TopFrameClassLoader() const;
 
+	// Class of the innermost frame that is not part of the JDK reflection
+	// implementation (java.lang.reflect.* and java.lang.Class).  Reflection
+	// access checks run inside natives invoked from those frames, so they must
+	// use the same caller class Reflection.getCallerClass() would report.
+	lpClass ReflectionCallerClass() const;
+
 	// Diagnostics: writes the innermost frame as "Class.method" (internal
 	// class name).  Returns false when the stack is empty.
 	bool DescribeTopFrame(std::string &out) const;

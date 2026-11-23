@@ -116,7 +116,8 @@ class BaseMBeanServer implements MBeanServer
         Object bean = find(name);
         try
         {
-            return bean.getClass().getMethod("get" + attribute).invoke(bean);
+            return invokeAccessible(
+                bean.getClass().getMethod("get" + attribute), bean, null);
         }
         catch (Exception e)
         {
@@ -133,8 +134,9 @@ class BaseMBeanServer implements MBeanServer
         {
             Class[] types = new Class[] { attribute.getValue() == null
                 ? Object.class : attribute.getValue().getClass() };
-            bean.getClass().getMethod("set" + attribute.getName(), types)
-                .invoke(bean, new Object[] { attribute.getValue() });
+            invokeAccessible(
+                bean.getClass().getMethod("set" + attribute.getName(), types),
+                bean, new Object[] { attribute.getValue() });
         }
         catch (Exception e)
         {
@@ -190,12 +192,27 @@ class BaseMBeanServer implements MBeanServer
             {
                 types[i] = classOf(signature[i]);
             }
-            return bean.getClass().getMethod(operationName, types).invoke(bean, params);
+            return invokeAccessible(
+                bean.getClass().getMethod(operationName, types), bean, params);
         }
         catch (Exception e)
         {
             throw new MBeanException(e);
         }
+    }
+
+    // MBeans are reachable through their management interface regardless of
+    // the package their implementation class lives in.  The JDK server invokes
+    // through sun.reflect.misc.MethodUtil, which makes the member accessible
+    // first; do the same here so caller-sensitive access checks accept it.
+    private static Object invokeAccessible(java.lang.reflect.Method method,
+        Object bean, Object[] args) throws Exception
+    {
+        if (!method.isAccessible())
+        {
+            method.setAccessible(true);
+        }
+        return method.invoke(bean, args);
     }
 
     private static Class classOf(String name) throws ClassNotFoundException

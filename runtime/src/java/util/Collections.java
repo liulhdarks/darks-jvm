@@ -84,6 +84,25 @@ public class Collections
         target.set(j, value);
     }
 
+    public static boolean disjoint(Collection<?> first, Collection<?> second)
+    {
+        if (first.isEmpty() || second.isEmpty())
+        {
+            return true;
+        }
+        Collection<?> smaller = first.size() <= second.size() ? first : second;
+        Collection<?> larger = smaller == first ? second : first;
+        Iterator<?> it = smaller.iterator();
+        while (it.hasNext())
+        {
+            if (larger.contains(it.next()))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static <T extends Object & Comparable<? super T>> T max(Collection<? extends T> values)
     {
         Iterator<? extends T> it = values.iterator();
@@ -165,6 +184,12 @@ public class Collections
         return changed;
     }
 
+    public static final List EMPTY_LIST = new EmptyList();
+
+    public static final Set EMPTY_SET = new EmptySet();
+
+    public static final Map EMPTY_MAP = new EmptyMap();
+
     public static <T> List<T> emptyList()
     {
         return (List<T>)new EmptyList();
@@ -198,6 +223,15 @@ public class Collections
     public static <K, V> Map<K, V> singletonMap(K key, V value)
     {
         return new SingletonMap<K, V>(key, value);
+    }
+
+    public static <T> Collection<T> unmodifiableCollection(Collection<? extends T> collection)
+    {
+        if (collection == null)
+        {
+            throw new NullPointerException("collection");
+        }
+        return new UnmodifiableCollection<T>(collection);
     }
 
     public static <T> Set<T> unmodifiableSet(Set<? extends T> set)
@@ -1065,7 +1099,7 @@ public class Collections
         }
     }
 
-    private static final class SingletonSet<E> implements Set<E>
+    private static final class SingletonSet<E> extends AbstractSet<E> implements Set<E>
     {
         private final E value;
 
@@ -1262,6 +1296,73 @@ public class Collections
         public int hashCode()
         {
             return Objects.hashCode(key) ^ Objects.hashCode(value);
+        }
+    }
+
+    private static final class UnmodifiableCollection<E> implements Collection<E>
+    {
+        private final Collection<? extends E> collection;
+
+        UnmodifiableCollection(Collection<? extends E> collection)
+        {
+            this.collection = collection;
+        }
+
+        public int size()
+        {
+            return collection.size();
+        }
+
+        public boolean isEmpty()
+        {
+            return collection.isEmpty();
+        }
+
+        public boolean add(E value)
+        {
+            throw new UnsupportedOperationException("unmodifiable collection");
+        }
+
+        public boolean contains(Object value)
+        {
+            return collection.contains(value);
+        }
+
+        public boolean remove(Object value)
+        {
+            throw new UnsupportedOperationException("unmodifiable collection");
+        }
+
+        public void clear()
+        {
+            throw new UnsupportedOperationException("unmodifiable collection");
+        }
+
+        public Object[] toArray()
+        {
+            return collection.toArray();
+        }
+
+        public Iterator<E> iterator()
+        {
+            final Iterator<? extends E> iterator = collection.iterator();
+            return new Iterator<E>()
+            {
+                public boolean hasNext()
+                {
+                    return iterator.hasNext();
+                }
+
+                public E next()
+                {
+                    return iterator.next();
+                }
+
+                public void remove()
+                {
+                    throw new UnsupportedOperationException("unmodifiable collection");
+                }
+            };
         }
     }
 

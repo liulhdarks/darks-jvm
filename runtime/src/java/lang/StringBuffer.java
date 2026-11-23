@@ -21,6 +21,17 @@ public final class StringBuffer extends StringBuilder
         super(initial);
     }
 
+    public StringBuffer(CharSequence initial)
+    {
+        super(initial);
+    }
+
+    public StringBuffer append(StringBuffer sb)
+    {
+        super.append(sb);
+        return this;
+    }
+
     public StringBuffer append(String text)
     {
         super.append(text);

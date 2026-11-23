@@ -189,6 +189,14 @@ public class ClassLoader
         return defineClass(name, bytes, offset, length, null);
     }
 
+    public static Class<?> defineClassForUnsafe(ClassLoader loader, String name,
+        byte[] bytes, int offset, int length,
+        java.security.ProtectionDomain protectionDomain) throws ClassFormatError
+    {
+        ClassLoader target = loader != null ? loader : getSystemClassLoader();
+        return target.defineClass(name, bytes, offset, length, protectionDomain);
+    }
+
     protected final Class<?> defineClass(String name, byte[] bytes, int offset,
         int length, java.security.ProtectionDomain protectionDomain)
         throws ClassFormatError

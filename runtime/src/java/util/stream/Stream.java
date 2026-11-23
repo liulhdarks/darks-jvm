@@ -40,6 +40,41 @@ public interface Stream<T> extends BaseStream<T, Stream<T>>
 
     IntStream mapToInt(ToIntFunction<? super T> mapper);
 
+    java.util.stream.DoubleStream mapToDouble(java.util.function.ToDoubleFunction<? super T> mapper);
+
+    java.util.stream.LongStream mapToLong(java.util.function.ToLongFunction<? super T> mapper);
+
+    IntStream flatMapToInt(Function<? super T, ? extends IntStream> mapper);
+
+    java.util.stream.LongStream flatMapToLong(
+        Function<? super T, ? extends java.util.stream.LongStream> mapper);
+
+    java.util.stream.DoubleStream flatMapToDouble(
+        Function<? super T, ? extends java.util.stream.DoubleStream> mapper);
+
+    Stream<T> peek(Consumer<? super T> action);
+
+    Stream<T> takeWhile(Predicate<? super T> predicate);
+
+    Stream<T> dropWhile(Predicate<? super T> predicate);
+
+    void forEachOrdered(Consumer<? super T> action);
+
+    Optional<T> findAny();
+
+    Optional<T> min(Comparator<? super T> comparator);
+
+    Optional<T> max(Comparator<? super T> comparator);
+
+    T reduce(T identity, BinaryOperator<T> accumulator);
+
+    <U> U reduce(U identity, java.util.function.BiFunction<U, ? super T, U> accumulator,
+        BinaryOperator<U> combiner);
+
+    <R> R collect(java.util.function.Supplier<R> supplier,
+        java.util.function.BiConsumer<R, ? super T> accumulator,
+        java.util.function.BiConsumer<R, R> combiner);
+
     Optional<T> findFirst();
 
     Optional<T> reduce(BinaryOperator<T> accumulator);
@@ -72,6 +107,22 @@ public interface Stream<T> extends BaseStream<T, Stream<T>>
             list.add(values[i]);
         }
         return new ArrayListStream<T>(list);
+    }
+
+    static <T> Stream<T> of(T value)
+    {
+        ArrayList<T> list = new ArrayList<T>(1);
+        list.add(value);
+        return new ArrayListStream<T>(list);
+    }
+
+    static <T> Stream<T> ofNullable(T value)
+    {
+        if (value == null)
+        {
+            return empty();
+        }
+        return of(value);
     }
 
     static <T> Stream<T> empty()
@@ -236,6 +287,216 @@ final class ArrayListStream<T> implements Stream<T>
             result[i] = mapper.applyAsInt(elements.get(i));
         }
         return IntStream.of(result);
+    }
+
+    public DoubleStream mapToDouble(java.util.function.ToDoubleFunction<? super T> mapper)
+    {
+        double[] result = new double[elements.size()];
+        for (int i = 0; i < elements.size(); i++)
+        {
+            result[i] = mapper.applyAsDouble(elements.get(i));
+        }
+        return DoubleStream.of(result);
+    }
+
+    public LongStream mapToLong(java.util.function.ToLongFunction<? super T> mapper)
+    {
+        long[] result = new long[elements.size()];
+        for (int i = 0; i < elements.size(); i++)
+        {
+            result[i] = mapper.applyAsLong(elements.get(i));
+        }
+        return LongStream.of(result);
+    }
+
+    public IntStream flatMapToInt(Function<? super T, ? extends IntStream> mapper)
+    {
+        ArrayList<Integer> result = new ArrayList<Integer>();
+        for (int i = 0; i < elements.size(); i++)
+        {
+            IntStream inner = mapper.apply(elements.get(i));
+            if (inner != null)
+            {
+                int[] values = inner.toArray();
+                for (int k = 0; k < values.length; k++)
+                {
+                    result.add(values[k]);
+                }
+            }
+        }
+        int[] values = new int[result.size()];
+        for (int i = 0; i < result.size(); i++)
+        {
+            values[i] = result.get(i);
+        }
+        return IntStream.of(values);
+    }
+
+    public LongStream flatMapToLong(
+        Function<? super T, ? extends LongStream> mapper)
+    {
+        ArrayList<Long> result = new ArrayList<Long>();
+        for (int i = 0; i < elements.size(); i++)
+        {
+            LongStream inner = mapper.apply(elements.get(i));
+            if (inner != null)
+            {
+                long[] values = inner.toArray();
+                for (int k = 0; k < values.length; k++)
+                {
+                    result.add(values[k]);
+                }
+            }
+        }
+        long[] values = new long[result.size()];
+        for (int i = 0; i < result.size(); i++)
+        {
+            values[i] = result.get(i);
+        }
+        return LongStream.of(values);
+    }
+
+    public DoubleStream flatMapToDouble(
+        Function<? super T, ? extends DoubleStream> mapper)
+    {
+        ArrayList<Double> result = new ArrayList<Double>();
+        for (int i = 0; i < elements.size(); i++)
+        {
+            DoubleStream inner = mapper.apply(elements.get(i));
+            if (inner != null)
+            {
+                double[] values = inner.toArray();
+                for (int k = 0; k < values.length; k++)
+                {
+                    result.add(values[k]);
+                }
+            }
+        }
+        double[] values = new double[result.size()];
+        for (int i = 0; i < result.size(); i++)
+        {
+            values[i] = result.get(i);
+        }
+        return DoubleStream.of(values);
+    }
+
+    public Stream<T> peek(Consumer<? super T> action)
+    {
+        for (int i = 0; i < elements.size(); i++)
+        {
+            action.accept(elements.get(i));
+        }
+        return new ArrayListStream<T>(copy());
+    }
+
+    public Stream<T> takeWhile(Predicate<? super T> predicate)
+    {
+        ArrayList<T> result = new ArrayList<T>();
+        for (int i = 0; i < elements.size(); i++)
+        {
+            T value = elements.get(i);
+            if (!predicate.test(value))
+            {
+                break;
+            }
+            result.add(value);
+        }
+        return new ArrayListStream<T>(result);
+    }
+
+    public Stream<T> dropWhile(Predicate<? super T> predicate)
+    {
+        ArrayList<T> result = new ArrayList<T>();
+        boolean dropping = true;
+        for (int i = 0; i < elements.size(); i++)
+        {
+            T value = elements.get(i);
+            if (dropping && predicate.test(value))
+            {
+                continue;
+            }
+            dropping = false;
+            result.add(value);
+        }
+        return new ArrayListStream<T>(result);
+    }
+
+    public void forEachOrdered(Consumer<? super T> action)
+    {
+        forEach(action);
+    }
+
+    public Optional<T> findAny()
+    {
+        return findFirst();
+    }
+
+    public Optional<T> min(Comparator<? super T> comparator)
+    {
+        if (elements.isEmpty())
+        {
+            return Optional.empty();
+        }
+        T best = elements.get(0);
+        for (int i = 1; i < elements.size(); i++)
+        {
+            if (comparator.compare(elements.get(i), best) < 0)
+            {
+                best = elements.get(i);
+            }
+        }
+        return Optional.of(best);
+    }
+
+    public Optional<T> max(Comparator<? super T> comparator)
+    {
+        if (elements.isEmpty())
+        {
+            return Optional.empty();
+        }
+        T best = elements.get(0);
+        for (int i = 1; i < elements.size(); i++)
+        {
+            if (comparator.compare(elements.get(i), best) > 0)
+            {
+                best = elements.get(i);
+            }
+        }
+        return Optional.of(best);
+    }
+
+    public T reduce(T identity, BinaryOperator<T> accumulator)
+    {
+        T result = identity;
+        for (int i = 0; i < elements.size(); i++)
+        {
+            result = accumulator.apply(result, elements.get(i));
+        }
+        return result;
+    }
+
+    public <U> U reduce(U identity,
+        java.util.function.BiFunction<U, ? super T, U> accumulator,
+        BinaryOperator<U> combiner)
+    {
+        U result = identity;
+        for (int i = 0; i < elements.size(); i++)
+        {
+            result = accumulator.apply(result, elements.get(i));
+        }
+        return result;
+    }
+
+    public <R> R collect(java.util.function.Supplier<R> supplier,
+        java.util.function.BiConsumer<R, ? super T> accumulator,
+        java.util.function.BiConsumer<R, R> combiner)
+    {
+        R container = supplier.get();
+        for (int i = 0; i < elements.size(); i++)
+        {
+            accumulator.accept(container, elements.get(i));
+        }
+        return container;
     }
 
     public Optional<T> findFirst()

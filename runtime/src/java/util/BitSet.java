@@ -587,7 +587,15 @@ public class BitSet implements Cloneable, java.io.Serializable
 
     public Object clone()
     {
-        BitSet result = new BitSet(64);
+        BitSet result;
+        try
+        {
+            result = (BitSet)super.clone();
+        }
+        catch (CloneNotSupportedException e)
+        {
+            throw new RuntimeException(e.getMessage());
+        }
         result.words = new long[words.length];
         for (int i = 0; i < wordsInUse; i++)
         {

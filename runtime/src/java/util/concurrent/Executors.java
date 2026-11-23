@@ -262,6 +262,70 @@ public class Executors
         }
     }
 
+    public static ExecutorService unconfigurableExecutorService(ExecutorService executor)
+    {
+        if (executor == null)
+        {
+            throw new NullPointerException("executor");
+        }
+        return new DelegatedExecutorService(executor);
+    }
+
+    private static final class DelegatedExecutorService extends AbstractExecutorService
+    {
+        private final ExecutorService executor;
+
+        DelegatedExecutorService(ExecutorService executor)
+        {
+            this.executor = executor;
+        }
+
+        public void execute(Runnable command)
+        {
+            executor.execute(command);
+        }
+
+        public void shutdown()
+        {
+            executor.shutdown();
+        }
+
+        public List<Runnable> shutdownNow()
+        {
+            return executor.shutdownNow();
+        }
+
+        public boolean isShutdown()
+        {
+            return executor.isShutdown();
+        }
+
+        public boolean isTerminated()
+        {
+            return executor.isTerminated();
+        }
+
+        public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException
+        {
+            return executor.awaitTermination(timeout, unit);
+        }
+
+        public <T> Future<T> submit(Callable<T> task)
+        {
+            return executor.submit(task);
+        }
+
+        public <T> Future<T> submit(Runnable task, T result)
+        {
+            return executor.submit(task, result);
+        }
+
+        public Future<?> submit(Runnable task)
+        {
+            return executor.submit(task);
+        }
+    }
+
     private static final class CallableAdapter<T> implements Callable<T>
     {
         private final Runnable task;

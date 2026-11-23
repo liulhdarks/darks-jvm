@@ -104,7 +104,22 @@ public class StringTokenizer implements Enumeration<Object>
         int length = str.length();
         if (returnDelimiters)
         {
-            return length - position;
+            boolean inToken = false;
+            while (i < length)
+            {
+                if (delimiters.indexOf(str.charAt(i)) >= 0)
+                {
+                    count++;
+                    inToken = false;
+                }
+                else if (!inToken)
+                {
+                    count++;
+                    inToken = true;
+                }
+                i++;
+            }
+            return count;
         }
         while (i < length)
         {

@@ -10,6 +10,7 @@
 #include "jni_impl.h"
 #include "vm/executor/javaexception.h"
 #include "vm/executor/proxy.h"
+#include "vm/executor/threadstack.h"
 
 #include <cstring>
 #include <string>
@@ -195,15 +196,115 @@ bool ReadAccessibleFlag(jobject member)
 	return false;
 }
 
-// Access checks are not caller-sensitive: a non-public member is usable only
-// after setAccessible(true). Public members are always accessible.
-bool MemberAccessAllowed(jobject member, int modifiers)
+// Access checks follow java.lang.reflect.Reflection.verifyMemberAccess: the
+// caller class is the innermost frame outside java.lang.reflect/java.lang.Class
+// (see ThreadStack::ReflectionCallerClass).  When no Java frame is available
+// (calls made directly from VM/native code) only public members are allowed.
+std::string InternalClassName(lpClass clazz)
 {
-	if ((modifiers & ACF_PUBLIC) != 0)
+	if (!clazz || !clazz->thisClass || !clazz->thisClass->GetName())
+	{
+		return std::string();
+	}
+	return clazz->thisClass->GetName();
+}
+
+std::string PackageName(const std::string &internal_name)
+{
+	size_t slash = internal_name.rfind('/');
+	return slash == std::string::npos
+		? std::string() : internal_name.substr(0, slash);
+}
+
+bool SameRuntimePackage(lpClass first, lpClass second)
+{
+	if (!first || !second || first->classloader != second->classloader)
+	{
+		return false;
+	}
+	return PackageName(InternalClassName(first)) ==
+		PackageName(InternalClassName(second));
+}
+
+// Nest host of a class: its own name when no NestHost attribute was present.
+std::string NestHostName(lpClass clazz)
+{
+	if (!clazz)
+	{
+		return std::string();
+	}
+	if (!clazz->nest_host.empty())
+	{
+		return clazz->nest_host;
+	}
+	return InternalClassName(clazz);
+}
+
+bool SameNest(lpClass first, lpClass second)
+{
+	if (!first || !second || first->classloader != second->classloader)
+	{
+		return false;
+	}
+	return NestHostName(first) == NestHostName(second);
+}
+
+bool IsSubclassOf(lpClass clazz, lpClass ancestor)
+{
+	for (lpClass c = clazz; c; c = c->super_class)
+	{
+		if (c == ancestor)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool MemberAccessAllowed(jobject member, int modifiers, lpClass declaring,
+	lpClass caller)
+{
+	if (ReadAccessibleFlag(member))
 	{
 		return true;
 	}
-	return ReadAccessibleFlag(member);
+	if (!caller)
+	{
+		return declaring && (modifiers & ACF_PUBLIC) != 0 &&
+			(declaring->accFlag & ACF_PUBLIC) != 0;
+	}
+	if (caller == declaring)
+	{
+		return true;
+	}
+	bool same_package = SameRuntimePackage(caller, declaring);
+	bool declaring_public = declaring &&
+		(declaring->accFlag & ACF_PUBLIC) != 0;
+	if (!declaring_public && !same_package)
+	{
+		return false;
+	}
+	if ((modifiers & ACF_PUBLIC) != 0)
+	{
+		// A public member of a public class is visible across packages; a
+		// non-public declaring class additionally requires package access.
+		return declaring_public || same_package;
+	}
+	if ((modifiers & ACF_PROTECTED) != 0)
+	{
+		return same_package || IsSubclassOf(caller, declaring);
+	}
+	if ((modifiers & ACF_PRIVATE) != 0)
+	{
+		return SameNest(caller, declaring);
+	}
+	return same_package;
+}
+
+lpClass CurrentReflectionCaller()
+{
+	ThreadStack *stack = DarksVM_ActiveThreadStack();
+	return stack ? stack->ReflectionCallerClass() : NULL;
 }
 
 void ThrowIllegalAccess(JNIEnv *env, const char *message)
@@ -877,20 +978,11 @@ bool ReadElementValue(JNIEnv *env, ConstantPool *pool, ByteReader &r,
 		{
 			U2 index = r.U2();
 			std::string desc = Utf8At(pool, index);
-			std::string name;
-			if (desc.size() >= 3 && desc[0] == 'L' && desc[desc.size() - 1] == ';')
+			jobject mirror = MirrorForDescriptor(env, desc.c_str(),
+			                                     static_cast<int>(desc.size()));
+			if (!mirror)
 			{
-				name = desc.substr(1, desc.size() - 2);
-			}
-			else
-			{
-				name = desc;
-			}
-			lpClass target = FindClassAnywhere(env, name.c_str());
-			jobject mirror = target ? JniClassMirror(reinterpret_cast<jclass>(target)) : NULL;
-			if (mirror)
-			{
-				JniAddLocalRef(env, mirror);
+				return false;
 			}
 			out.heapPtr = JniRef(mirror);
 			return true;
@@ -1054,6 +1146,78 @@ jobject AnnotationsToArray(JNIEnv *env, lpClass owner, lpRuntimeVisibleAnnotatio
 		}
 	}
 	return MakeObjectArray(env, "[Ljava/lang/annotation/Annotation;", results);
+}
+
+jobject ParameterAnnotationsToArray(JNIEnv *env, lpClass owner,
+                                   lpRuntimeVisibleParameterAnnotations attr,
+                                   int parameter_count)
+{
+	std::vector<jobject> rows;
+	if (owner && owner->const_pool && attr && attr->bytes && attr->attr_length >= 1)
+	{
+		ByteReader reader(attr->bytes, attr->attr_length);
+		int count = reader.U1();
+		for (int p = 0; p < count && reader.ok; p++)
+		{
+			U2 annotation_count = reader.U2();
+			std::vector<jobject> annotations;
+			for (U2 a = 0; a < annotation_count && reader.ok; a++)
+			{
+				jobject annotation = ReadAnnotation(env, owner->const_pool, reader);
+				if (annotation)
+				{
+					annotations.push_back(annotation);
+				}
+			}
+			rows.push_back(MakeObjectArray(env,
+				"[Ljava/lang/annotation/Annotation;", annotations));
+		}
+	}
+	// Synthetic parameters are not represented in the attribute; the JDK pads
+	// the row table to the reflective parameter count.
+	while (static_cast<int>(rows.size()) < parameter_count)
+	{
+		rows.push_back(MakeObjectArray(env,
+			"[Ljava/lang/annotation/Annotation;", std::vector<jobject>()));
+	}
+	return MakeObjectArray(env, "[[Ljava/lang/annotation/Annotation;", rows);
+}
+
+int CountMethodParameters(const char *desc)
+{
+	if (!desc)
+	{
+		return 0;
+	}
+	const char *p = strchr(desc, '(');
+	if (!p)
+	{
+		return 0;
+	}
+	p++;
+	int count = 0;
+	while (*p && *p != ')')
+	{
+		while (*p == '[')
+		{
+			p++;
+		}
+		if (*p == 'L')
+		{
+			p = strchr(p, ';');
+			if (!p)
+			{
+				break;
+			}
+			p++;
+		}
+		else if (*p)
+		{
+			p++;
+		}
+		count++;
+	}
+	return count;
 }
 
 // Finds the container annotation declared by @Repeatable on annotation_class.
@@ -1536,8 +1700,20 @@ std::vector<lpMethod> CollectMethods(lpClass clazz, bool public_only,
 {
 	std::vector<lpMethod> result;
 	std::vector<lpClass> classes;
+	// getMethods() on an interface must not report java.lang.Object's public
+	// methods: interfaces have Object as their class-file superclass, but the
+	// JDK only exposes the interface and its superinterfaces.  Callers such as
+	// Byte Buddy's Invoker generator assume every reported method belongs to
+	// the interface and fail on zero-argument Object methods.
+	bool interface_owner = clazz && clazz->isInterface();
 	for (lpClass c = clazz; c; c = c->super_class)
 	{
+		if (interface_owner && c != clazz && c->thisClass &&
+		    c->thisClass->GetName() &&
+		    strcmp(c->thisClass->GetName(), "java/lang/Object") == 0)
+		{
+			break;
+		}
 		classes.push_back(c);
 		if (declared_only)
 		{
@@ -2145,7 +2321,8 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_invoke0(JNIEnv *env,
 		}
 		return NULL;
 	}
-	if (!MemberAccessAllowed(thiz, target->accFlag))
+	if (!MemberAccessAllowed(thiz, target->accFlag, declaring,
+			CurrentReflectionCaller()))
 	{
 		ThrowIllegalAccess(env, "method is not accessible");
 		return NULL;
@@ -2233,6 +2410,23 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getDeclaredAnnotations0(
 	return AnnotationsToArray(env, declaring, method ? method->rt_visible_attr : NULL);
 }
 
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getParameterAnnotations0(JNIEnv *env,
+	jobject thiz)
+{
+	lpObject method_obj = JniResolveObject(thiz);
+	if (!method_obj)
+	{
+		return NULL;
+	}
+	lpClass declaring = MirrorClass(ObjectFieldRef(method_obj, "declaringClass"));
+	std::string name = ObjectFieldString(env, method_obj, "name");
+	std::string desc = ObjectFieldString(env, method_obj, "descriptor");
+	lpMethod method = FindMethodByDescriptor(declaring, name.c_str(), desc.c_str(), false);
+	return ParameterAnnotationsToArray(env, declaring,
+		method ? method->rt_visible_param_attr : NULL,
+		CountMethodParameters(desc.c_str()));
+}
+
 JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_getDefaultValue(JNIEnv *env,
 	jobject thiz)
 {
@@ -2297,7 +2491,8 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Field_get0(JNIEnv *env,
 		}
 		return NULL;
 	}
-	if (!MemberAccessAllowed(thiz, field->accFlag))
+	if (!MemberAccessAllowed(thiz, field->accFlag, declaring,
+			CurrentReflectionCaller()))
 	{
 		ThrowIllegalAccess(env, "field is not accessible");
 		return NULL;
@@ -2355,7 +2550,8 @@ JNIEXPORT void JNICALL Java_java_lang_reflect_Field_set0(JNIEnv *env,
 		}
 		return;
 	}
-	if (!MemberAccessAllowed(thiz, field->accFlag))
+	if (!MemberAccessAllowed(thiz, field->accFlag, declaring,
+			CurrentReflectionCaller()))
 	{
 		ThrowIllegalAccess(env, "field is not accessible");
 		return;
@@ -2428,7 +2624,8 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_newInstance0(JNIEnv
 	{
 		return NULL;
 	}
-	if (!MemberAccessAllowed(thiz, init->accFlag))
+	if (!MemberAccessAllowed(thiz, init->accFlag, declaring,
+			CurrentReflectionCaller()))
 	{
 		ThrowIllegalAccess(env, "constructor is not accessible");
 		return NULL;
@@ -2483,6 +2680,22 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_getDeclaredAnnotati
 	std::string desc = ObjectFieldString(env, ctor_obj, "descriptor");
 	lpMethod init = FindMethodByDescriptor(declaring, "<init>", desc.c_str(), true);
 	return AnnotationsToArray(env, declaring, init ? init->rt_visible_attr : NULL);
+}
+
+JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_getParameterAnnotations0(JNIEnv *env,
+	jobject thiz)
+{
+	lpObject ctor_obj = JniResolveObject(thiz);
+	if (!ctor_obj)
+	{
+		return NULL;
+	}
+	lpClass declaring = MirrorClass(ObjectFieldRef(ctor_obj, "declaringClass"));
+	std::string desc = ObjectFieldString(env, ctor_obj, "descriptor");
+	lpMethod init = FindMethodByDescriptor(declaring, "<init>", desc.c_str(), true);
+	return ParameterAnnotationsToArray(env, declaring,
+		init ? init->rt_visible_param_attr : NULL,
+		CountMethodParameters(desc.c_str()));
 }
 
 // ---------------------------------------------------------------------------

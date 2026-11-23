@@ -11,6 +11,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.temporal.TemporalAccessor;
+import java.time.temporal.TemporalQuery;
 import java.util.Locale;
 
 /**
@@ -209,7 +210,7 @@ public final class DateTimeFormatter
 
     private static boolean isSupported(char c)
     {
-        return "GyuMLdDHhKkmsSnaEzZXx".indexOf(c) >= 0;
+        return "GyuMLdDHhKkmsSnaEzZXxV".indexOf(c) >= 0;
     }
 
     // ------------------------------------------------------------------
@@ -393,6 +394,7 @@ public final class DateTimeFormatter
             return;
         }
         case 'z':
+        case 'V':
             out.append(zoneId == null ? (hasOffset ? offsetText(offsetSeconds, 3) : "UTC")
                                       : zoneId);
             return;
@@ -703,7 +705,7 @@ public final class DateTimeFormatter
                     i = i + 1;
                 }
             }
-            else if (c == 'z')
+            else if (c == 'z' || c == 'V')
             {
                 int begin = i;
                 while (i < s.length() && s.charAt(i) != ' ' && s.charAt(i) != ',' &&
@@ -830,6 +832,15 @@ public final class DateTimeFormatter
             return time;
         }
         throw parseError(s, 0, "No fields parsed");
+    }
+
+    public <T> T parse(CharSequence text, TemporalQuery<T> query)
+    {
+        if (query == null)
+        {
+            throw new NullPointerException("query");
+        }
+        return query.queryFrom(parse(text));
     }
 
     private static DateTimeParseException parseError(String text, int index, String message)

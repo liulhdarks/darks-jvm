@@ -110,6 +110,26 @@ public class SimpleDateFormat extends DateFormat
         }
     }
 
+    public Date parse(String text, ParsePosition pos)
+    {
+        if (text == null || pos == null)
+        {
+            throw new NullPointerException();
+        }
+        int start = pos.getIndex();
+        try
+        {
+            Date value = parse(text.substring(start));
+            pos.setIndex(text.length());
+            return value;
+        }
+        catch (ParseException error)
+        {
+            pos.setErrorIndex(start);
+            return null;
+        }
+    }
+
     public Object clone()
     {
         SimpleDateFormat copy = new SimpleDateFormat(pattern);

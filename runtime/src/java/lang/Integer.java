@@ -295,4 +295,217 @@ public final class Integer extends Number implements Comparable<Integer>
     {
         return toString(value);
     }
+
+    public static Integer valueOf(String s, int radix)
+    {
+        return valueOf(parseInt(s, radix));
+    }
+
+    public static int bitCount(int i)
+    {
+        i = i - ((i >>> 1) & 0x55555555);
+        i = (i & 0x33333333) + ((i >>> 2) & 0x33333333);
+        i = (i + (i >>> 4)) & 0x0f0f0f0f;
+        i = i + (i >>> 8);
+        i = i + (i >>> 16);
+        return i & 0x3f;
+    }
+
+    public static int numberOfLeadingZeros(int i)
+    {
+        if (i == 0)
+        {
+            return 32;
+        }
+        int n = 1;
+        if ((i >>> 16) == 0)
+        {
+            n += 16;
+            i <<= 16;
+        }
+        if ((i >>> 24) == 0)
+        {
+            n += 8;
+            i <<= 8;
+        }
+        if ((i >>> 28) == 0)
+        {
+            n += 4;
+            i <<= 4;
+        }
+        if ((i >>> 30) == 0)
+        {
+            n += 2;
+            i <<= 2;
+        }
+        n -= i >>> 31;
+        return n;
+    }
+
+    public static int numberOfTrailingZeros(int i)
+    {
+        if (i == 0)
+        {
+            return 32;
+        }
+        int n = 0;
+        while ((i & 1) == 0)
+        {
+            n++;
+            i >>>= 1;
+        }
+        return n;
+    }
+
+    public static int signum(int i)
+    {
+        return (i >> 31) | (-i >>> 31);
+    }
+
+    public static int reverse(int i)
+    {
+        i = ((i & 0x55555555) << 1) | ((i >>> 1) & 0x55555555);
+        i = ((i & 0x33333333) << 2) | ((i >>> 2) & 0x33333333);
+        i = ((i & 0x0f0f0f0f) << 4) | ((i >>> 4) & 0x0f0f0f0f);
+        i = ((i & 0x00ff00ff) << 8) | ((i >>> 8) & 0x00ff00ff);
+        return (i << 16) | (i >>> 16);
+    }
+
+    public static int rotateLeft(int i, int distance)
+    {
+        return (i << distance) | (i >>> -distance);
+    }
+
+    public static int rotateRight(int i, int distance)
+    {
+        return (i >>> distance) | (i << -distance);
+    }
+
+    public static int max(int a, int b)
+    {
+        return a >= b ? a : b;
+    }
+
+    public static int min(int a, int b)
+    {
+        return a <= b ? a : b;
+    }
+
+    public static int sum(int a, int b)
+    {
+        return a + b;
+    }
+
+    public static int compareUnsigned(int a, int b)
+    {
+        return compare(a + MIN_VALUE, b + MIN_VALUE);
+    }
+
+    public static Integer decode(String s)
+    {
+        if (s == null)
+        {
+            throw new NumberFormatException("null");
+        }
+        int sign = 1;
+        int start = 0;
+        if (s.length() > 0 && s.charAt(0) == '-')
+        {
+            sign = -1;
+            start = 1;
+        }
+        else if (s.length() > 0 && s.charAt(0) == '+')
+        {
+            start = 1;
+        }
+        String rest = s.substring(start);
+        int radix = 10;
+        if (rest.startsWith("0x") || rest.startsWith("0X"))
+        {
+            radix = 16;
+            rest = rest.substring(2);
+        }
+        else if (rest.startsWith("#"))
+        {
+            radix = 16;
+            rest = rest.substring(1);
+        }
+        else if (rest.length() > 1 && rest.charAt(0) == '0')
+        {
+            radix = 8;
+            rest = rest.substring(1);
+        }
+        return valueOf(sign * parseInt(rest, radix));
+    }
+
+    public static String toString(int v, int radix)
+    {
+        if (radix < 2 || radix > 36)
+        {
+            throw new NumberFormatException("radix " + radix);
+        }
+        if (radix == 10)
+        {
+            return toString(v);
+        }
+        long n = (long)v & 0xffffffffL;
+        if (n == 0)
+        {
+            return "0";
+        }
+        char[] digits = new char[33];
+        int pos = digits.length;
+        while (n > 0)
+        {
+            int d = (int)(n % radix);
+            pos = pos - 1;
+            digits[pos] = (char)(d < 10 ? ('0' + d) : ('a' + (d - 10)));
+            n = n / radix;
+        }
+        return new String(digits, pos, digits.length - pos);
+    }
+
+    public static String toBinaryString(int v)
+    {
+        return toString(v, 2);
+    }
+
+    public static String toOctalString(int v)
+    {
+        return toString(v, 8);
+    }
+
+    public static String toUnsignedString(int v)
+    {
+        return toUnsignedString(v, 10);
+    }
+
+    public static String toUnsignedString(int v, int radix)
+    {
+        if (radix == 10)
+        {
+            return Long.toString((long)v & 0xffffffffL);
+        }
+        return toString(v, radix);
+    }
+
+    public static long toUnsignedLong(int v)
+    {
+        return (long)v & 0xffffffffL;
+    }
+
+    public static int parseUnsignedInt(String s)
+    {
+        return parseUnsignedInt(s, 10);
+    }
+
+    public static int parseUnsignedInt(String s, int radix)
+    {
+        long value = parseLong(s, radix);
+        if (value < 0L || value > 0xffffffffL)
+        {
+            throw new NumberFormatException(s);
+        }
+        return (int)value;
+    }
 }

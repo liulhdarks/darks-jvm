@@ -44,7 +44,45 @@ public final class Locale
 
     public static Locale getDefault()
     {
-        return ROOT;
+        return formatLocale;
+    }
+
+    public enum Category
+    {
+        DISPLAY,
+        FORMAT
+    }
+
+    private static Locale displayLocale = ROOT;
+    private static Locale formatLocale = ROOT;
+
+    public static Locale getDefault(Category category)
+    {
+        if (category == null)
+        {
+            throw new NullPointerException("category");
+        }
+        return category == Category.DISPLAY ? displayLocale : formatLocale;
+    }
+
+    public static void setDefault(Category category, Locale newLocale)
+    {
+        if (category == null)
+        {
+            throw new NullPointerException("category");
+        }
+        if (newLocale == null)
+        {
+            throw new NullPointerException("newLocale");
+        }
+        if (category == Category.DISPLAY)
+        {
+            displayLocale = newLocale;
+        }
+        else
+        {
+            formatLocale = newLocale;
+        }
     }
 
     public String getLanguage()
@@ -55,6 +93,60 @@ public final class Locale
     public String getCountry()
     {
         return country;
+    }
+
+    public String getVariant()
+    {
+        return "";
+    }
+
+    public String getScript()
+    {
+        return "";
+    }
+
+    public String toLanguageTag()
+    {
+        if (language.length() == 0)
+        {
+            return "und";
+        }
+        StringBuilder tag = new StringBuilder(language);
+        String script = getScript();
+        if (script.length() > 0)
+        {
+            tag.append('-').append(script);
+        }
+        if (country.length() > 0)
+        {
+            tag.append('-').append(country);
+        }
+        String variant = getVariant();
+        if (variant.length() > 0)
+        {
+            tag.append('-').append(variant);
+        }
+        return tag.toString();
+    }
+
+    public String getDisplayName()
+    {
+        return toString();
+    }
+
+    public String getDisplayLanguage()
+    {
+        return language;
+    }
+
+    public String getDisplayCountry()
+    {
+        return country;
+    }
+
+    public String getDisplayVariant()
+    {
+        return "";
     }
 
     public boolean equals(Object other)

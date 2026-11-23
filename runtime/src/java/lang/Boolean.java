@@ -1,6 +1,6 @@
 package java.lang;
 
-public final class Boolean implements Comparable<Boolean>
+public final class Boolean implements Comparable<Boolean>, java.io.Serializable
 {
     public static final Class TYPE = Class.getPrimitiveClass("boolean");
 

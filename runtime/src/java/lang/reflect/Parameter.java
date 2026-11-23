@@ -50,6 +50,11 @@ public final class Parameter implements AnnotatedElement
         return type;
     }
 
+    public AnnotatedType getAnnotatedType()
+    {
+        return AnnotatedTypeImpl.of(type);
+    }
+
     public boolean isImplicit()
     {
         return false;

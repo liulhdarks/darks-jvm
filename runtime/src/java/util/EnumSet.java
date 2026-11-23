@@ -38,6 +38,28 @@ public class EnumSet<E extends Enum<E>> extends AbstractSet<E>
         return set;
     }
 
+    public static <E extends Enum<E>> EnumSet<E> complementOf(EnumSet<E> set)
+    {
+        if (set == null)
+        {
+            throw new NullPointerException("set");
+        }
+        EnumSet<E> result = noneOf(set.elementType);
+        E[] constants = set.elementType.getEnumConstants();
+        if (constants == null)
+        {
+            throw new IllegalArgumentException("not an enum type");
+        }
+        for (int i = 0; i < constants.length; i++)
+        {
+            if (!set.contains(constants[i]))
+            {
+                result.add(constants[i]);
+            }
+        }
+        return result;
+    }
+
     public static <E extends Enum<E>> EnumSet<E> of(E first)
     {
         EnumSet<E> set = noneOf(elementTypeOf(first));

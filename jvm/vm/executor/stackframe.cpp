@@ -25,6 +25,25 @@
 
 namespace {
 
+// A descriptor array type (for example [J or [D) is a reference and therefore
+// occupies a single slot, even though its element type is long or double.
+// Only a bare long/double parameter consumes two slots.
+static inline int SlotWidth(const TypeDesc &type)
+{
+	if (type.check_array)
+	{
+		return 1;
+	}
+	return (type.data_type == DT_LONG || type.data_type == DT_DOUBLE) ? 2 : 1;
+}
+
+// Stack-level type of a descriptor: arrays are references regardless of
+// their element type.
+static inline DATA_TYPE SlotType(const TypeDesc &type)
+{
+	return type.check_array ? DT_ARRAY : type.data_type;
+}
+
 struct LambdaCapture
 {
 	DATA_TYPE type;      // DT_* of the captured value (DT_REF/DT_ARRAY for refs)
@@ -3278,8 +3297,7 @@ bool StackFrame::ExecuteInvokeDynamic(U2 index)
 		int cap_slots = 0;
 		for (size_t i = 0; i < arg_types.size(); i++)
 		{
-			cap_slots += (arg_types[i].data_type == DT_LONG ||
-			              arg_types[i].data_type == DT_DOUBLE) ? 2 : 1;
+			cap_slots += SlotWidth(arg_types[i]);
 		}
 		int cap_base = op_stack->size() - cap_slots;
 		if (cap_base < 0)
@@ -3391,8 +3409,7 @@ bool StackFrame::ExecuteInvokeDynamic(U2 index)
 	int total_slots = 0;
 	for (size_t i = 0; i < arg_types.size(); i++)
 	{
-		DATA_TYPE t = arg_types[i].data_type;
-		total_slots += (t == DT_LONG || t == DT_DOUBLE) ? 2 : 1;
+		total_slots += SlotWidth(arg_types[i]);
 	}
 	int base = op_stack->size() - total_slots;
 	if (base < 0)
@@ -3412,7 +3429,7 @@ bool StackFrame::ExecuteInvokeDynamic(U2 index)
 			{
 				return false;
 			}
-			if (arg_types[i].data_type == DT_LONG || arg_types[i].data_type == DT_DOUBLE)
+			if (SlotWidth(arg_types[i]) == 2)
 			{
 				if (!op_stack->get(slot_index + 1, pair[1]))
 				{
@@ -3449,8 +3466,7 @@ bool StackFrame::ExecuteInvokeDynamic(U2 index)
 				{
 					return false;
 				}
-				if (arg_types[arg_index].data_type == DT_LONG ||
-				    arg_types[arg_index].data_type == DT_DOUBLE)
+				if (SlotWidth(arg_types[arg_index]) == 2)
 				{
 					if (!op_stack->get(slot_index + 1, pair[1]))
 					{
@@ -3639,8 +3655,7 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		int ann_arg_slots = 0;
 		for (size_t ti = 0; ti < type_desc.size(); ti++)
 		{
-			DATA_TYPE at = type_desc[ti].data_type;
-			ann_arg_slots += (at == DT_LONG || at == DT_DOUBLE) ? 2 : 1;
+			ann_arg_slots += SlotWidth(type_desc[ti]);
 		}
 		Slot ann_recv;
 		op_stack->top(ann_arg_slots, ann_recv);
@@ -3780,7 +3795,6 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		}
 	}
 
-	lpClass dispatch_receiver = NULL;
 	if (type != SPECIAL_METHOD
 		&& !method->isSpecial()
 		&& !method->isStatic()
@@ -3792,8 +3806,7 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		int arg_slots = 0;
 		for (size_t ti = 0; ti < type_desc.size(); ti++)
 		{
-			DATA_TYPE at = type_desc[ti].data_type;
-			arg_slots += (at == DT_LONG || at == DT_DOUBLE) ? 2 : 1;
+			arg_slots += SlotWidth(type_desc[ti]);
 		}
 		op_stack->top(arg_slots, slot_this);
 		LPOBJECT_REF obj_ref = slot_this.heapPtr;
@@ -3822,7 +3835,17 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 				    strncmp(call_name, sam.c_str(), sam.size()) == 0 &&
 				    call_name[sam.size()] == '\0')
 				{
-					return InvokeLambda(lambda_id, method, type_desc);
+					if (InvokeLambda(lambda_id, method, type_desc))
+					{
+						return true;
+					}
+					if (!VMContext::pending_exception)
+					{
+						VMContext::pending_exception = CreateJavaException(
+							"java/lang/AbstractMethodError",
+							"lambda implementation could not be invoked");
+					}
+					return false;
 				}
 			}
 		}
@@ -3833,7 +3856,6 @@ bool StackFrame::ExecuteVirtual(int index, int type)
 		}
 		lpMethod tmp_method = NULL;
 		lpClass receiver_class = obj->obj_class;
-		dispatch_receiver = receiver_class;
 if (method_ref->cached_receiver_class.load(std::memory_order_acquire) == receiver_class)
 		{
 			tmp_method = method_ref->cached_method.load(std::memory_order_acquire);
@@ -3890,15 +3912,6 @@ if (method_ref->cached_receiver_class.load(std::memory_order_acquire) == receive
 			message += ".";
 			message += method->fullName;
 		}
-		if (getenv("DARKS_JVM_TRACE_DEFINE") && dispatch_receiver &&
-		    dispatch_receiver->thisClass && dispatch_receiver->thisClass->GetName())
-		{
-			fprintf(stderr, "[trace ame] receiver=%s decl=%s method=%s\n",
-				dispatch_receiver->thisClass->GetName(),
-				(method->clazz && method->clazz->thisClass) ? method->clazz->thisClass->GetName() : "?",
-				message.c_str());
-			fflush(stderr);
-		}
 		VMContext::pending_exception = CreateJavaException(
 			"java/lang/AbstractMethodError", message.c_str());
 		return false;
@@ -3944,8 +3957,7 @@ if (method_ref->cached_receiver_class.load(std::memory_order_acquire) == receive
 			int arg_slots = 0;
 			for (size_t ti = 0; ti < type_desc.size(); ti++)
 			{
-				DATA_TYPE at = type_desc[ti].data_type;
-				arg_slots += (at == DT_LONG || at == DT_DOUBLE) ? 2 : 1;
+				arg_slots += SlotWidth(type_desc[ti]);
 			}
 			Slot recv;
 			op_stack->top(arg_slots, recv);
@@ -4016,8 +4028,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 	int arg_slots = 0;
 	for (size_t ti = 0; ti < type_desc.size(); ti++)
 	{
-		DATA_TYPE at = type_desc[ti].data_type;
-		arg_slots += (at == DT_LONG || at == DT_DOUBLE) ? 2 : 1;
+		arg_slots += SlotWidth(type_desc[ti]);
 	}
 
 	lpField field = NULL;
@@ -4054,10 +4065,10 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 		                 field_type.data_type == DT_ARRAY);
 		if (kind == IK_GETTER)
 		{
-			bool ret_ref = (result_desc.data_type == DT_REF ||
-			                result_desc.data_type == DT_ARRAY);
+			bool ret_ref = (SlotType(result_desc) == DT_REF ||
+			                SlotType(result_desc) == DT_ARRAY);
 			if ((ref_kind != ret_ref) ||
-			    (!ref_kind && field_type.data_type != result_desc.data_type))
+			    (!ref_kind && SlotType(field_type) != SlotType(result_desc)))
 			{
 				return false;
 			}
@@ -4068,10 +4079,10 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 			{
 				return false;
 			}
-			bool arg_ref = (type_desc[0].data_type == DT_REF ||
-			                type_desc[0].data_type == DT_ARRAY);
+			bool arg_ref = (SlotType(type_desc[0]) == DT_REF ||
+			                SlotType(type_desc[0]) == DT_ARRAY);
 			if ((ref_kind != arg_ref) ||
-			    (!ref_kind && field_type.data_type != type_desc[0].data_type))
+			    (!ref_kind && SlotType(field_type) != SlotType(type_desc[0])))
 			{
 				return false;
 			}
@@ -4702,8 +4713,7 @@ bool StackFrame::InvokeLambda(int lambda_id, lpMethod call_method,
 	int call_slots = 0;
 	for (size_t i = 0; i < call_args.size(); i++)
 	{
-		call_slots += (call_args[i].data_type == DT_LONG ||
-		               call_args[i].data_type == DT_DOUBLE) ? 2 : 1;
+		call_slots += SlotWidth(call_args[i]);
 	}
 	Slot receiver;
 	if (!op_stack->top(call_slots, receiver))
@@ -4783,6 +4793,17 @@ bool StackFrame::InvokeLambda(int lambda_id, lpMethod call_method,
 	}
 
 	int base = op_stack->size() - call_slots;
+	std::vector<Slot> raw_args;
+	raw_args.reserve(call_slots);
+	for (int i = 0; i < call_slots; i++)
+	{
+		Slot raw;
+		if (!op_stack->get(base + i, raw))
+		{
+			return false;
+		}
+		raw_args.push_back(raw);
+	}
 	int slot_index = base;
 	for (size_t ai = 0; ai < call_args.size(); ai++)
 	{
@@ -4791,7 +4812,7 @@ bool StackFrame::InvokeLambda(int lambda_id, lpMethod call_method,
 		{
 			return false;
 		}
-		bool wide = (call_args[ai].data_type == DT_LONG || call_args[ai].data_type == DT_DOUBLE);
+		bool wide = SlotWidth(call_args[ai]) == 2;
 		if (wide && !op_stack->get(slot_index + 1, high))
 		{
 			return false;
@@ -4839,6 +4860,52 @@ bool StackFrame::InvokeLambda(int lambda_id, lpMethod call_method,
 		return false;
 	}
 
+	// A method reference to a code-less interface declaration whose receiver
+	// is itself a lambda (e.g. wrapping log4j's BiConsumer as a
+	// java.util.function.BiConsumer) must run the receiver's lambda body.
+	// Without this the abstract declaration would be invoked and the call
+	// would fail silently instead of forwarding the arguments.
+	if (!is_static && !is_constructor && (info.kind == 5 || info.kind == 9) &&
+	    !info.target_method->code_attr)
+	{
+		LPOBJECT_REF recv_ref = receiver_in_args
+			? (vars.empty() ? NULL : vars[0].heapPtr)
+			: (info.captures.empty() ? NULL : info.captures[0].low.heapPtr);
+		lpObject recv_obj = NULL;
+		if (recv_ref && VMContext::object_heap->GetObject(recv_ref, recv_obj) && recv_obj)
+		{
+			FIELD_MAP::iterator lit = recv_obj->varants.find("$lambda:id");
+			int recv_lambda_id = (lit != recv_obj->varants.end() && lit->second)
+				? lit->second->field_value.iValue : 0;
+			if (recv_lambda_id > 0)
+			{
+				// The first call-site argument of an unbound reference is the
+				// receiver of the referenced method; it must not be forwarded
+				// as a parameter of the wrapped lambda's SAM.
+				size_t first = receiver_in_args ? 1 : 0;
+				if (raw_args.size() < first || call_args.size() < first)
+				{
+					return false;
+				}
+				for (int i = 0; i < call_slots + 1; i++)
+				{
+					Slot dropped;
+					op_stack->pop(dropped);
+				}
+				Slot recv_slot;
+				recv_slot.heapPtr = recv_ref;
+				op_stack->push(recv_slot);
+				for (size_t i = first; i < raw_args.size(); i++)
+				{
+					op_stack->push(raw_args[i]);
+				}
+				std::vector<TypeDesc> fwd_args(call_args.begin() + first,
+				                               call_args.end());
+				return InvokeLambda(recv_lambda_id, call_method, fwd_args);
+			}
+		}
+	}
+
 	// Call-site arguments and the receiver may now be discarded; the values
 	// live in vars (and captured refs remain reachable through the lambda).
 	for (int i = 0; i < call_slots + 1; i++)
@@ -4865,9 +4932,46 @@ bool StackFrame::InvokeLambda(int lambda_id, lpMethod call_method,
 			const char *method_name = invoke_method->methodName->GetName();
 			std::string desc = invoke_method->methodDesc->GetName();
 			std::string params = desc.substr(0, desc.find(')') + 1);
+			// A dynamic proxy receiver has no concrete methods of its own; the
+			// call has to be routed through its invocation handler exactly like
+			// a direct invokeinterface on the proxy would be.
+			LPOBJECT_REF proxy_handler_ref = NULL;
+			if (DarksVM_LoadProxyHandler(recv_obj, proxy_handler_ref))
+			{
+				Slot recv_slot;
+				size_t first = 0;
+				if (receiver_in_args)
+				{
+					if (raw_args.empty())
+					{
+						return false;
+					}
+					recv_slot = raw_args[0];
+					first = 1;
+				}
+				else
+				{
+					if (info.captures.empty())
+					{
+						return false;
+					}
+					recv_slot = info.captures[0].low;
+				}
+				op_stack->push(recv_slot);
+				for (size_t i = first; i < raw_args.size(); i++)
+				{
+					op_stack->push(raw_args[i]);
+				}
+				std::vector<TypeDesc> proxy_args;
+				for (size_t i = first; i < call_args.size(); i++)
+				{
+					proxy_args.push_back(call_args[i]);
+				}
+				return InvokeProxy(recv_obj, invoke_method, proxy_args, sam_ret);
+			}
 			lpMethod resolved = NULL;
-			if (recv_obj->obj_class->FindMethodByParams(method_name, params.c_str(), resolved) &&
-			    resolved && resolved->code_attr)
+			bool found = recv_obj->obj_class->FindMethodByParams(method_name, params.c_str(), resolved);
+			if (found && resolved && resolved->code_attr)
 			{
 				invoke_method = resolved;
 				invoke_class = resolved->clazz ? resolved->clazz : recv_obj->obj_class;
@@ -5039,8 +5143,7 @@ bool StackFrame::InvokeProxy(lpObject object, lpMethod call_method,
 	int call_slots = 0;
 	for (size_t i = 0; i < call_args.size(); i++)
 	{
-		DATA_TYPE type = call_args[i].data_type;
-		call_slots += (type == DT_LONG || type == DT_DOUBLE) ? 2 : 1;
+		call_slots += SlotWidth(call_args[i]);
 	}
 	int base = op_stack->size() - call_slots;
 	Slot receiver;

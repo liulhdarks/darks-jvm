@@ -1,0 +1,57 @@
+package java.sql;
+
+public interface Statement extends java.sql.Wrapper
+{
+    void addBatch(java.lang.String a0);
+    void cancel();
+    void clearBatch();
+    void clearWarnings();
+    void close();
+    void closeOnCompletion();
+    boolean execute(java.lang.String a0);
+    boolean execute(java.lang.String a0, int a1);
+    boolean execute(java.lang.String a0, int[] a1);
+    boolean execute(java.lang.String a0, java.lang.String[] a1);
+    int[] executeBatch();
+    long[] executeLargeBatch();
+    long executeLargeUpdate(java.lang.String a0);
+    long executeLargeUpdate(java.lang.String a0, int a1);
+    long executeLargeUpdate(java.lang.String a0, int[] a1);
+    long executeLargeUpdate(java.lang.String a0, java.lang.String[] a1);
+    java.sql.ResultSet executeQuery(java.lang.String a0);
+    int executeUpdate(java.lang.String a0);
+    int executeUpdate(java.lang.String a0, int a1);
+    int executeUpdate(java.lang.String a0, int[] a1);
+    int executeUpdate(java.lang.String a0, java.lang.String[] a1);
+    java.sql.Connection getConnection();
+    int getFetchDirection();
+    int getFetchSize();
+    java.sql.ResultSet getGeneratedKeys();
+    long getLargeMaxRows();
+    long getLargeUpdateCount();
+    int getMaxFieldSize();
+    int getMaxRows();
+    boolean getMoreResults();
+    boolean getMoreResults(int a0);
+    int getQueryTimeout();
+    java.sql.ResultSet getResultSet();
+    int getResultSetConcurrency();
+    int getResultSetHoldability();
+    int getResultSetType();
+    int getUpdateCount();
+    java.sql.SQLWarning getWarnings();
+    boolean isCloseOnCompletion();
+    boolean isClosed();
+    boolean isPoolable();
+    boolean isWrapperFor(java.lang.Class a0);
+    void setCursorName(java.lang.String a0);
+    void setEscapeProcessing(boolean a0);
+    void setFetchDirection(int a0);
+    void setFetchSize(int a0);
+    void setLargeMaxRows(long a0);
+    void setMaxFieldSize(int a0);
+    void setMaxRows(int a0);
+    void setPoolable(boolean a0);
+    void setQueryTimeout(int a0);
+    java.lang.Object unwrap(java.lang.Class a0);
+}

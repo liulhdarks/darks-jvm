@@ -97,6 +97,44 @@ public class BigInteger extends Number implements Comparable<BigInteger>
         this.signum = normalized.length == 0 ? 0 : sign;
     }
 
+    public BigInteger(int signum, byte[] magnitude)
+    {
+        if (magnitude == null)
+        {
+            throw new NullPointerException("magnitude");
+        }
+        if (signum < -1 || signum > 1)
+        {
+            throw new NumberFormatException("Invalid signum value");
+        }
+        int[] limbs = new int[0];
+        int i = 0;
+        while (i < magnitude.length)
+        {
+            limbs = mulAdd(limbs, 256, magnitude[i] & 0xff);
+            i = i + 1;
+        }
+        int[] normalized = normalize(limbs);
+        if (normalized.length == 0)
+        {
+            if (signum != 0)
+            {
+                throw new NumberFormatException("signum-magnitude mismatch");
+            }
+            this.signum = 0;
+            this.mag = normalized;
+        }
+        else
+        {
+            if (signum == 0)
+            {
+                throw new NumberFormatException("signum-magnitude mismatch");
+            }
+            this.signum = signum;
+            this.mag = normalized;
+        }
+    }
+
     public static BigInteger valueOf(long value)
     {
         if (value == 0)

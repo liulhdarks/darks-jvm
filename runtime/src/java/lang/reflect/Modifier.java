@@ -32,6 +32,8 @@ public final class Modifier
     public static boolean isSynchronized(int mod) { return (mod & SYNCHRONIZED) != 0; }
     public static boolean isNative(int mod) { return (mod & NATIVE) != 0; }
     public static boolean isVolatile(int mod) { return (mod & VOLATILE) != 0; }
+    public static boolean isTransient(int mod) { return (mod & TRANSIENT) != 0; }
+    public static boolean isStrict(int mod) { return (mod & STRICT) != 0; }
     public static String toString(int mod)
     {
         return "0x" + Integer.toHexString(mod);

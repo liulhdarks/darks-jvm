@@ -28,6 +28,13 @@ public class StringBuilder implements CharSequence
         append(initial);
     }
 
+    public StringBuilder(CharSequence seq)
+    {
+        value = new char[16 + (seq == null ? 4 : seq.length())];
+        count = 0;
+        append(seq);
+    }
+
     private void ensure(int minimum)
     {
         if (minimum <= value.length)
@@ -72,6 +79,17 @@ public class StringBuilder implements CharSequence
         return this;
     }
 
+    public StringBuilder appendCodePoint(int codePoint)
+    {
+        if (codePoint < 0x10000)
+        {
+            return append((char)codePoint);
+        }
+        codePoint -= 0x10000;
+        append((char)(0xD800 + (codePoint >> 10)));
+        return append((char)(0xDC00 + (codePoint & 0x3FF)));
+    }
+
     public StringBuilder append(char c)
     {
         ensure(count + 1);
@@ -105,6 +123,27 @@ public class StringBuilder implements CharSequence
         }
         count = count + n;
         return this;
+    }
+
+    public StringBuilder append(StringBuffer sb)
+    {
+        return append((CharSequence)sb);
+    }
+
+    public void trimToSize()
+    {
+        if (count == value.length)
+        {
+            return;
+        }
+        char[] trimmed = new char[count];
+        int i = 0;
+        while (i < count)
+        {
+            trimmed[i] = value[i];
+            i = i + 1;
+        }
+        value = trimmed;
     }
 
     public StringBuilder append(char[] chars)
@@ -272,6 +311,99 @@ public class StringBuilder implements CharSequence
     public StringBuilder insert(int offset, boolean v)
     {
         return insert(offset, String.valueOf(v));
+    }
+
+    public StringBuilder insert(int offset, Object obj)
+    {
+        return insert(offset, String.valueOf(obj));
+    }
+
+    public StringBuilder insert(int offset, float f)
+    {
+        return insert(offset, Float.toString(f));
+    }
+
+    public StringBuilder insert(int offset, char[] str)
+    {
+        if (str == null)
+        {
+            return insert(offset, "null");
+        }
+        return insert(offset, str, 0, str.length);
+    }
+
+    public StringBuilder insert(int index, char[] str, int offset, int len)
+    {
+        if (index < 0 || index > count)
+        {
+            throw new StringIndexOutOfBoundsException(index);
+        }
+        if (str == null)
+        {
+            return insert(index, "null");
+        }
+        if (offset < 0 || len < 0 || offset > str.length - len)
+        {
+            throw new StringIndexOutOfBoundsException(
+                "offset " + offset + ", len " + len + ", str.length " + str.length);
+        }
+        ensure(count + len);
+        int i = count - 1;
+        while (i >= index)
+        {
+            value[i + len] = value[i];
+            i = i - 1;
+        }
+        i = 0;
+        while (i < len)
+        {
+            value[index + i] = str[offset + i];
+            i = i + 1;
+        }
+        count = count + len;
+        return this;
+    }
+
+    public StringBuilder insert(int dstOffset, CharSequence s)
+    {
+        if (s == null)
+        {
+            s = "null";
+        }
+        return insert(dstOffset, s, 0, s.length());
+    }
+
+    public StringBuilder insert(int dstOffset, CharSequence s, int start, int end)
+    {
+        if (dstOffset < 0 || dstOffset > count)
+        {
+            throw new StringIndexOutOfBoundsException(dstOffset);
+        }
+        if (s == null)
+        {
+            s = "null";
+        }
+        if (start < 0 || start > end || end > s.length())
+        {
+            throw new StringIndexOutOfBoundsException(
+                "start " + start + ", end " + end + ", length " + s.length());
+        }
+        int len = end - start;
+        ensure(count + len);
+        int i = count - 1;
+        while (i >= dstOffset)
+        {
+            value[i + len] = value[i];
+            i = i - 1;
+        }
+        i = 0;
+        while (i < len)
+        {
+            value[dstOffset + i] = s.charAt(start + i);
+            i = i + 1;
+        }
+        count = count + len;
+        return this;
     }
 
     public StringBuilder deleteCharAt(int index)

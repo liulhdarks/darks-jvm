@@ -60,4 +60,19 @@ public abstract class Executable extends AccessibleObject
     public abstract Type[] getGenericParameterTypes();
 
     public abstract Type[] getGenericExceptionTypes();
+
+    public AnnotatedType getAnnotatedReturnType()
+    {
+        return null;
+    }
+
+    public AnnotatedType[] getAnnotatedParameterTypes()
+    {
+        return AnnotatedTypeImpl.ofArray(getGenericParameterTypes());
+    }
+
+    public AnnotatedType[] getAnnotatedExceptionTypes()
+    {
+        return AnnotatedTypeImpl.ofArray(getGenericExceptionTypes());
+    }
 }

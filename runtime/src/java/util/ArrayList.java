@@ -21,6 +21,24 @@ public class ArrayList<E> implements List<E>
         addAll(values);
     }
 
+    public void trimToSize()
+    {
+        if (count < elements.length)
+        {
+            Object[] trimmed = new Object[count > 0 ? count : 1];
+            for (int i = 0; i < count; i++)
+            {
+                trimmed[i] = elements[i];
+            }
+            elements = trimmed;
+        }
+    }
+
+    public void ensureCapacity(int capacity)
+    {
+        ensure(capacity);
+    }
+
     private void ensure(int needed)
     {
         if (needed <= elements.length)

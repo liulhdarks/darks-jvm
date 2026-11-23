@@ -110,16 +110,23 @@ public final class Method extends Executable implements Member
 
     public java.lang.annotation.Annotation[][] getParameterAnnotations()
     {
+        java.lang.annotation.Annotation[][] result = getParameterAnnotations0();
+        if (result != null)
+        {
+            return result;
+        }
         Class[] types = getParameterTypes();
         int count = types == null ? 0 : types.length;
-        java.lang.annotation.Annotation[][] result =
+        java.lang.annotation.Annotation[][] empty =
             new java.lang.annotation.Annotation[count][];
         for (int i = 0; i < count; i++)
         {
-            result[i] = new java.lang.annotation.Annotation[0];
+            empty[i] = new java.lang.annotation.Annotation[0];
         }
-        return result;
+        return empty;
     }
+
+    private native java.lang.annotation.Annotation[][] getParameterAnnotations0();
 
     boolean handleParameterNumberMismatch(int resultLength, Class<?>[] actual)
     {
@@ -128,17 +135,17 @@ public final class Method extends Executable implements Member
 
     public java.lang.reflect.AnnotatedType getAnnotatedReturnType()
     {
-        return null;
+        return java.lang.reflect.AnnotatedType.of(getReturnType());
     }
 
     public java.lang.reflect.AnnotatedType[] getAnnotatedParameterTypes()
     {
-        return new java.lang.reflect.AnnotatedType[0];
+        return java.lang.reflect.AnnotatedType.ofArray(getGenericParameterTypes());
     }
 
     public java.lang.reflect.AnnotatedType[] getAnnotatedExceptionTypes()
     {
-        return new java.lang.reflect.AnnotatedType[0];
+        return java.lang.reflect.AnnotatedType.ofArray(getGenericExceptionTypes());
     }
 
     public native Class[] getParameterTypes();

@@ -1,6 +1,6 @@
 package java.util;
 
-public class HashSet<E> implements Set<E>
+public class HashSet<E> extends AbstractSet<E> implements Set<E>
 {
     private Object[] elements;
     private boolean[] used;
@@ -243,30 +243,30 @@ public class HashSet<E> implements Set<E>
     private static class Itr<E> implements Iterator<E>
     {
         private final HashSet<E> owner;
-        private int[] indices;
+        private final Object[] snapshot;
         private int cursor;
         private int last = -1;
 
         Itr(HashSet<E> owner)
         {
             this.owner = owner;
-            this.indices = owner.visitOrder();
+            this.snapshot = owner.toArray();
         }
 
         public boolean hasNext()
         {
-            return cursor < indices.length;
+            return cursor < snapshot.length;
         }
 
         public E next()
         {
-            if (cursor >= indices.length)
+            if (cursor >= snapshot.length)
             {
                 throw new NoSuchElementException();
             }
-            last = indices[cursor];
+            last = cursor;
             cursor++;
-            return (E)owner.elements[last];
+            return (E)snapshot[last];
         }
 
         public void remove()
@@ -275,10 +275,8 @@ public class HashSet<E> implements Set<E>
             {
                 throw new IllegalStateException();
             }
-            owner.remove(owner.elements[last]);
+            owner.remove(snapshot[last]);
             last = -1;
-            indices = owner.visitOrder();
-            cursor = 0;
         }
     }
 }

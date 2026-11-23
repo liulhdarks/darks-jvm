@@ -52,6 +52,11 @@ public final class Field extends AccessibleObject implements AnnotatedElement, M
         return genericTypeCache;
     }
 
+    public AnnotatedType getAnnotatedType()
+    {
+        return AnnotatedTypeImpl.of(getGenericType());
+    }
+
     public native Object get0(Object obj);
 
     public Object get(Object obj) throws IllegalAccessException
@@ -64,6 +69,86 @@ public final class Field extends AccessibleObject implements AnnotatedElement, M
     public void set(Object obj, Object value) throws IllegalAccessException
     {
         set0(obj, value);
+    }
+
+    public boolean getBoolean(Object obj) throws IllegalAccessException
+    {
+        return ((Boolean)get(obj)).booleanValue();
+    }
+
+    public byte getByte(Object obj) throws IllegalAccessException
+    {
+        return ((Number)get(obj)).byteValue();
+    }
+
+    public char getChar(Object obj) throws IllegalAccessException
+    {
+        return ((Character)get(obj)).charValue();
+    }
+
+    public short getShort(Object obj) throws IllegalAccessException
+    {
+        return ((Number)get(obj)).shortValue();
+    }
+
+    public int getInt(Object obj) throws IllegalAccessException
+    {
+        return ((Number)get(obj)).intValue();
+    }
+
+    public long getLong(Object obj) throws IllegalAccessException
+    {
+        return ((Number)get(obj)).longValue();
+    }
+
+    public float getFloat(Object obj) throws IllegalAccessException
+    {
+        return ((Number)get(obj)).floatValue();
+    }
+
+    public double getDouble(Object obj) throws IllegalAccessException
+    {
+        return ((Number)get(obj)).doubleValue();
+    }
+
+    public void setBoolean(Object obj, boolean value) throws IllegalAccessException
+    {
+        set(obj, Boolean.valueOf(value));
+    }
+
+    public void setByte(Object obj, byte value) throws IllegalAccessException
+    {
+        set(obj, Byte.valueOf(value));
+    }
+
+    public void setChar(Object obj, char value) throws IllegalAccessException
+    {
+        set(obj, Character.valueOf(value));
+    }
+
+    public void setShort(Object obj, short value) throws IllegalAccessException
+    {
+        set(obj, Short.valueOf(value));
+    }
+
+    public void setInt(Object obj, int value) throws IllegalAccessException
+    {
+        set(obj, Integer.valueOf(value));
+    }
+
+    public void setLong(Object obj, long value) throws IllegalAccessException
+    {
+        set(obj, Long.valueOf(value));
+    }
+
+    public void setFloat(Object obj, float value) throws IllegalAccessException
+    {
+        set(obj, Float.valueOf(value));
+    }
+
+    public void setDouble(Object obj, double value) throws IllegalAccessException
+    {
+        set(obj, Double.valueOf(value));
     }
 
     public native Annotation[] getDeclaredAnnotations0();

@@ -8,13 +8,26 @@ public class CharsetEncoder
     private final Charset charset;
     private CodingErrorAction malformedInputAction = CodingErrorAction.REPORT;
     private CodingErrorAction unmappableCharacterAction = CodingErrorAction.REPORT;
-    private String replacement = "?";
+    private byte[] replacement = { (byte)'?' };
+    private final float averageBytesPerChar;
+    private final float maxBytesPerChar;
     private byte[] pendingBytes = new byte[0];
     private int pendingPosition;
 
     protected CharsetEncoder(Charset cs)
     {
+        this(cs, 1.0f, 1.0f);
+    }
+
+    protected CharsetEncoder(Charset cs, float averageBytesPerChar,
+                             float maxBytesPerChar)
+    {
+        if (averageBytesPerChar <= 0.0f || maxBytesPerChar <= 0.0f) {
+            throw new IllegalArgumentException("averageBytesPerChar and maxBytesPerChar must be positive");
+        }
         this.charset = cs;
+        this.averageBytesPerChar = averageBytesPerChar;
+        this.maxBytesPerChar = maxBytesPerChar;
     }
 
     public final Charset charset()
@@ -24,12 +37,12 @@ public class CharsetEncoder
 
     public final float averageBytesPerChar()
     {
-        return 1.0f;
+        return averageBytesPerChar;
     }
 
     public final float maxBytesPerChar()
     {
-        return 1.0f;
+        return maxBytesPerChar;
     }
 
     public final CodingErrorAction malformedInputAction()
@@ -44,6 +57,7 @@ public class CharsetEncoder
             throw new IllegalArgumentException();
         }
         malformedInputAction = action;
+        implOnMalformedInput(action);
         return this;
     }
 
@@ -59,21 +73,38 @@ public class CharsetEncoder
             throw new IllegalArgumentException();
         }
         unmappableCharacterAction = action;
+        implOnUnmappableCharacter(action);
         return this;
     }
 
-    public final String replacement()
+    public final byte[] replacement()
     {
-        return replacement;
+        byte[] copy = new byte[replacement.length];
+        int i = 0;
+        while (i < copy.length) {
+            copy[i] = replacement[i];
+            i = i + 1;
+        }
+        return copy;
     }
 
     public final CharsetEncoder replaceWith(byte[] newReplacement)
     {
         if (newReplacement == null || newReplacement.length == 0)
         {
-            throw new IllegalArgumentException();
+            throw new IllegalArgumentException("empty replacement");
         }
-        replacement = new String(newReplacement);
+        if (!isLegalReplacement(newReplacement)) {
+            throw new IllegalArgumentException("illegal replacement");
+        }
+        byte[] copy = new byte[newReplacement.length];
+        int i = 0;
+        while (i < copy.length) {
+            copy[i] = newReplacement[i];
+            i = i + 1;
+        }
+        replacement = copy;
+        implReplaceWith(copy);
         return this;
     }
 
@@ -83,6 +114,7 @@ public class CharsetEncoder
         pendingPosition = 0;
         malformedInputAction = CodingErrorAction.REPORT;
         unmappableCharacterAction = CodingErrorAction.REPORT;
+        implReset();
         return this;
     }
 
@@ -125,7 +157,7 @@ public class CharsetEncoder
         int count = in.remaining();
         char[] chars = new char[count];
         in.get(chars);
-        byte[] bytes = charset.encode(new String(chars));
+        byte[] bytes = charset.encodeBytes(new String(chars));
         int room = out.remaining();
         if (bytes.length <= room)
         {
@@ -155,6 +187,22 @@ public class CharsetEncoder
 
     public boolean isLegalReplacement(byte[] replacement)
     {
-        return true;
+        return replacement != null && replacement.length > 0;
+    }
+
+    protected void implReplaceWith(byte[] newReplacement)
+    {
+    }
+
+    protected void implOnMalformedInput(CodingErrorAction newAction)
+    {
+    }
+
+    protected void implOnUnmappableCharacter(CodingErrorAction newAction)
+    {
+    }
+
+    protected void implReset()
+    {
     }
 }

@@ -207,6 +207,18 @@ int main(int argc, char **argv)
 
 	// ---------------------------------------------------------------- (b3)
 	// String objects (String -> char[]) stay alive while rooted.
+	// String.<clinit> keeps the CASE_INSENSITIVE_ORDER comparator reachable
+	// through a static field, so the first string creation leaves one object
+	// that is a legitimate root.  Measure that baseline first and require the
+	// string and its char[] to be collected relative to it.
+	{
+		char warmup[] = "gc-string-warmup";
+		LPOBJECT_REF warmup_ref = NULL;
+		CHECK(heap->NewStringObject(warmup, static_cast<int>(strlen(warmup)),
+		                            warmup_ref));
+	}
+	heap->gc();
+	size_t class_init_live = heap->LiveObjectCount();
 	{
 		char text[] = "gc-string";
 		LPOBJECT_REF str_ref = NULL;
@@ -220,7 +232,7 @@ int main(int argc, char **argv)
 		CHECK(length == 9);
 	}
 	heap->gc();
-	CHECK(heap->LiveObjectCount() == 0);
+	CHECK(heap->LiveObjectCount() == class_init_live);
 
 	// ---------------------------------------------------------------- (b4)
 	// Static fields are roots; clearing the static field makes the object

@@ -193,6 +193,110 @@ JNIEXPORT jobject JNICALL Java_java_lang_Object_getClass(JNIEnv *env, jobject th
 	return mirror;
 }
 
+// Shallow copy: a fresh instance of the same class with every instance field
+// copied by value (object references stay shared).  Arrays copy their backing
+// storage.  Mirrors Object.clone in the JDK, which is a native method there as
+// well; several H2/Spring data structures rely on it.
+JNIEXPORT jobject JNICALL Java_java_lang_Object_clone(JNIEnv *env, jobject thiz)
+{
+	lpObject source = JniResolveObject(thiz);
+	if (!source || !source->obj_class || !VMContext::object_heap)
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/CloneNotSupportedException", "null receiver");
+		return NULL;
+	}
+	LPOBJECT_REF ref = NULL;
+	if (source->array_var)
+	{
+		if (!VMContext::object_heap->NewObjectArrayObject(
+			    source->array_length, source->obj_class, ref) ||
+		    !ref)
+		{
+			return NULL;
+		}
+		lpObject copy = NULL;
+		if (!VMContext::object_heap->GetObject(ref, copy) || !copy)
+		{
+			return NULL;
+		}
+		size_t width = 0;
+		switch (source->array_data_type)
+		{
+		case DT_INT:
+			width = sizeof(jint);
+			break;
+		case DT_SHORT:
+			width = sizeof(jshort);
+			break;
+		case DT_CHAR:
+			width = sizeof(jchar);
+			break;
+		case DT_BYTE:
+		case DT_BOOL:
+			width = sizeof(jbyte);
+			break;
+		case DT_LONG:
+			width = sizeof(jlong);
+			break;
+		case DT_FLOAT:
+			width = sizeof(jfloat);
+			break;
+		case DT_DOUBLE:
+			width = sizeof(jdouble);
+			break;
+		case DT_ARRAY:
+		case DT_REF:
+			width = sizeof(jobject);
+			break;
+		default:
+			break;
+		}
+		if (width > 0 && source->array_length > 0 && copy->array_var)
+		{
+			memcpy(copy->array_var, source->array_var,
+			       width * static_cast<size_t>(source->array_length));
+		}
+		jobject result = JniObject(ref);
+		JniAddLocalRef(env, result);
+		return result;
+	}
+
+	lpClass cloneable = JniFindClass(env, "java/lang/Cloneable");
+	if (!cloneable || !IsInstanceOfClass(source, cloneable))
+	{
+		VMContext::pending_exception = CreateJavaException(
+			"java/lang/CloneNotSupportedException",
+			"class does not implement Cloneable");
+		return NULL;
+	}
+	if (!VMContext::object_heap->NewObject(source->obj_class, ref) || !ref)
+	{
+		return NULL;
+	}
+	lpObject copy = NULL;
+	if (!VMContext::object_heap->GetObject(ref, copy) || !copy)
+	{
+		return NULL;
+	}
+	size_t slots = source->instance_slots.size();
+	if (copy->instance_slots.size() < slots)
+	{
+		slots = copy->instance_slots.size();
+	}
+	for (size_t i = 0; i < slots; i++)
+	{
+		if (source->instance_slots[i] && copy->instance_slots[i])
+		{
+			copy->instance_slots[i]->field_value =
+				source->instance_slots[i]->field_value;
+		}
+	}
+	jobject result = JniObject(ref);
+	JniAddLocalRef(env, result);
+	return result;
+}
+
 // ---------------------------------------------------------------------------
 // java.lang.Throwable
 // ---------------------------------------------------------------------------
@@ -414,7 +518,11 @@ JNIEXPORT jstring JNICALL Java_java_lang_Class_getSource0(JNIEnv *env, jobject t
 JNIEXPORT jobject JNICALL Java_java_lang_Class_getSuperclass(JNIEnv *env, jobject thiz)
 {
 	lpClass clazz = ClassPointer(thiz);
-	if (!clazz || !clazz->super_class)
+	// An interface's class file names java/lang/Object as its superclass, but
+	// Class.getSuperclass() reports null for interfaces (JDK semantics).  The
+	// generic view follows the same rule, and callers such as ByteBuddy rely on
+	// the two being consistent.
+	if (!clazz || !clazz->super_class || clazz->isInterface())
 	{
 		return NULL;
 	}

@@ -37,6 +37,11 @@ public final class ServiceLoader<S> implements Iterable<S>
         return load(service, ClassLoader.getSystemClassLoader());
     }
 
+    public void reload()
+    {
+        providers = null;
+    }
+
     public Iterator<S> iterator()
     {
         loadProviders();

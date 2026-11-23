@@ -74,6 +74,23 @@ public class NumberFormat
         return getNumberInstance();
     }
 
+    public static NumberFormat getIntegerInstance(Locale locale)
+    {
+        return getIntegerInstance();
+    }
+
+    public static NumberFormat getPercentInstance(Locale locale)
+    {
+        // Locale-specific symbols need JDK locale data; the default symbols
+        // are used instead.
+        return getPercentInstance();
+    }
+
+    public static NumberFormat getCurrencyInstance(Locale locale)
+    {
+        return getCurrencyInstance();
+    }
+
     public boolean isGroupingUsed()
     {
         return groupingUsed;
@@ -342,5 +359,25 @@ public class NumberFormat
             return Long.valueOf(value.longValue());
         }
         return Double.valueOf(value.doubleValue());
+    }
+
+    public Number parse(String text, ParsePosition pos)
+    {
+        if (text == null || pos == null)
+        {
+            throw new NullPointerException();
+        }
+        int start = pos.getIndex();
+        try
+        {
+            Number value = parse(text.substring(start));
+            pos.setIndex(text.length());
+            return value;
+        }
+        catch (ParseException error)
+        {
+            pos.setErrorIndex(start);
+            return null;
+        }
     }
 }

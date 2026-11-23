@@ -18,9 +18,18 @@ public final class Console
                 System.out.print(text);
             }
 
+            public void write(char[] chars, int offset, int length) throws IOException
+            {
+                System.out.print(new String(chars, offset, length));
+            }
+
             public void flush()
             {
                 System.out.flush();
+            }
+
+            public void close()
+            {
             }
         });
     }

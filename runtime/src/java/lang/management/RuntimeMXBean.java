@@ -33,6 +33,8 @@ public interface RuntimeMXBean
 
     String getBootClassPath();
 
+    boolean isBootClassPathSupported();
+
     String getLibraryPath();
 
     String getManagementSpecVersion();

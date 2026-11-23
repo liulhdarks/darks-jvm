@@ -966,4 +966,568 @@ public class Arrays
         }
         return -(low + 1);
     }
+
+    public static float[] copyOf(float[] values, int length)
+    {
+        float[] result = new float[length];
+        int limit = values.length < length ? values.length : length;
+        System.arraycopy(values, 0, result, 0, limit);
+        return result;
+    }
+
+    public static short[] copyOf(short[] values, int length)
+    {
+        short[] result = new short[length];
+        int limit = values.length < length ? values.length : length;
+        System.arraycopy(values, 0, result, 0, limit);
+        return result;
+    }
+
+    public static byte[] copyOfRange(byte[] values, int from, int to)
+    {
+        byte[] result = new byte[to - from];
+        int limit = values.length - from;
+        if (limit > result.length)
+        {
+            limit = result.length;
+        }
+        if (limit > 0)
+        {
+            System.arraycopy(values, from, result, 0, limit);
+        }
+        return result;
+    }
+
+    public static char[] copyOfRange(char[] values, int from, int to)
+    {
+        char[] result = new char[to - from];
+        int limit = values.length - from;
+        if (limit > result.length)
+        {
+            limit = result.length;
+        }
+        if (limit > 0)
+        {
+            System.arraycopy(values, from, result, 0, limit);
+        }
+        return result;
+    }
+
+    public static int[] copyOfRange(int[] values, int from, int to)
+    {
+        int[] result = new int[to - from];
+        int limit = values.length - from;
+        if (limit > result.length)
+        {
+            limit = result.length;
+        }
+        if (limit > 0)
+        {
+            System.arraycopy(values, from, result, 0, limit);
+        }
+        return result;
+    }
+
+    public static long[] copyOfRange(long[] values, int from, int to)
+    {
+        long[] result = new long[to - from];
+        int limit = values.length - from;
+        if (limit > result.length)
+        {
+            limit = result.length;
+        }
+        if (limit > 0)
+        {
+            System.arraycopy(values, from, result, 0, limit);
+        }
+        return result;
+    }
+
+    public static Object[] copyOfRange(Object[] values, int from, int to)
+    {
+        Object[] result = (Object[])java.lang.reflect.Array.newInstance(
+            values.getClass().getComponentType(), to - from);
+        int limit = values.length - from;
+        if (limit > result.length)
+        {
+            limit = result.length;
+        }
+        if (limit > 0)
+        {
+            System.arraycopy(values, from, result, 0, limit);
+        }
+        return result;
+    }
+
+    public static Object[] copyOfRange(Object[] values, int from, int to, Class newType)
+    {
+        Object[] result = (Object[])java.lang.reflect.Array.newInstance(
+            newType.getComponentType(), to - from);
+        int limit = values.length - from;
+        if (limit > result.length)
+        {
+            limit = result.length;
+        }
+        if (limit > 0)
+        {
+            System.arraycopy(values, from, result, 0, limit);
+        }
+        return result;
+    }
+
+    public static void sort(Object[] values, int from, int to)
+    {
+        for (int i = from + 1; i < to; i++)
+        {
+            Object value = values[i];
+            int j = i - 1;
+            while (j >= from && ((Comparable)values[j]).compareTo(value) > 0)
+            {
+                values[j + 1] = values[j];
+                j--;
+            }
+            values[j + 1] = value;
+        }
+    }
+
+    public static void sort(Object[] values, int from, int to,
+        Comparator<? super Object> comparator)
+    {
+        for (int i = from + 1; i < to; i++)
+        {
+            Object value = values[i];
+            int j = i - 1;
+            while (j >= from && comparator.compare(values[j], value) > 0)
+            {
+                values[j + 1] = values[j];
+                j--;
+            }
+            values[j + 1] = value;
+        }
+    }
+
+    public static boolean equals(boolean[] a, boolean[] b)
+    {
+        if (a == b)
+        {
+            return true;
+        }
+        if (a == null || b == null || a.length != b.length)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.length; i++)
+        {
+            if (a[i] != b[i])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean equals(byte[] a, byte[] b)
+    {
+        if (a == b)
+        {
+            return true;
+        }
+        if (a == null || b == null || a.length != b.length)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.length; i++)
+        {
+            if (a[i] != b[i])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean equals(char[] a, char[] b)
+    {
+        if (a == b)
+        {
+            return true;
+        }
+        if (a == null || b == null || a.length != b.length)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.length; i++)
+        {
+            if (a[i] != b[i])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean equals(double[] a, double[] b)
+    {
+        if (a == b)
+        {
+            return true;
+        }
+        if (a == null || b == null || a.length != b.length)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.length; i++)
+        {
+            if (Double.doubleToLongBits(a[i]) != Double.doubleToLongBits(b[i]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean equals(float[] a, float[] b)
+    {
+        if (a == b)
+        {
+            return true;
+        }
+        if (a == null || b == null || a.length != b.length)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.length; i++)
+        {
+            if (Float.floatToIntBits(a[i]) != Float.floatToIntBits(b[i]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean equals(short[] a, short[] b)
+    {
+        if (a == b)
+        {
+            return true;
+        }
+        if (a == null || b == null || a.length != b.length)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.length; i++)
+        {
+            if (a[i] != b[i])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean deepEquals(Object[] a, Object[] b)
+    {
+        if (a == b)
+        {
+            return true;
+        }
+        if (a == null || b == null || a.length != b.length)
+        {
+            return false;
+        }
+        for (int i = 0; i < a.length; i++)
+        {
+            if (!deepEqualsValue(a[i], b[i]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean deepEqualsValue(Object a, Object b)
+    {
+        if (a == b)
+        {
+            return true;
+        }
+        if (a == null || b == null)
+        {
+            return false;
+        }
+        if (a instanceof Object[] && b instanceof Object[])
+        {
+            return deepEquals((Object[])a, (Object[])b);
+        }
+        if (a instanceof byte[] && b instanceof byte[])
+        {
+            return equals((byte[])a, (byte[])b);
+        }
+        if (a instanceof char[] && b instanceof char[])
+        {
+            return equals((char[])a, (char[])b);
+        }
+        if (a instanceof int[] && b instanceof int[])
+        {
+            return equals((int[])a, (int[])b);
+        }
+        if (a instanceof long[] && b instanceof long[])
+        {
+            return equals((long[])a, (long[])b);
+        }
+        if (a instanceof short[] && b instanceof short[])
+        {
+            return equals((short[])a, (short[])b);
+        }
+        if (a instanceof boolean[] && b instanceof boolean[])
+        {
+            boolean[] x = (boolean[])a;
+            boolean[] y = (boolean[])b;
+            if (x.length != y.length)
+            {
+                return false;
+            }
+            for (int i = 0; i < x.length; i++)
+            {
+                if (x[i] != y[i])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (a instanceof double[] && b instanceof double[])
+        {
+            return equals((double[])a, (double[])b);
+        }
+        if (a instanceof float[] && b instanceof float[])
+        {
+            return equals((float[])a, (float[])b);
+        }
+        return a.equals(b);
+    }
+
+    public static String deepToString(Object[] values)
+    {
+        if (values == null)
+        {
+            return "null";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append('[');
+        for (int i = 0; i < values.length; i++)
+        {
+            if (i > 0)
+            {
+                sb.append(", ");
+            }
+            Object value = values[i];
+            if (value instanceof Object[])
+            {
+                sb.append(deepToString((Object[])value));
+            }
+            else
+            {
+                sb.append(String.valueOf(value));
+            }
+        }
+        sb.append(']');
+        return sb.toString();
+    }
+
+    public static java.util.stream.DoubleStream stream(double[] values)
+    {
+        return java.util.stream.DoubleStream.of(values);
+    }
+
+    public static java.util.stream.LongStream stream(long[] values)
+    {
+        return java.util.stream.LongStream.of(values);
+    }
+
+    public static int compare(byte[] a, byte[] b)
+    {
+        int length = a.length < b.length ? a.length : b.length;
+        for (int i = 0; i < length; i++)
+        {
+            int av = a[i];
+            int bv = b[i];
+            if (av != bv)
+            {
+                return av < bv ? -1 : 1;
+            }
+        }
+        return a.length - b.length;
+    }
+
+    public static int compare(char[] a, char[] b)
+    {
+        int length = a.length < b.length ? a.length : b.length;
+        for (int i = 0; i < length; i++)
+        {
+            if (a[i] != b[i])
+            {
+                return a[i] < b[i] ? -1 : 1;
+            }
+        }
+        return a.length - b.length;
+    }
+
+    public static int compareUnsigned(byte[] a, byte[] b)
+    {
+        int length = a.length < b.length ? a.length : b.length;
+        for (int i = 0; i < length; i++)
+        {
+            int av = a[i] & 0xff;
+            int bv = b[i] & 0xff;
+            if (av != bv)
+            {
+                return av < bv ? -1 : 1;
+            }
+        }
+        return a.length - b.length;
+    }
+
+    public static int binarySearch(Object[] values, Object key)
+    {
+        return binarySearch(values, 0, values.length, key);
+    }
+
+    public static int binarySearch(Object[] values, int fromIndex, int toIndex, Object key)
+    {
+        int low = fromIndex;
+        int high = toIndex - 1;
+        while (low <= high)
+        {
+            int mid = (low + high) >>> 1;
+            int cmp = ((Comparable)values[mid]).compareTo(key);
+            if (cmp < 0)
+            {
+                low = mid + 1;
+            }
+            else if (cmp > 0)
+            {
+                high = mid - 1;
+            }
+            else
+            {
+                return mid;
+            }
+        }
+        return -(low + 1);
+    }
+
+    public static int binarySearch(Object[] values, Object key,
+        Comparator<? super Object> comparator)
+    {
+        int low = 0;
+        int high = values.length - 1;
+        while (low <= high)
+        {
+            int mid = (low + high) >>> 1;
+            int cmp = comparator.compare(values[mid], key);
+            if (cmp < 0)
+            {
+                low = mid + 1;
+            }
+            else if (cmp > 0)
+            {
+                high = mid - 1;
+            }
+            else
+            {
+                return mid;
+            }
+        }
+        return -(low + 1);
+    }
+
+    public static int binarySearch(char[] values, char key)
+    {
+        int low = 0;
+        int high = values.length - 1;
+        while (low <= high)
+        {
+            int mid = (low + high) >>> 1;
+            char midValue = values[mid];
+            if (midValue < key)
+            {
+                low = mid + 1;
+            }
+            else if (midValue > key)
+            {
+                high = mid - 1;
+            }
+            else
+            {
+                return mid;
+            }
+        }
+        return -(low + 1);
+    }
+
+    public static int binarySearch(double[] values, double key)
+    {
+        int low = 0;
+        int high = values.length - 1;
+        while (low <= high)
+        {
+            int mid = (low + high) >>> 1;
+            double midValue = values[mid];
+            if (midValue < key)
+            {
+                low = mid + 1;
+            }
+            else if (midValue > key)
+            {
+                high = mid - 1;
+            }
+            else
+            {
+                return mid;
+            }
+        }
+        return -(low + 1);
+    }
+
+    public static void fill(char[] values, int start, int end, char value)
+    {
+        for (int i = start; i < end && i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(short[] values, int start, int end, short value)
+    {
+        for (int i = start; i < end && i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(long[] values, int start, int end, long value)
+    {
+        for (int i = start; i < end && i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(boolean[] values, int start, int end, boolean value)
+    {
+        for (int i = start; i < end && i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
+
+    public static void fill(byte[] values, int start, int end, byte value)
+    {
+        for (int i = start; i < end && i < values.length; i++)
+        {
+            values[i] = value;
+        }
+    }
 }

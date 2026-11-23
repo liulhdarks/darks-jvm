@@ -72,6 +72,24 @@ public class Random
         return next(1) != 0;
     }
 
+    public void nextBytes(byte[] bytes)
+    {
+        if (bytes == null)
+        {
+            throw new NullPointerException("bytes");
+        }
+        int index = 0;
+        while (index < bytes.length)
+        {
+            int value = nextInt();
+            for (int i = 0; i < 4 && index < bytes.length; i++)
+            {
+                bytes[index++] = (byte)value;
+                value >>= 8;
+            }
+        }
+    }
+
     public double nextDouble()
     {
         long high = (long)next(26) << 27;

@@ -1,6 +1,6 @@
 package java.util;
 
-public class HashMap<K, V> implements Map<K, V>
+public class HashMap<K, V> implements Map<K, V>, Cloneable
 {
     private Object[] keys;
     private Object[] values;
@@ -361,13 +361,107 @@ public class HashMap<K, V> implements Map<K, V>
 
     public Set<Map.Entry<K, V>> entrySet()
     {
-        Set<Map.Entry<K, V>> result = newEntrySet();
-        int[] indices = visitOrder();
-        for (int i = 0; i < indices.length; i++)
+        return new EntrySetView();
+    }
+
+    private final class EntrySetView extends AbstractSet<Map.Entry<K, V>>
+    {
+        public int size()
         {
-            result.add(new EntryImpl((K)keys[indices[i]]));
+            return count;
         }
-        return result;
+
+        public boolean isEmpty()
+        {
+            return count == 0;
+        }
+
+        public boolean contains(Object value)
+        {
+            if (!(value instanceof Map.Entry))
+            {
+                return false;
+            }
+            Map.Entry entry = (Map.Entry)value;
+            Object key = entry.getKey();
+            if (!HashMap.this.containsKey(key))
+            {
+                return false;
+            }
+            V mine = HashMap.this.get(key);
+            Object other = entry.getValue();
+            return mine == null ? other == null : mine.equals(other);
+        }
+
+        public Iterator<Map.Entry<K, V>> iterator()
+        {
+            return new EntryIterator();
+        }
+
+        public boolean remove(Object value)
+        {
+            if (!(value instanceof Map.Entry))
+            {
+                return false;
+            }
+            Object key = ((Map.Entry)value).getKey();
+            if (!HashMap.this.containsKey(key))
+            {
+                return false;
+            }
+            HashMap.this.remove(key);
+            return true;
+        }
+
+        public void clear()
+        {
+            HashMap.this.clear();
+        }
+    }
+
+    private final class EntryIterator implements Iterator<Map.Entry<K, V>>
+    {
+        private final Object[] snapshot;
+        private int cursor;
+        private Object lastKey;
+        private boolean lastValid;
+
+        EntryIterator()
+        {
+            snapshot = new Object[count];
+            int[] indices = visitOrder();
+            for (int i = 0; i < indices.length; i++)
+            {
+                snapshot[i] = keys[indices[i]];
+            }
+        }
+
+        public boolean hasNext()
+        {
+            return cursor < snapshot.length;
+        }
+
+        public Map.Entry<K, V> next()
+        {
+            if (cursor >= snapshot.length)
+            {
+                throw new NoSuchElementException();
+            }
+            lastKey = snapshot[cursor];
+            cursor++;
+            lastValid = true;
+            return new EntryImpl((K)lastKey);
+        }
+
+        public void remove()
+        {
+            if (!lastValid)
+            {
+                throw new IllegalStateException();
+            }
+            HashMap.this.remove(lastKey);
+            lastValid = false;
+        }
     }
 
     private final class EntryImpl implements Map.Entry<K, V>
@@ -416,6 +510,13 @@ public class HashMap<K, V> implements Map<K, V>
             V value = getValue();
             return Objects.hashCode(key) ^ Objects.hashCode(value);
         }
+    }
+
+    public Object clone()
+    {
+        HashMap<K, V> copy = new HashMap<K, V>(count > 0 ? count * 2 : 16);
+        copy.putAll(this);
+        return copy;
     }
 
     public String toString()

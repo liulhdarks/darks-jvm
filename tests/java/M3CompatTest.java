@@ -127,7 +127,7 @@ public class M3CompatTest
         check("charset supported", Charset.isSupported("UTF-8"));
         CharBuffer decoded = utf8.decode(ByteBuffer.wrap(new byte[] { 'h', 'i' }));
         check("charset decode", "hi".equals(decoded.toString()));
-        check("charset encode", "ok".equals(new String(utf8.encode("ok"))));
+        check("charset encode", "ok".equals(new String(utf8.encodeBytes("ok"))));
         check("charset decode bytes", "abc".equals(utf8.decode(new byte[] { 'a', 'b', 'c' })));
     }
 

@@ -2,20 +2,21 @@
 #include "methodarea.h"
 #include "vmmutex.h"
 
-#define METHOD_NAME_SIZE 1024
-
 map<string, lpMethod> MethodArea::methods_map;
 map<string, lpFieldValue> MethodArea::static_field_map;
 
 void MethodArea::AddMethod(lpClass clazz, lpMethod &method)
 {
 	VMLock lk;
-	char method_name[METHOD_NAME_SIZE];
-	sprintf(method_name, "%s.%s:%s", clazz->thisClass->GetName(), 
-		method->methodName->bytes, 
-		method->methodDesc->bytes);
-	LPSTR namePtr = method_name;
-	methods_map[string(namePtr)] = method;
+	// Method descriptors have no bounded length (ByteBuddy and other code
+	// generators emit constructors with long parameter lists), so the key is
+	// built without a fixed-size buffer.
+	string full_name(clazz->thisClass->GetName());
+	full_name += ".";
+	full_name += method->methodName->bytes;
+	full_name += ":";
+	full_name += method->methodDesc->bytes;
+	methods_map[full_name] = method;
 }
 
 lpMethod MethodArea::GetMethod(LPSTR method_name)
@@ -66,10 +67,10 @@ lpMethod MethodArea::GetMethod(lpClass clazz, LPSTR method_name)
 	{
 		return NULL;
 	}
-	char method_full_name[METHOD_NAME_SIZE];
-	sprintf(method_full_name, "%s.%s", clazz->thisClass->GetName(), method_name);
-	LPSTR namePtr = method_full_name;
-	return methods_map[string(namePtr)];
+	string full_name(clazz->thisClass->GetName());
+	full_name += ".";
+	full_name += method_name;
+	return methods_map[full_name];
 }
 
 void MethodArea::RemoveMethodsOf(lpClass clazz)

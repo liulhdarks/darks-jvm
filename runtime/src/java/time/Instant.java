@@ -64,6 +64,14 @@ public final class Instant implements java.time.temporal.Temporal,
         {
             return (Instant)temporal;
         }
+        if (temporal instanceof ZonedDateTime)
+        {
+            return ((ZonedDateTime)temporal).toInstant();
+        }
+        if (temporal instanceof OffsetDateTime)
+        {
+            return ((OffsetDateTime)temporal).toInstant();
+        }
         throw new DateTimeException("Unable to obtain Instant from TemporalAccessor");
     }
 

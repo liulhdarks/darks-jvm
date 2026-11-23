@@ -63,7 +63,46 @@ public final class Duration implements Comparable<Duration>
 
     public static Duration of(long amount, java.time.temporal.TemporalUnit unit)
     {
-        throw new UnsupportedOperationException("Duration.of(unit) is not supported");
+        if (unit == null)
+        {
+            throw new NullPointerException("unit");
+        }
+        if (unit == java.time.temporal.ChronoUnit.NANOS)
+        {
+            return ofNanos(amount);
+        }
+        if (unit == java.time.temporal.ChronoUnit.MICROS)
+        {
+            return create(Math.floorDiv(amount, 1000000L),
+                          Math.floorMod(amount, 1000000L) * 1000L);
+        }
+        if (unit == java.time.temporal.ChronoUnit.MILLIS)
+        {
+            return ofMillis(amount);
+        }
+        if (unit == java.time.temporal.ChronoUnit.SECONDS)
+        {
+            return ofSeconds(amount);
+        }
+        if (unit == java.time.temporal.ChronoUnit.MINUTES)
+        {
+            return ofMinutes(amount);
+        }
+        if (unit == java.time.temporal.ChronoUnit.HOURS)
+        {
+            return ofHours(amount);
+        }
+        if (unit == java.time.temporal.ChronoUnit.HALF_DAYS)
+        {
+            return ofHours(Math.multiplyExact(amount, 12L));
+        }
+        if (unit == java.time.temporal.ChronoUnit.DAYS)
+        {
+            return ofDays(amount);
+        }
+        // Units of a month or larger do not have a fixed length.
+        throw new java.time.temporal.UnsupportedTemporalTypeException(
+            "Unit must not be estimated: " + unit);
     }
 
     public static Duration between(Instant start, Instant end)

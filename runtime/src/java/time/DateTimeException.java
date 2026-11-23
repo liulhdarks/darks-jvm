@@ -12,4 +12,9 @@ public class DateTimeException extends RuntimeException
     {
         super(message);
     }
+
+    public DateTimeException(String message, Throwable cause)
+    {
+        super(message, cause);
+    }
 }

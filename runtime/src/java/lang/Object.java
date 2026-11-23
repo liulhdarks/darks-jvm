@@ -20,6 +20,8 @@ public class Object
 
     public final native Class getClass();
 
+    protected native Object clone() throws CloneNotSupportedException;
+
     // Monitor operations.  These are native entry points intercepted by the
     // coroutine scheduler; the declarations keep the standard Java API.
     public final native void wait() throws InterruptedException;

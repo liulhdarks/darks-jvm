@@ -95,6 +95,7 @@ public class Thread implements Runnable
     private boolean virtual;
     private ClassLoader contextClassLoader;
     private UncaughtExceptionHandler uncaughtExceptionHandler;
+    private int threadLocalRandomProbe;
     private static UncaughtExceptionHandler defaultUncaughtExceptionHandler;
     // ThreadLocal storage: slots indexed by ThreadLocal.key.
     Object[] tls;

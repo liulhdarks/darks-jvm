@@ -19,6 +19,8 @@
 #else
 #include <dirent.h>
 #include <sys/stat.h>
+#include <utime.h>
+#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <unistd.h>
 #endif
@@ -100,6 +102,40 @@ std::vector<std::string> &DeleteOnExitPaths()
 }
 
 bool delete_on_exit_registered = false;
+
+// Space accounting for a path: total bytes, bytes free for unprivileged users
+// (usable) and bytes free for privileged users. Returns false on failure, in
+// which case every value stays zero.
+bool StatSpace(const std::string &path, long long &total, long long &free, long long &usable)
+{
+	total = 0;
+	free = 0;
+	usable = 0;
+#if defined(_WIN32)
+	ULARGE_INTEGER available;
+	ULARGE_INTEGER total_bytes;
+	ULARGE_INTEGER free_bytes;
+	if (!GetDiskFreeSpaceExA(path.c_str(), &available, &total_bytes, &free_bytes))
+	{
+		return false;
+	}
+	total = static_cast<long long>(total_bytes.QuadPart);
+	free = static_cast<long long>(free_bytes.QuadPart);
+	usable = static_cast<long long>(available.QuadPart);
+	return true;
+#else
+	struct statvfs info;
+	if (statvfs(path.c_str(), &info) != 0)
+	{
+		return false;
+	}
+	unsigned long long unit = info.f_frsize ? info.f_frsize : info.f_bsize;
+	total = static_cast<long long>(info.f_blocks * unit);
+	free = static_cast<long long>(info.f_bfree * unit);
+	usable = static_cast<long long>(info.f_bavail * unit);
+	return true;
+#endif
+}
 
 void DeleteOnExitFiles()
 {
@@ -189,6 +225,33 @@ jlong JNICALL Java_java_io_File_length0(JNIEnv *env, jobject thiz)
 	return static_cast<jlong>(size);
 }
 
+jlong JNICALL Java_java_io_File_getTotalSpace0(JNIEnv *env, jobject thiz)
+{
+	long long total = 0;
+	long long free_bytes = 0;
+	long long usable = 0;
+	StatSpace(FilePath(env, thiz), total, free_bytes, usable);
+	return static_cast<jlong>(total);
+}
+
+jlong JNICALL Java_java_io_File_getFreeSpace0(JNIEnv *env, jobject thiz)
+{
+	long long total = 0;
+	long long free_bytes = 0;
+	long long usable = 0;
+	StatSpace(FilePath(env, thiz), total, free_bytes, usable);
+	return static_cast<jlong>(free_bytes);
+}
+
+jlong JNICALL Java_java_io_File_getUsableSpace0(JNIEnv *env, jobject thiz)
+{
+	long long total = 0;
+	long long free_bytes = 0;
+	long long usable = 0;
+	StatSpace(FilePath(env, thiz), total, free_bytes, usable);
+	return static_cast<jlong>(usable);
+}
+
 jboolean JNICALL Java_java_io_File_delete0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
@@ -256,6 +319,150 @@ jboolean JNICALL Java_java_io_File_mkdir0(JNIEnv *env, jobject thiz)
 		return (StatPath(path, is_file, is_dir, size) && is_dir) ? JNI_TRUE : JNI_FALSE;
 	}
 	return JNI_TRUE;
+}
+
+jboolean JNICALL Java_java_io_File_rename0(JNIEnv *env, jobject thiz, jstring target)
+{
+	if (!target)
+	{
+		return JNI_FALSE;
+	}
+	std::string from = FilePath(env, thiz);
+	const char *chars = env->GetStringUTFChars(target, NULL);
+	if (!chars)
+	{
+		return JNI_FALSE;
+	}
+	std::string to(chars);
+	env->ReleaseStringUTFChars(target, chars);
+	return std::rename(from.c_str(), to.c_str()) == 0 ? JNI_TRUE : JNI_FALSE;
+}
+
+jboolean JNICALL Java_java_io_File_hidden0(JNIEnv *env, jobject thiz)
+{
+	std::string path = FilePath(env, thiz);
+	if (path.empty())
+	{
+		return JNI_FALSE;
+	}
+#if defined(_WIN32)
+	DWORD attrs = GetFileAttributesA(path.c_str());
+	if (attrs == INVALID_FILE_ATTRIBUTES)
+	{
+		return JNI_FALSE;
+	}
+	return (attrs & FILE_ATTRIBUTE_HIDDEN) ? JNI_TRUE : JNI_FALSE;
+#else
+	const char *slash = strrchr(path.c_str(), '/');
+	const char *name = slash ? slash + 1 : path.c_str();
+	return name[0] == '.' ? JNI_TRUE : JNI_FALSE;
+#endif
+}
+
+jlong JNICALL Java_java_io_File_lastModified0(JNIEnv *env, jobject thiz)
+{
+	std::string path = FilePath(env, thiz);
+#if defined(_WIN32)
+	struct _stat64 st;
+	if (_stat64(path.c_str(), &st) != 0)
+	{
+		return 0;
+	}
+#else
+	struct stat st;
+	if (::stat(path.c_str(), &st) != 0)
+	{
+		return 0;
+	}
+#endif
+	return static_cast<jlong>(st.st_mtime) * 1000;
+}
+
+jboolean JNICALL Java_java_io_File_setLastModified0(JNIEnv *env, jobject thiz,
+                                                    jlong millis)
+{
+	std::string path = FilePath(env, thiz);
+	if (path.empty() || millis < 0)
+	{
+		return JNI_FALSE;
+	}
+#if defined(_WIN32)
+	struct _utimbuf times;
+	times.actime = static_cast<time_t>(millis / 1000);
+	times.modtime = times.actime;
+	return _utime(path.c_str(), &times) == 0 ? JNI_TRUE : JNI_FALSE;
+#else
+	struct utimbuf times;
+	times.actime = static_cast<time_t>(millis / 1000);
+	times.modtime = times.actime;
+	return ::utime(path.c_str(), &times) == 0 ? JNI_TRUE : JNI_FALSE;
+#endif
+}
+
+jboolean JNICALL Java_java_io_File_setPermission0(JNIEnv *env, jobject thiz,
+                                                  jint bits, jboolean enable,
+                                                  jboolean owner_only)
+{
+	std::string path = FilePath(env, thiz);
+	if (path.empty())
+	{
+		return JNI_FALSE;
+	}
+#if defined(_WIN32)
+	int mode = 0;
+	if (bits & 4)
+	{
+		mode |= _S_IREAD;
+	}
+	if (bits & 2)
+	{
+		mode |= _S_IWRITE;
+	}
+	if ((bits & 1) != 0)
+	{
+		// Windows has no execute bit on regular files; report failure so
+		// callers can fall back, matching File.setExecutable's contract.
+		return JNI_FALSE;
+	}
+	return (enable ? _chmod(path.c_str(), mode) : 0) == 0 ? JNI_TRUE : JNI_FALSE;
+#else
+	struct stat st;
+	if (::stat(path.c_str(), &st) != 0)
+	{
+		return JNI_FALSE;
+	}
+	mode_t mode = st.st_mode;
+	mode_t owner = 0;
+	mode_t group = 0;
+	if (bits & 4)
+	{
+		owner |= S_IRUSR;
+		group |= S_IRGRP | S_IROTH;
+	}
+	if (bits & 2)
+	{
+		owner |= S_IWUSR;
+		group |= S_IWGRP | S_IWOTH;
+	}
+	if (bits & 1)
+	{
+		owner |= S_IXUSR;
+		group |= S_IXGRP | S_IXOTH;
+	}
+	if (owner_only)
+	{
+		group = 0;
+	}
+	if (enable)
+	{
+		mode |= owner | group;
+	}
+	else
+	{
+		mode &= ~(owner | group);
+	}
+	return ::chmod(path.c_str(), mode) == 0 ? JNI_TRUE : JNI_FALSE;
+#endif
 }
 
 jobjectArray JNICALL Java_java_io_File_list0(JNIEnv *env, jobject thiz)

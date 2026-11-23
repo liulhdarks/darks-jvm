@@ -34,11 +34,28 @@ final class AnnotationInvocationHandler implements InvocationHandler
             return annotationType;
         }
         int index = indexOf(name);
-        if (index >= 0)
+        if (index >= 0 && values[index] != null)
         {
             return values[index];
         }
-        return null;
+        return defaultValue(name);
+    }
+
+    private Object defaultValue(String name)
+    {
+        if (annotationType == null)
+        {
+            return null;
+        }
+        try
+        {
+            Method method = annotationType.getMethod(name);
+            return method.getDefaultValue();
+        }
+        catch (java.lang.NoSuchMethodException e)
+        {
+            return null;
+        }
     }
 
     private int indexOf(String name)

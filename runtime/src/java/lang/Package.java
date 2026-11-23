@@ -1,6 +1,8 @@
 package java.lang;
 
-public class Package
+import java.lang.annotation.Annotation;
+
+public class Package implements java.lang.reflect.AnnotatedElement
 {
     private final String name;
     private final String specTitle;
@@ -70,5 +72,41 @@ public class Package
     public String toString()
     {
         return name;
+    }
+
+    public boolean isAnnotationPresent(Class<? extends Annotation> annotationClass)
+    {
+        return getAnnotation(annotationClass) != null;
+    }
+
+    public <T extends Annotation> T getAnnotation(Class<T> annotationClass)
+    {
+        return null;
+    }
+
+    public Annotation[] getAnnotations()
+    {
+        return new Annotation[0];
+    }
+
+    public <T extends Annotation> T[] getAnnotationsByType(Class<T> annotationClass)
+    {
+        return (T[])java.lang.reflect.Array.newInstance(annotationClass, 0);
+    }
+
+    public <T extends Annotation> T getDeclaredAnnotation(Class<T> annotationClass)
+    {
+        return null;
+    }
+
+    public Annotation[] getDeclaredAnnotations()
+    {
+        return new Annotation[0];
+    }
+
+    public <T extends Annotation> T[] getDeclaredAnnotationsByType(
+        Class<T> annotationClass)
+    {
+        return (T[])java.lang.reflect.Array.newInstance(annotationClass, 0);
     }
 }

@@ -15,7 +15,7 @@ import java.util.NoSuchElementException;
  * array-element semantics, so an unsynchronized read could observe a stale
  * array.  Writes still copy the whole array, as in the JDK implementation.
  */
-public class CopyOnWriteArrayList<E> implements List<E>
+public class CopyOnWriteArrayList<E> implements List<E>, Cloneable
 {
     private final Object lock = new Object();
     private Object[] array;
@@ -442,6 +442,18 @@ public class CopyOnWriteArrayList<E> implements List<E>
         public void add(E value)
         {
             throw new UnsupportedOperationException();
+        }
+    }
+
+    public Object clone()
+    {
+        try
+        {
+            return super.clone();
+        }
+        catch (CloneNotSupportedException e)
+        {
+            throw new RuntimeException(e.getMessage());
         }
     }
 

@@ -222,6 +222,161 @@ public final class Collectors
             });
     }
 
+    public static <T, K, U> Collector<T, ?, Map<K, U>> toMap(
+        final Function<? super T, ? extends K> keyMapper,
+        final Function<? super T, ? extends U> valueMapper,
+        final BinaryOperator<U> mergeFunction)
+    {
+        return toMap(keyMapper, valueMapper, mergeFunction,
+            new Supplier<Map<K, U>>()
+            {
+                public Map<K, U> get()
+                {
+                    return new HashMap<K, U>();
+                }
+            });
+    }
+
+    public static <T, K, U, M extends Map<K, U>> Collector<T, ?, M> toMap(
+        final Function<? super T, ? extends K> keyMapper,
+        final Function<? super T, ? extends U> valueMapper,
+        final BinaryOperator<U> mergeFunction,
+        final Supplier<M> mapFactory)
+    {
+        return new CollectorImpl<T, M, M>(
+            mapFactory,
+            new BiConsumer<M, T>()
+            {
+                public void accept(M map, T value)
+                {
+                    K key = keyMapper.apply(value);
+                    U mapped = valueMapper.apply(value);
+                    U previous = map.get(key);
+                    if (previous == null)
+                    {
+                        map.put(key, mapped);
+                    }
+                    else
+                    {
+                        map.put(key, mergeFunction.apply(previous, mapped));
+                    }
+                }
+            },
+            new BinaryOperator<M>()
+            {
+                public M apply(M first, M second)
+                {
+                    for (Map.Entry<K, U> entry : second.entrySet())
+                    {
+                        K key = entry.getKey();
+                        U value = entry.getValue();
+                        U previous = first.get(key);
+                        if (previous == null)
+                        {
+                            first.put(key, value);
+                        }
+                        else
+                        {
+                            first.put(key, mergeFunction.apply(previous, value));
+                        }
+                    }
+                    return first;
+                }
+            },
+            new Function<M, M>()
+            {
+                public M apply(M map)
+                {
+                    return map;
+                }
+            });
+    }
+
+    public static <T, K> Collector<T, ?, Map<K, List<T>>> groupingBy(
+        final Function<? super T, ? extends K> classifier)
+    {
+        return groupingBy(classifier, toList());
+    }
+
+    public static <T, K, A, D> Collector<T, ?, Map<K, D>> groupingBy(
+        final Function<? super T, ? extends K> classifier,
+        final Collector<? super T, A, D> downstream)
+    {
+        return groupingBy(classifier,
+            new Supplier<Map<K, D>>()
+            {
+                public Map<K, D> get()
+                {
+                    return new HashMap<K, D>();
+                }
+            },
+            downstream);
+    }
+
+    public static <T, K, D, A, M extends Map<K, D>> Collector<T, ?, M> groupingBy(
+        final Function<? super T, ? extends K> classifier,
+        final Supplier<M> mapFactory,
+        final Collector<? super T, A, D> downstream)
+    {
+        final Supplier<A> downstreamSupplier = downstream.supplier();
+        final BiConsumer<A, ? super T> downstreamAccumulator = downstream.accumulator();
+        final Function<A, D> downstreamFinisher = downstream.finisher();
+        return new CollectorImpl<T, Map<K, A>, M>(
+            new Supplier<Map<K, A>>()
+            {
+                public Map<K, A> get()
+                {
+                    return new HashMap<K, A>();
+                }
+            },
+            new BiConsumer<Map<K, A>, T>()
+            {
+                public void accept(Map<K, A> map, T value)
+                {
+                    K key = classifier.apply(value);
+                    A bucket = map.get(key);
+                    if (bucket == null)
+                    {
+                        bucket = downstreamSupplier.get();
+                        map.put(key, bucket);
+                    }
+                    downstreamAccumulator.accept(bucket, value);
+                }
+            },
+            new BinaryOperator<Map<K, A>>()
+            {
+                public Map<K, A> apply(Map<K, A> first, Map<K, A> second)
+                {
+                    for (Map.Entry<K, A> entry : second.entrySet())
+                    {
+                        K key = entry.getKey();
+                        A bucket = first.get(key);
+                        if (bucket == null)
+                        {
+                            first.put(key, entry.getValue());
+                        }
+                        else
+                        {
+                            first.put(key, downstream.combiner().apply(bucket, entry.getValue()));
+                        }
+                    }
+                    return first;
+                }
+            },
+            new Function<Map<K, A>, M>()
+            {
+                public M apply(Map<K, A> intermediate)
+                {
+                    M result = mapFactory.get();
+                    for (Map.Entry<K, A> entry : intermediate.entrySet())
+                    {
+                        result.put(entry.getKey(), downstreamFinisher.apply(entry.getValue()));
+                    }
+                    return result;
+                }
+            });
+    }
+
     public static <T, A, R, RR> Collector<T, A, RR> collectingAndThen(
         final Collector<T, A, R> downstream,
         final Function<R, RR> finisher)

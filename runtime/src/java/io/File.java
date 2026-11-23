@@ -160,6 +160,21 @@ public class File
         return length0();
     }
 
+    public long getTotalSpace()
+    {
+        return getTotalSpace0();
+    }
+
+    public long getFreeSpace()
+    {
+        return getFreeSpace0();
+    }
+
+    public long getUsableSpace()
+    {
+        return getUsableSpace0();
+    }
+
     public boolean delete()
     {
         return delete0();
@@ -179,6 +194,216 @@ public class File
     {
         return list0();
     }
+
+    public String[] list(FilenameFilter filter)
+    {
+        String[] names = list();
+        if (names == null || filter == null)
+        {
+            return names;
+        }
+        java.util.ArrayList<String> kept = new java.util.ArrayList<String>();
+        int i = 0;
+        while (i < names.length)
+        {
+            if (filter.accept(this, names[i]))
+            {
+                kept.add(names[i]);
+            }
+            i = i + 1;
+        }
+        return kept.toArray(new String[kept.size()]);
+    }
+
+    public File[] listFiles()
+    {
+        String[] names = list();
+        if (names == null)
+        {
+            return null;
+        }
+        File[] files = new File[names.length];
+        int i = 0;
+        while (i < names.length)
+        {
+            files[i] = new File(this, names[i]);
+            i = i + 1;
+        }
+        return files;
+    }
+
+    public File[] listFiles(FilenameFilter filter)
+    {
+        String[] names = list(filter);
+        if (names == null)
+        {
+            return null;
+        }
+        File[] files = new File[names.length];
+        int i = 0;
+        while (i < names.length)
+        {
+            files[i] = new File(this, names[i]);
+            i = i + 1;
+        }
+        return files;
+    }
+
+    public File[] listFiles(FileFilter filter)
+    {
+        String[] names = list();
+        if (names == null)
+        {
+            return null;
+        }
+        java.util.ArrayList<File> kept = new java.util.ArrayList<File>();
+        int i = 0;
+        while (i < names.length)
+        {
+            File candidate = new File(this, names[i]);
+            if (filter == null || filter.accept(candidate))
+            {
+                kept.add(candidate);
+            }
+            i = i + 1;
+        }
+        return kept.toArray(new File[kept.size()]);
+    }
+
+    public boolean renameTo(File dest)
+    {
+        if (dest == null)
+        {
+            throw new NullPointerException("dest");
+        }
+        return rename0(dest.getPath());
+    }
+
+    /**
+     * Returns the roots available on this filesystem.  The JDK enumerates
+     * drive letters on Windows; this runtime reports the single filesystem
+     * root, as its filesystem layer does not expose a volume list.
+     */
+    public static File[] listRoots()
+    {
+        File[] roots = new File[1];
+        roots[0] = new File("/");
+        return roots;
+    }
+
+    public static File createTempFile(String prefix, String suffix)
+        throws java.io.IOException
+    {
+        return createTempFile(prefix, suffix, null);
+    }
+
+    public static File createTempFile(String prefix, String suffix,
+                                      File directory)
+        throws java.io.IOException
+    {
+        if (prefix == null)
+        {
+            throw new NullPointerException("prefix");
+        }
+        if (prefix.length() < 3)
+        {
+            throw new IllegalArgumentException("Prefix string too short");
+        }
+        String ending = suffix == null ? ".tmp" : suffix;
+        File dir = directory == null
+            ? new File(System.getProperty("java.io.tmpdir", "."))
+            : directory;
+        long seed = System.nanoTime();
+        int attempt = 0;
+        while (attempt < 100)
+        {
+            String name = prefix + Long.toHexString(seed + attempt) + ending;
+            File candidate = new File(dir, name);
+            if (candidate.createNewFile())
+            {
+                return candidate;
+            }
+            attempt = attempt + 1;
+        }
+        throw new java.io.IOException("Unable to create temporary file in " +
+            dir.getPath());
+    }
+
+    public boolean isHidden()
+    {
+        return hidden0();
+    }
+
+    public long lastModified()
+    {
+        return lastModified0();
+    }
+
+    public boolean setLastModified(long time)
+    {
+        if (time < 0)
+        {
+            throw new IllegalArgumentException("Negative time");
+        }
+        return setLastModified0(time);
+    }
+
+    public boolean setReadOnly()
+    {
+        return setWritable(false, false);
+    }
+
+    public boolean setReadable(boolean readable)
+    {
+        return setReadable(readable, true);
+    }
+
+    public boolean setReadable(boolean readable, boolean ownerOnly)
+    {
+        return setPermission0(4, readable, ownerOnly);
+    }
+
+    public boolean setWritable(boolean writable)
+    {
+        return setWritable(writable, true);
+    }
+
+    public boolean setWritable(boolean writable, boolean ownerOnly)
+    {
+        return setPermission0(2, writable, ownerOnly);
+    }
+
+    public boolean setExecutable(boolean executable)
+    {
+        return setExecutable(executable, true);
+    }
+
+    public boolean setExecutable(boolean executable, boolean ownerOnly)
+    {
+        return setPermission0(1, executable, ownerOnly);
+    }
+
+    public int compareTo(File other)
+    {
+        return path.compareTo(other.path);
+    }
+
+    @Deprecated
+    public java.net.URL toURL() throws java.net.MalformedURLException
+    {
+        return toURI().toURL();
+    }
+
+    private native boolean rename0(String target);
+
+    private native boolean hidden0();
+
+    private native long lastModified0();
+
+    private native boolean setLastModified0(long time);
+
+    private native boolean setPermission0(int bits, boolean enable,
+                                          boolean ownerOnly);
 
     private native boolean canRead0();
 
@@ -233,6 +458,12 @@ public class File
     private native boolean isDirectory0();
 
     private native long length0();
+
+    private native long getTotalSpace0();
+
+    private native long getFreeSpace0();
+
+    private native long getUsableSpace0();
 
     private native boolean delete0();
 

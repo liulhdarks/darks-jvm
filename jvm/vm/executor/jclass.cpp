@@ -443,10 +443,29 @@ bool SelectMaximallySpecific(
 		{
 			if (best && !SameClass(bestOwner, candidates[i].first))
 			{
-				return false;
+				// Unrelated superinterfaces may both declare the member without
+				// providing a body (e.g. NonIdentifierAttribute extends Attribute
+				// and AttributeDefinition, both of which declare getName()).  A
+				// concrete default is the maximally-specific method; among
+				// abstract declarations any is a valid resolution result because
+				// the implementation is selected from the receiver at dispatch.
+				bool bestAbstract = (best->accFlag & ACM_ABSTRACT) != 0;
+				bool candidateAbstract = (candidates[i].second->accFlag & ACM_ABSTRACT) != 0;
+				if (bestAbstract && !candidateAbstract)
+				{
+					best = candidates[i].second;
+					bestOwner = candidates[i].first;
+				}
+				else if (!bestAbstract && !candidateAbstract)
+				{
+					return false;
+				}
 			}
-			best = candidates[i].second;
-			bestOwner = candidates[i].first;
+			else
+			{
+				best = candidates[i].second;
+				bestOwner = candidates[i].first;
+			}
 		}
 	}
 	if (!best)

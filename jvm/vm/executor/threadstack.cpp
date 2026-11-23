@@ -120,6 +120,37 @@ bool ThreadStack::DescribeTopFrame(std::string &out) const
 	return true;
 }
 
+lpClass ThreadStack::ReflectionCallerClass() const
+{
+	std::stack<lpStackFrame> copy = frames;
+	while (!copy.empty())
+	{
+		lpStackFrame frame = copy.top();
+		copy.pop();
+		if (!frame)
+		{
+			continue;
+		}
+		lpClass clazz = frame->GetDeclaringClass();
+		const char *name = (clazz && clazz->thisClass)
+			? clazz->thisClass->GetName() : NULL;
+		if (!name)
+		{
+			continue;
+		}
+		// The reflection implementation and Class.newInstance() forward to
+		// the members being checked; the JDK skips those frames when it asks
+		// Reflection.getCallerClass() for the member's caller.
+		if (strncmp(name, "java/lang/reflect/", 18) == 0 ||
+		    strcmp(name, "java/lang/Class") == 0)
+		{
+			continue;
+		}
+		return clazz;
+	}
+	return NULL;
+}
+
 void ThreadStack::DescribeJavaFrames(std::vector<FrameInfo> &out) const
 {
 	out.clear();
@@ -236,7 +267,16 @@ EventNotify ThreadStack::execute(lpClass clazz, lpMethod method, lpVariant vars,
 {
 	lpStackFrame frame = NULL;
 	AddFrame(clazz, method, frame);
-	frame->init(vars, count);
+	try
+	{
+		frame->init(vars, count);
+	}
+	catch (...)
+	{
+		frames.pop();
+		delete frame;
+		throw;
+	}
 	size_t saved_depth = unwind_stop_depth;
 	unwind_stop_depth = frames.size() - 1;
 	has_return = false;
@@ -250,7 +290,16 @@ EventNotify ThreadStack::executeNested(lpClass clazz, lpMethod method, lpVariant
 {
 	lpStackFrame frame = NULL;
 	AddFrame(clazz, method, frame);
-	frame->init(vars, count);
+	try
+	{
+		frame->init(vars, count);
+	}
+	catch (...)
+	{
+		frames.pop();
+		delete frame;
+		throw;
+	}
 	size_t saved_depth = unwind_stop_depth;
 	unwind_stop_depth = frames.size() - 1;
 	has_return = false;

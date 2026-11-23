@@ -132,5 +132,29 @@ public final class System
         gc0();
     }
 
+    public static String lineSeparator()
+    {
+        return "\n";
+    }
+
+    public static void setOut(java.io.PrintStream stream)
+    {
+        out = stream;
+    }
+
+    public static void setErr(java.io.PrintStream stream)
+    {
+        err = stream;
+    }
+
+    public static void setIn(java.io.InputStream stream)
+    {
+        in = stream;
+    }
+
+    public static void runFinalization()
+    {
+    }
+
     private static native void gc0();
 }

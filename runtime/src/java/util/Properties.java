@@ -246,4 +246,32 @@ public class Properties extends HashMap<Object, Object>
         }
         return result;
     }
+
+    public Enumeration<?> propertyNames()
+    {
+        final Iterator<?> it = new ArrayList<Object>(keySet()).iterator();
+        return new Enumeration<Object>()
+        {
+            public boolean hasMoreElements()
+            {
+                return it.hasNext();
+            }
+
+            public Object nextElement()
+            {
+                if (!it.hasNext())
+                {
+                    throw new NoSuchElementException();
+                }
+                return it.next();
+            }
+        };
+    }
+
+    public Object clone()
+    {
+        Properties copy = new Properties();
+        copy.putAll(this);
+        return copy;
+    }
 }
