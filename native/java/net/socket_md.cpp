@@ -50,7 +50,17 @@ JNIEXPORT jint JNICALL Java_java_net_SocketOps_socket0(JNIEnv *, jclass)
 {
 	EnsureWinsock();
 	SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	return s == INVALID_SOCKET ? -1 : static_cast<jint>(s);
+	if (s == INVALID_SOCKET)
+	{
+		return -1;
+	}
+	// The class library drives sockets through poll/read/write and expects
+	// non-blocking descriptors, exactly like the POSIX backend.  A blocking
+	// accept()/connect() would park the only scheduler thread when
+	// DARKS_JVM_MP=1, before the peer coroutine can run.
+	u_long nonblocking = 1;
+	ioctlsocket(s, FIONBIO, &nonblocking);
+	return static_cast<jint>(s);
 }
 
 JNIEXPORT void JNICALL Java_java_net_SocketOps_close0(JNIEnv *, jclass, jint fd)

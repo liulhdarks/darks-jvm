@@ -345,7 +345,7 @@ void JNICALL Java_java_lang_System_setErr0
 {
 }
 
-void JNICALL Java_java_lang_System_gc0
+JNIEXPORT void JNICALL Java_java_lang_System_gc0
 	(JNIEnv *, jclass)
 {
 	if (VMContext::object_heap)
@@ -733,7 +733,7 @@ JNIEXPORT jobject JNICALL Java_java_lang_System_getenvMap0
 	return map;
 }
 
-jstring JNICALL Java_java_lang_System_getenv0
+JNIEXPORT jstring JNICALL Java_java_lang_System_getenv0
 	(JNIEnv *env, jclass, jstring name)
 {
 	std::string key = JStringToUtf8(env, name);
@@ -745,7 +745,7 @@ jstring JNICALL Java_java_lang_System_getenv0
 	return env->NewStringUTF(value);
 }
 
-jobjectArray JNICALL Java_java_lang_System_getenvPairs0
+JNIEXPORT jobjectArray JNICALL Java_java_lang_System_getenvPairs0
 	(JNIEnv *env, jclass)
 {
 	std::vector<std::string> pairs;
@@ -797,7 +797,7 @@ jobjectArray JNICALL Java_java_lang_System_getenvPairs0
 	return result;
 }
 
-void JNICALL Java_java_lang_System_loadLibrary0
+JNIEXPORT void JNICALL Java_java_lang_System_loadLibrary0
 	(JNIEnv *env, jclass, jstring name, jstring library_path)
 {
 	std::string library = JStringToUtf8(env, name);

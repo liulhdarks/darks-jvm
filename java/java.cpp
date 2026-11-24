@@ -26,6 +26,7 @@
 
 #include <cstdio>
 #include <csignal>
+#include <cwchar>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -312,7 +313,7 @@ static int run_class(const string &class_name, int argc, char **argv)
 	return result;
 }
 
-int main(int argc, char **argv)
+static int RunMain(int argc, char **argv)
 {
 #if defined(_WIN32)
 	SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
@@ -512,3 +513,32 @@ int main(int argc, char **argv)
 	return run_class(main_class, static_cast<int>(main_argv.size()),
 	                 main_argv.empty() ? NULL : main_argv.data());
 }
+
+#if defined(_WIN32)
+// The narrow CRT entry point decodes the command line with the ANSI code page,
+// which corrupts non-ASCII class paths.  wmain receives the original UTF-16
+// command line; convert it to the UTF-8 form the rest of the VM uses.
+int wmain(int argc, wchar_t **argv)
+{
+	std::vector<std::string> args;
+	args.reserve(static_cast<size_t>(argc));
+	for (int i = 0; i < argc; i++)
+	{
+		const wchar_t *text = argv[i] ? argv[i] : L"";
+		args.push_back(dk::Utf16ToUtf8(
+			reinterpret_cast<const uint16_t *>(text), std::wcslen(text)));
+	}
+	std::vector<char *> raw;
+	raw.reserve(args.size());
+	for (size_t i = 0; i < args.size(); i++)
+	{
+		raw.push_back(const_cast<char *>(args[i].c_str()));
+	}
+	return RunMain(static_cast<int>(raw.size()), raw.empty() ? NULL : raw.data());
+}
+#else
+int main(int argc, char **argv)
+{
+	return RunMain(argc, argv);
+}
+#endif

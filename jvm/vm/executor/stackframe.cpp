@@ -4304,6 +4304,15 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 			{
 				std::string message = "Cannot find native method in library: ";
 				message += jni_name;
+				if (!VMContext::native_libs ||
+				    !VMContext::native_libs->GetLibraryHandle("native"))
+				{
+					// The symbol cannot exist when the library that holds it
+					// never loaded; say so instead of blaming the lookup.
+					message += " (the native library is not loaded; make sure "
+					           "the platform JNI library is next to the "
+					           "executable or on the library path)";
+				}
 				VMContext::pending_exception = CreateJavaException(
 					"java/lang/UnsatisfiedLinkError", message.c_str());
 				return false;

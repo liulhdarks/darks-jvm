@@ -134,8 +134,13 @@ int main(int argc, char **argv)
 
 	// ---------------------------------------------------------------- paths
 	const std::string hello_path = dk::JoinPath(classes_dir, "Hello.class");
+#if defined(_WIN32)
+	CHECK(dk::PathListSeparator() == ';');
+	CHECK(dk::JoinPath("a", "b") == "a\\b");
+#else
 	CHECK(dk::PathListSeparator() == ':');
 	CHECK(dk::JoinPath("a", "b") == "a/b");
+#endif
 	CHECK(dk::JoinPath("a/", "b") == "a/b");
 	CHECK(dk::DirectoryName("/x/y") == "/x");
 	CHECK(dk::DirectoryName("y") == "");

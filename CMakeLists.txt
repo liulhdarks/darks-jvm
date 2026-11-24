@@ -162,6 +162,13 @@ endif()
 add_executable(darks-jvm java/java.cpp)
 target_link_libraries(darks-jvm PRIVATE darksvm)
 
+if(MINGW)
+    # The launcher defines wmain() on Windows so that command line arguments
+    # are decoded as UTF-16; MinGW needs this flag to pick the matching CRT
+    # entry point (MSVC selects it automatically).
+    set_property(TARGET darks-jvm APPEND_STRING PROPERTY LINK_FLAGS " -municode")
+endif()
+
 # Export the VM symbols so that the native library (dlopen'ed at run time) can
 # resolve them without linking a second copy of the VM state.
 set_target_properties(darks-jvm PROPERTIES ENABLE_EXPORTS ON)
@@ -228,6 +235,15 @@ if(WIN32)
     # MapLibraryName() looks for "native.dll"; MinGW would emit libnative.dll.
     set_target_properties(native PROPERTIES PREFIX "")
     target_link_libraries(native PRIVATE darksvm ws2_32)
+    # JNI entry points are plain C symbols and a missing JNIEXPORT would make
+    # them invisible to GetProcAddress.  Export the whole table so that a
+    # definition that forgets the attribute cannot silently disappear.
+    if(MSVC)
+        set_target_properties(native PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        set_target_properties(native PROPERTIES
+            LINK_FLAGS "-Wl,--export-all-symbols")
+    endif()
 else()
     # On POSIX the symbols are provided by the darks-jvm executable (built with
     # ENABLE_EXPORTS); leave them undefined in the shared object.

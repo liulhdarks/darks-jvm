@@ -163,7 +163,7 @@ void DeleteOnExitFiles()
 
 extern "C" {
 
-jboolean JNICALL Java_java_io_File_exists0(JNIEnv *env, jobject thiz)
+JNIEXPORT jboolean JNICALL Java_java_io_File_exists0(JNIEnv *env, jobject thiz)
 {
 	bool is_file = false;
 	bool is_dir = false;
@@ -171,7 +171,7 @@ jboolean JNICALL Java_java_io_File_exists0(JNIEnv *env, jobject thiz)
 	return StatPath(FilePath(env, thiz), is_file, is_dir, size) ? JNI_TRUE : JNI_FALSE;
 }
 
-jboolean JNICALL Java_java_io_File_isFile0(JNIEnv *env, jobject thiz)
+JNIEXPORT jboolean JNICALL Java_java_io_File_isFile0(JNIEnv *env, jobject thiz)
 {
 	bool is_file = false;
 	bool is_dir = false;
@@ -183,7 +183,7 @@ jboolean JNICALL Java_java_io_File_isFile0(JNIEnv *env, jobject thiz)
 	return is_file ? JNI_TRUE : JNI_FALSE;
 }
 
-jboolean JNICALL Java_java_io_File_isDirectory0(JNIEnv *env, jobject thiz)
+JNIEXPORT jboolean JNICALL Java_java_io_File_isDirectory0(JNIEnv *env, jobject thiz)
 {
 	bool is_file = false;
 	bool is_dir = false;
@@ -195,7 +195,7 @@ jboolean JNICALL Java_java_io_File_isDirectory0(JNIEnv *env, jobject thiz)
 	return is_dir ? JNI_TRUE : JNI_FALSE;
 }
 
-jboolean JNICALL Java_java_io_File_canRead0(JNIEnv *env, jobject thiz)
+JNIEXPORT jboolean JNICALL Java_java_io_File_canRead0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
 #if defined(_WIN32)
@@ -205,7 +205,7 @@ jboolean JNICALL Java_java_io_File_canRead0(JNIEnv *env, jobject thiz)
 #endif
 }
 
-jboolean JNICALL Java_java_io_File_canWrite0(JNIEnv *env, jobject thiz)
+JNIEXPORT jboolean JNICALL Java_java_io_File_canWrite0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
 #if defined(_WIN32)
@@ -215,7 +215,7 @@ jboolean JNICALL Java_java_io_File_canWrite0(JNIEnv *env, jobject thiz)
 #endif
 }
 
-jboolean JNICALL Java_java_io_File_canExecute0(JNIEnv *env, jobject thiz)
+JNIEXPORT jboolean JNICALL Java_java_io_File_canExecute0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
 #if defined(_WIN32)
@@ -225,7 +225,7 @@ jboolean JNICALL Java_java_io_File_canExecute0(JNIEnv *env, jobject thiz)
 #endif
 }
 
-jlong JNICALL Java_java_io_File_length0(JNIEnv *env, jobject thiz)
+JNIEXPORT jlong JNICALL Java_java_io_File_length0(JNIEnv *env, jobject thiz)
 {
 	bool is_file = false;
 	bool is_dir = false;
@@ -237,7 +237,7 @@ jlong JNICALL Java_java_io_File_length0(JNIEnv *env, jobject thiz)
 	return static_cast<jlong>(size);
 }
 
-jlong JNICALL Java_java_io_File_getTotalSpace0(JNIEnv *env, jobject thiz)
+JNIEXPORT jlong JNICALL Java_java_io_File_getTotalSpace0(JNIEnv *env, jobject thiz)
 {
 	long long total = 0;
 	long long free_bytes = 0;
@@ -246,7 +246,7 @@ jlong JNICALL Java_java_io_File_getTotalSpace0(JNIEnv *env, jobject thiz)
 	return static_cast<jlong>(total);
 }
 
-jlong JNICALL Java_java_io_File_getFreeSpace0(JNIEnv *env, jobject thiz)
+JNIEXPORT jlong JNICALL Java_java_io_File_getFreeSpace0(JNIEnv *env, jobject thiz)
 {
 	long long total = 0;
 	long long free_bytes = 0;
@@ -255,7 +255,7 @@ jlong JNICALL Java_java_io_File_getFreeSpace0(JNIEnv *env, jobject thiz)
 	return static_cast<jlong>(free_bytes);
 }
 
-jlong JNICALL Java_java_io_File_getUsableSpace0(JNIEnv *env, jobject thiz)
+JNIEXPORT jlong JNICALL Java_java_io_File_getUsableSpace0(JNIEnv *env, jobject thiz)
 {
 	long long total = 0;
 	long long free_bytes = 0;
@@ -264,7 +264,7 @@ jlong JNICALL Java_java_io_File_getUsableSpace0(JNIEnv *env, jobject thiz)
 	return static_cast<jlong>(usable);
 }
 
-jboolean JNICALL Java_java_io_File_delete0(JNIEnv *env, jobject thiz)
+JNIEXPORT jboolean JNICALL Java_java_io_File_delete0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
 #if defined(_WIN32)
@@ -278,7 +278,7 @@ jboolean JNICALL Java_java_io_File_delete0(JNIEnv *env, jobject thiz)
 #endif
 }
 
-jboolean JNICALL Java_java_io_File_mkdirs0(JNIEnv *env, jobject thiz)
+JNIEXPORT jboolean JNICALL Java_java_io_File_mkdirs0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
 	if (path.empty())
@@ -316,7 +316,7 @@ jboolean JNICALL Java_java_io_File_mkdirs0(JNIEnv *env, jobject thiz)
 	return JNI_TRUE;
 }
 
-jboolean JNICALL Java_java_io_File_mkdir0(JNIEnv *env, jobject thiz)
+JNIEXPORT jboolean JNICALL Java_java_io_File_mkdir0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
 	if (path.empty())
@@ -333,7 +333,7 @@ jboolean JNICALL Java_java_io_File_mkdir0(JNIEnv *env, jobject thiz)
 	return JNI_TRUE;
 }
 
-jboolean JNICALL Java_java_io_File_rename0(JNIEnv *env, jobject thiz, jstring target)
+JNIEXPORT jboolean JNICALL Java_java_io_File_rename0(JNIEnv *env, jobject thiz, jstring target)
 {
 	if (!target)
 	{
@@ -350,7 +350,7 @@ jboolean JNICALL Java_java_io_File_rename0(JNIEnv *env, jobject thiz, jstring ta
 	return std::rename(from.c_str(), to.c_str()) == 0 ? JNI_TRUE : JNI_FALSE;
 }
 
-jboolean JNICALL Java_java_io_File_hidden0(JNIEnv *env, jobject thiz)
+JNIEXPORT jboolean JNICALL Java_java_io_File_hidden0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
 	if (path.empty())
@@ -371,7 +371,7 @@ jboolean JNICALL Java_java_io_File_hidden0(JNIEnv *env, jobject thiz)
 #endif
 }
 
-jlong JNICALL Java_java_io_File_lastModified0(JNIEnv *env, jobject thiz)
+JNIEXPORT jlong JNICALL Java_java_io_File_lastModified0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
 #if defined(_WIN32)
@@ -390,7 +390,7 @@ jlong JNICALL Java_java_io_File_lastModified0(JNIEnv *env, jobject thiz)
 	return static_cast<jlong>(st.st_mtime) * 1000;
 }
 
-jboolean JNICALL Java_java_io_File_setLastModified0(JNIEnv *env, jobject thiz,
+JNIEXPORT jboolean JNICALL Java_java_io_File_setLastModified0(JNIEnv *env, jobject thiz,
                                                     jlong millis)
 {
 	std::string path = FilePath(env, thiz);
@@ -411,7 +411,7 @@ jboolean JNICALL Java_java_io_File_setLastModified0(JNIEnv *env, jobject thiz,
 #endif
 }
 
-jboolean JNICALL Java_java_io_File_setPermission0(JNIEnv *env, jobject thiz,
+JNIEXPORT jboolean JNICALL Java_java_io_File_setPermission0(JNIEnv *env, jobject thiz,
                                                   jint bits, jboolean enable,
                                                   jboolean owner_only)
 {
@@ -477,7 +477,7 @@ jboolean JNICALL Java_java_io_File_setPermission0(JNIEnv *env, jobject thiz,
 #endif
 }
 
-jobjectArray JNICALL Java_java_io_File_list0(JNIEnv *env, jobject thiz)
+JNIEXPORT jobjectArray JNICALL Java_java_io_File_list0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
 	std::vector<std::string> names;
@@ -540,7 +540,7 @@ jobjectArray JNICALL Java_java_io_File_list0(JNIEnv *env, jobject thiz)
 	return result;
 }
 
-void JNICALL Java_java_io_File_deleteOnExit0(JNIEnv *env, jobject thiz)
+JNIEXPORT void JNICALL Java_java_io_File_deleteOnExit0(JNIEnv *env, jobject thiz)
 {
 	std::string path = FilePath(env, thiz);
 	if (path.empty())
@@ -559,7 +559,7 @@ void JNICALL Java_java_io_File_deleteOnExit0(JNIEnv *env, jobject thiz)
 // FileInputStream
 // ---------------------------------------------------------------------------
 
-jlong JNICALL Java_java_io_FileInputStream_open0(JNIEnv *env, jclass, jstring name)
+JNIEXPORT jlong JNICALL Java_java_io_FileInputStream_open0(JNIEnv *env, jclass, jstring name)
 {
 	// Real I/O is outside the deterministic model: mark the boundary so a
 	// replay can show exactly where the run depended on the host.
@@ -575,7 +575,7 @@ jlong JNICALL Java_java_io_FileInputStream_open0(JNIEnv *env, jclass, jstring na
 	return reinterpret_cast<jlong>(file);
 }
 
-jint JNICALL Java_java_io_FileInputStream_read0(JNIEnv *, jclass, jlong handle)
+JNIEXPORT jint JNICALL Java_java_io_FileInputStream_read0(JNIEnv *, jclass, jlong handle)
 {
 	FILE *file = reinterpret_cast<FILE*>(static_cast<intptr_t>(handle));
 	if (!file)
@@ -586,7 +586,7 @@ jint JNICALL Java_java_io_FileInputStream_read0(JNIEnv *, jclass, jlong handle)
 	return value == EOF ? -1 : value;
 }
 
-jint JNICALL Java_java_io_FileInputStream_readBytes0(JNIEnv *env, jclass, jlong handle,
+JNIEXPORT jint JNICALL Java_java_io_FileInputStream_readBytes0(JNIEnv *env, jclass, jlong handle,
 	jbyteArray buffer, jint offset, jint length)
 {
 	FILE *file = reinterpret_cast<FILE*>(static_cast<intptr_t>(handle));
@@ -604,7 +604,7 @@ jint JNICALL Java_java_io_FileInputStream_readBytes0(JNIEnv *env, jclass, jlong 
 	return static_cast<jint>(read);
 }
 
-void JNICALL Java_java_io_FileInputStream_close0(JNIEnv *, jclass, jlong handle)
+JNIEXPORT void JNICALL Java_java_io_FileInputStream_close0(JNIEnv *, jclass, jlong handle)
 {
 	FILE *file = reinterpret_cast<FILE*>(static_cast<intptr_t>(handle));
 	if (file)
@@ -617,7 +617,7 @@ void JNICALL Java_java_io_FileInputStream_close0(JNIEnv *, jclass, jlong handle)
 // FileOutputStream
 // ---------------------------------------------------------------------------
 
-jlong JNICALL Java_java_io_FileOutputStream_open0(JNIEnv *env, jclass, jstring name,
+JNIEXPORT jlong JNICALL Java_java_io_FileOutputStream_open0(JNIEnv *env, jclass, jstring name,
 	jboolean append)
 {
 	std::string path;
@@ -631,7 +631,7 @@ jlong JNICALL Java_java_io_FileOutputStream_open0(JNIEnv *env, jclass, jstring n
 	return reinterpret_cast<jlong>(file);
 }
 
-void JNICALL Java_java_io_FileOutputStream_write0(JNIEnv *, jclass, jlong handle, jint value)
+JNIEXPORT void JNICALL Java_java_io_FileOutputStream_write0(JNIEnv *, jclass, jlong handle, jint value)
 {
 	FILE *file = reinterpret_cast<FILE*>(static_cast<intptr_t>(handle));
 	if (file)
@@ -640,7 +640,7 @@ void JNICALL Java_java_io_FileOutputStream_write0(JNIEnv *, jclass, jlong handle
 	}
 }
 
-void JNICALL Java_java_io_FileOutputStream_writeBytes0(JNIEnv *env, jclass, jlong handle,
+JNIEXPORT void JNICALL Java_java_io_FileOutputStream_writeBytes0(JNIEnv *env, jclass, jlong handle,
 	jbyteArray buffer, jint offset, jint length)
 {
 	FILE *file = reinterpret_cast<FILE*>(static_cast<intptr_t>(handle));
@@ -657,7 +657,7 @@ void JNICALL Java_java_io_FileOutputStream_writeBytes0(JNIEnv *env, jclass, jlon
 	fwrite(data + offset, 1, static_cast<size_t>(length), file);
 }
 
-void JNICALL Java_java_io_FileOutputStream_flush0(JNIEnv *, jclass, jlong handle)
+JNIEXPORT void JNICALL Java_java_io_FileOutputStream_flush0(JNIEnv *, jclass, jlong handle)
 {
 	FILE *file = reinterpret_cast<FILE*>(static_cast<intptr_t>(handle));
 	if (file)
@@ -666,7 +666,7 @@ void JNICALL Java_java_io_FileOutputStream_flush0(JNIEnv *, jclass, jlong handle
 	}
 }
 
-void JNICALL Java_java_io_FileOutputStream_close0(JNIEnv *, jclass, jlong handle)
+JNIEXPORT void JNICALL Java_java_io_FileOutputStream_close0(JNIEnv *, jclass, jlong handle)
 {
 	FILE *file = reinterpret_cast<FILE*>(static_cast<intptr_t>(handle));
 	if (file)
