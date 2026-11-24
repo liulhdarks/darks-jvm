@@ -202,8 +202,8 @@ JNIEXPORT jobject JNICALL Java_java_lang_Object_clone(JNIEnv *env, jobject thiz)
 	lpObject source = JniResolveObject(thiz);
 	if (!source || !source->obj_class || !VMContext::object_heap)
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/CloneNotSupportedException", "null receiver");
+		VMContext::SetPendingException(CreateJavaException(
+			"java/lang/CloneNotSupportedException", "null receiver"));
 		return NULL;
 	}
 	LPOBJECT_REF ref = NULL;
@@ -265,9 +265,9 @@ JNIEXPORT jobject JNICALL Java_java_lang_Object_clone(JNIEnv *env, jobject thiz)
 	lpClass cloneable = JniFindClass(env, "java/lang/Cloneable");
 	if (!cloneable || !IsInstanceOfClass(source, cloneable))
 	{
-		VMContext::pending_exception = CreateJavaException(
+		VMContext::SetPendingException(CreateJavaException(
 			"java/lang/CloneNotSupportedException",
-			"class does not implement Cloneable");
+			"class does not implement Cloneable"));
 		return NULL;
 	}
 	if (!VMContext::object_heap->NewObject(source->obj_class, ref) || !ref)
@@ -810,9 +810,9 @@ JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_defineClass0(JNIEnv *env,
 		if (getenv("DARKS_JVM_TRACE_DEFINE") && clazz && clazz->thisClass && clazz->thisClass->GetName())
 		{
 			fprintf(stderr, "[trace defineClass0] failed to initialize %s\n", clazz->thisClass->GetName());
-			if (VMContext::pending_exception)
+			if (VMContext::PendingException())
 			{
-				PrintUncaughtException(VMContext::pending_exception);
+				PrintUncaughtException(VMContext::PendingException());
 			}
 			fflush(stderr);
 		}

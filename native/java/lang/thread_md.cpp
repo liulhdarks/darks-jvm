@@ -59,8 +59,8 @@ void SetRawField(LPOBJECT_REF ref, const char *name, const Variant &value)
 
 void ThrowUnsupported(const char *what)
 {
-	VMContext::pending_exception = CreateJavaException(
-		"java/lang/UnsupportedOperationException", what);
+	VMContext::SetPendingException(CreateJavaException(
+		"java/lang/UnsupportedOperationException", what));
 }
 
 LPOBJECT_REF CreateThreadObject()
@@ -177,8 +177,8 @@ JNIEXPORT void JNICALL Java_java_lang_Thread_start0(JNIEnv *env, jobject thiz)
 	(void)env;
 	if (!Scheduler::Instance().StartThread(JniRef(thiz)))
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/IllegalThreadStateException", "cannot start thread");
+		VMContext::SetPendingException(CreateJavaException(
+			"java/lang/IllegalThreadStateException", "cannot start thread"));
 	}
 }
 
@@ -187,8 +187,8 @@ JNIEXPORT void JNICALL Java_java_lang_Thread_startVirtual0(JNIEnv *env, jobject 
 	(void)env;
 	if (!Scheduler::Instance().StartVirtualThread(JniRef(thiz)))
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/IllegalThreadStateException", "cannot start virtual thread");
+		VMContext::SetPendingException(CreateJavaException(
+			"java/lang/IllegalThreadStateException", "cannot start virtual thread"));
 	}
 }
 

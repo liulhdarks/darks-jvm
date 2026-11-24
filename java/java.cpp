@@ -40,6 +40,21 @@ static void request_thread_dump(int)
 	Scheduler::Instance().RequestThreadDump();
 }
 
+#if defined(_WIN32)
+// Windows has no SIGQUIT/SIGUSR1.  Ctrl+Break is the closest console event;
+// CTRL_C_EVENT is deliberately left to the default handler so Ctrl+C keeps
+// terminating the process.
+static BOOL WINAPI console_ctrl_handler(DWORD type)
+{
+	if (type == CTRL_BREAK_EVENT)
+	{
+		request_thread_dump(0);
+		return TRUE;
+	}
+	return FALSE;
+}
+#endif
+
 static void print_usage()
 {
 	cout << "Usage: darks-jvm [options] <main-class> [args...]" << endl;
@@ -231,13 +246,13 @@ static int run_class(const string &class_name, int argc, char **argv)
 		// Executors created internally for class initialisation stay nested.
 		Scheduler::Instance().AttachMain(exec->GetThreadStack());
 		exec->Execute(clazz, clazz->mainMethod, &args_var, 1);
-		if (!VMContext::pending_exception)
+		if (!VMContext::PendingException())
 		{
 			// The JVM stays alive while non-daemon threads are still running;
 			// main returning is not process termination (e.g. embedded servers).
 			Scheduler::Instance().RunNonDaemonThreads();
 		}
-		if (!VMContext::pending_exception)
+		if (!VMContext::PendingException())
 		{
 			// Normal termination runs the hooks registered through
 			// Runtime.addShutdownHook on their own threads before teardown.
@@ -258,12 +273,12 @@ static int run_class(const string &class_name, int argc, char **argv)
 				}
 			}
 		}
-		if (VMContext::pending_exception)
+		if (VMContext::PendingException())
 		{
 			// Uncaught Java exception: print a readable trace and exit with a
 			// non-zero status (3, the VM/runtime error code).
-			PrintUncaughtException(VMContext::pending_exception);
-			VMContext::pending_exception = NULL;
+			PrintUncaughtException(VMContext::PendingException());
+			VMContext::SetPendingException(NULL);
 			result = 3;
 		}
 	}
@@ -299,8 +314,12 @@ static int run_class(const string &class_name, int argc, char **argv)
 
 int main(int argc, char **argv)
 {
+#if defined(_WIN32)
+	SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
+#else
 	std::signal(SIGQUIT, request_thread_dump);
 	std::signal(SIGUSR1, request_thread_dump);
+#endif
 	const char *debug = getenv("DARKS_JVM_DEBUG");
 	if (debug && *debug && string(debug) != "0")
 	{

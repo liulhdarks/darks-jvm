@@ -1,17 +1,36 @@
 // java.net.SocketOps: non-blocking POSIX socket primitives.
 
+#if defined(_WIN32)
+// winsock2.h must be included before windows.h (which stdafx.h/common.h pull
+// in); including it later would leave the legacy winsock.h definitions in
+// effect.
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #include "stdafx.h"
 #include "jni_impl.h"
 
 #include <cerrno>
 #include <cstring>
+#include <mutex>
 
 #if defined(_WIN32)
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
-
 namespace {
+
+// Winsock requires WSAStartup before any socket call; there is no equivalent
+// of the POSIX implicit initialization.  Do it lazily from the entry points
+// that create descriptors (calling it from DllMain is unsafe).
+std::once_flag g_winsock_once;
+
+void EnsureWinsock()
+{
+	std::call_once(g_winsock_once, []() {
+		WSADATA data;
+		WSAStartup(MAKEWORD(2, 2), &data);
+	});
+}
 
 int last_error()
 {
@@ -29,6 +48,7 @@ extern "C" {
 
 JNIEXPORT jint JNICALL Java_java_net_SocketOps_socket0(JNIEnv *, jclass)
 {
+	EnsureWinsock();
 	SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	return s == INVALID_SOCKET ? -1 : static_cast<jint>(s);
 }
@@ -298,6 +318,7 @@ JNIEXPORT jint JNICALL Java_java_net_SocketOps_poll0(JNIEnv *env, jclass,
 	jintArray fds, jintArray ops, jintArray outOps)
 {
 	jint count = fds ? env->GetArrayLength(fds) : 0;
+	EnsureWinsock();
 	std::vector<jint> fd_values(static_cast<size_t>(count));
 	std::vector<jint> op_values(static_cast<size_t>(count));
 	std::vector<jint> out_values(static_cast<size_t>(count));
@@ -333,11 +354,75 @@ JNIEXPORT jint JNICALL Java_java_net_SocketOps_poll0(JNIEnv *env, jclass,
 
 JNIEXPORT jintArray JNICALL Java_java_net_SocketOps_pipe0(JNIEnv *env, jclass)
 {
-	return NULL;
+	// Winsock has no pipe()/socketpair(); a connected loopback TCP pair gives
+	// the same "pollable descriptor pair" the selector wake-up path needs.
+	EnsureWinsock();
+	SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (listener == INVALID_SOCKET)
+	{
+		return NULL;
+	}
+	sockaddr_in addr;
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	addr.sin_port = 0;
+	if (bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 ||
+	    listen(listener, 1) != 0)
+	{
+		closesocket(listener);
+		return NULL;
+	}
+	int addr_len = sizeof(addr);
+	if (getsockname(listener, reinterpret_cast<sockaddr*>(&addr), &addr_len) != 0)
+	{
+		closesocket(listener);
+		return NULL;
+	}
+	SOCKET writer = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (writer == INVALID_SOCKET)
+	{
+		closesocket(listener);
+		return NULL;
+	}
+	if (connect(writer, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0)
+	{
+		closesocket(writer);
+		closesocket(listener);
+		return NULL;
+	}
+	SOCKET reader = accept(listener, NULL, NULL);
+	closesocket(listener);
+	if (reader == INVALID_SOCKET)
+	{
+		closesocket(writer);
+		return NULL;
+	}
+	u_long nonblocking = 1;
+	ioctlsocket(reader, FIONBIO, &nonblocking);
+	ioctlsocket(writer, FIONBIO, &nonblocking);
+	jintArray result = env->NewIntArray(2);
+	if (!result)
+	{
+		closesocket(reader);
+		closesocket(writer);
+		return NULL;
+	}
+	jint fds[2] = { static_cast<jint>(reader), static_cast<jint>(writer) };
+	env->SetIntArrayRegion(result, 0, 2, fds);
+	return result;
 }
 
-JNIEXPORT void JNICALL Java_java_net_SocketOps_drain0(JNIEnv *, jclass, jint)
+JNIEXPORT void JNICALL Java_java_net_SocketOps_drain0(JNIEnv *, jclass, jint fd)
 {
+	if (fd < 0)
+	{
+		return;
+	}
+	char buffer[256];
+	while (recv(static_cast<SOCKET>(fd), buffer, sizeof(buffer), 0) > 0)
+	{
+	}
 }
 
 } // extern "C"

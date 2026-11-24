@@ -27,3 +27,13 @@ Overrides (all optional):
 
 Smoke checks: `/` (Welcome), `/owners/find` (Find Owners), `/owners/2`
 (Owner Information, Betty Davis).
+
+## Windows
+
+`run.sh` is a bash script and has not been ported to PowerShell. It runs under
+MSYS2 (or Git Bash) but assumes POSIX tools and a JDK 11 for Maven; on Windows
+run the same steps manually (clone PetClinic at `9ecdc11`, `mvn -DskipTests
+package` with a JDK 11, then
+`build\bin\darks-jvm.exe -cp build\classes -jar target\spring-petclinic-2.7.3.jar`).
+Keep `darks-jvm.exe`, `darksvm.dll` and `native.dll` in `build\bin`, with the
+MSYS2 `mingw64\bin` directory on `PATH` for the runtime DLLs.

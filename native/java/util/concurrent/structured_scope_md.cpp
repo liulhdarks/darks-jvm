@@ -24,8 +24,8 @@ Java_java_util_concurrent_StructuredTaskScope_startScoped0(JNIEnv *env, jclass c
 	(void)clazz;
 	if (!Scheduler::Instance().StartScopedThread(JniRef(thread), JniRef(scope)))
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/IllegalStateException", "scope is closed");
+		VMContext::SetPendingException(CreateJavaException(
+			"java/lang/IllegalStateException", "scope is closed"));
 	}
 }
 

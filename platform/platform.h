@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -30,6 +31,10 @@ std::string DirectoryName(const std::string &path);
 bool FileExists(const std::string &path);
 bool IsDirectory(const std::string &path);
 bool ReadFileBytes(const std::string &path, std::vector<uint8_t> &out);
+// Opens a file whose path is UTF-8.  On Windows the narrow CRT file APIs
+// interpret the path in the ANSI code page, so the implementation converts
+// to UTF-16 and uses _wfopen.
+std::FILE *FopenUtf8(const std::string &path, const char *mode);
 
 // ---- dynamic libraries -----------------------------------------------------
 // "native" -> "libnative.so" (Linux) / "libnative.dylib" (macOS) / "native.dll".
