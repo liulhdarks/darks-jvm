@@ -32,8 +32,10 @@
 #include <mach/vm_statistics.h>
 #include <sys/sysctl.h>
 #endif
-extern char **environ;
 #endif
+// Declared for both platforms; on POSIX unistd.h already declares it with C
+// linkage, so a block-scope redeclaration (as clang 21 rejects) is unnecessary.
+extern char **environ;
 
 namespace {
 
@@ -708,7 +710,6 @@ JNIEXPORT jobject JNICALL Java_java_lang_System_getenvMap0
 	{
 		return NULL;
 	}
-	extern char **environ;
 	for (char **entry = environ; entry && *entry; ++entry)
 	{
 		const char *text = *entry;

@@ -462,7 +462,7 @@ JNIEXPORT jint JNICALL Java_java_net_SocketOps_bind0(JNIEnv *env, jclass, jint f
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(static_cast<unsigned short>(port));
 	memcpy(&addr.sin_addr, bytes, 4);
-	return bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0
+	return ::bind(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0
 		? 0 : -1;
 }
 
