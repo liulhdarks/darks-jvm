@@ -8,3 +8,4 @@ ipch/
 # CMake build trees
 build/
 build-*/
+worktrees/
