@@ -49,6 +49,21 @@ void ThreadStack::MarkRoots(ObjectHeap *heap)
 	}
 }
 
+bool ThreadStack::HoldsMonitor() const
+{
+	std::stack<lpStackFrame> copy = frames;
+	while (!copy.empty())
+	{
+		lpStackFrame frame = copy.top();
+		copy.pop();
+		if (frame && !frame->monitors_held.empty())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 void ThreadStack::AddFrame(lpClass clazz, lpMethod method, lpStackFrame &frame)
 {
 	frame = new StackFrame(this, clazz, method, class_loader);

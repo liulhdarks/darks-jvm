@@ -3,6 +3,23 @@
 find_program(JAVAC NAMES javac)
 find_program(JAVA NAMES java)
 
+# The virtual-thread tests call Thread.ofVirtual()/Executors.newVirtualThread
+# PerTaskExecutor(), which only exist in JDK 21+.  They are compiled with
+# -source 11 -target 11 so they still produce class file version 55, but the
+# compiler must be a JDK 21+ javac to see the API.  Prefer JAVA_HOME, which
+# usually points at the newest installed JDK.
+find_program(JAVAC21 NAMES javac HINTS "$ENV{JAVA_HOME}/bin" NO_DEFAULT_PATH)
+if(NOT JAVAC21)
+    find_program(JAVAC21 NAMES javac)
+endif()
+if(JAVAC21)
+    execute_process(COMMAND "${JAVAC21}" -version
+                    OUTPUT_VARIABLE JAVAC21_VERSION
+                    ERROR_VARIABLE JAVAC21_VERSION_ERROR)
+    string(STRIP "${JAVAC21_VERSION}${JAVAC21_VERSION_ERROR}" JAVAC21_VERSION)
+    string(REGEX MATCH "[0-9]+" JAVAC21_MAJOR "${JAVAC21_VERSION}")
+endif()
+
 add_executable(unit_tests unit_tests.cpp)
 target_link_libraries(unit_tests PRIVATE darksvm)
 
@@ -22,6 +39,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/io/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/function/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/util/concurrent/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/reflect/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/annotation/*.java"
     )
@@ -70,6 +88,32 @@ if(JAVAC)
     add_custom_target(java_classes ALL DEPENDS "${CLASS_STAMP}")
     add_dependencies(unit_tests java_classes)
     add_dependencies(gc_tests java_classes)
+
+    # Virtual-thread tests call Java 21-era APIs (Thread.ofVirtual,
+    # Executors.newVirtualThreadPerTaskExecutor) that are not part of the
+    # Java 11 API.  Compile them with -source 11 -target 11 (without
+    # --release) so they bind to the runtime classes on the class path while
+    # still producing class file version 55, which darks-jvm accepts.
+    if(JAVAC21_MAJOR GREATER_EQUAL 21)
+        set(CONCURRENT_TEST_SOURCES
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/VirtualThreadScale.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/ExecutorServiceTest.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/VirtualThreadInterruptTest.java"
+            "${CMAKE_CURRENT_SOURCE_DIR}/java/concurrent/PinningTest.java"
+        )
+        set(CONCURRENT_STAMP "${CLASSES_DIR}/.stamp_concurrent")
+        add_custom_command(
+            OUTPUT "${CONCURRENT_STAMP}"
+            COMMAND "${JAVAC21}" -source 11 -target 11 -cp "${CLASSES_DIR}"
+                    -d "${CLASSES_DIR}" ${CONCURRENT_TEST_SOURCES}
+            COMMAND "${CMAKE_COMMAND}" -E touch "${CONCURRENT_STAMP}"
+            DEPENDS ${CONCURRENT_TEST_SOURCES} "${CLASS_STAMP}"
+            COMMENT "Compiling virtual-thread tests")
+        add_custom_target(concurrent_classes ALL DEPENDS "${CONCURRENT_STAMP}")
+        add_dependencies(concurrent_classes java_classes)
+    else()
+        message(STATUS "javac 21 not found: virtual-thread tests disabled.")
+    endif()
 
     set(CHECK "${CMAKE_CURRENT_SOURCE_DIR}/check.cmake")
     set(JVM "$<TARGET_FILE:darks-jvm>")
@@ -598,6 +642,47 @@ if(JAVAC)
     add_thread_test(JoinTimeoutTest "join-timeout ok")
     add_thread_test(MainMonitorHandoff "main-monitor-handoff ok")
     add_thread_test(TimedWait "timed-wait ok")
+
+    # ------------------------------------------------------------------
+    # Virtual threads / minimal java.util.concurrent (combination B, B0+B1).
+    # ------------------------------------------------------------------
+    if(JAVAC21_MAJOR GREATER_EQUAL 21)
+    add_test(NAME virtual_thread_scale
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPROG=${CMAKE_COMMAND}"
+            "-DARGS=-E;env;DARKS_JVM_MP=1;DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};VirtualThreadScale;100000"
+            -DEXPECT_RC=0 -DTIMEOUT=600
+            "-DEXPECT_TEXT=virtual-thread-scale ok n=100000 virtual=true"
+            -P "${CHECK}")
+
+    foreach(mp 1 4)
+        add_test(NAME executor_service_mp${mp}
+            COMMAND "${CMAKE_COMMAND}"
+                "-DPROG=${CMAKE_COMMAND}"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};ExecutorServiceTest;10000"
+                -DEXPECT_RC=0 -DTIMEOUT=300
+                "-DEXPECT_TEXT=executor-service ok n=10000"
+                "-DEXPECT_TEXT2=timeout=true cancel=true terminated=true rejected=true"
+                -P "${CHECK}")
+    endforeach()
+
+    add_test(NAME virtual_thread_interrupt
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPROG=${CMAKE_COMMAND}"
+            "-DARGS=-E;env;DARKS_JVM_MP=1;DARKS_VTHREAD_PINNING=off;${JVM};-cp;${CLASSES_DIR};VirtualThreadInterruptTest"
+            -DEXPECT_RC=0 -DTIMEOUT=120
+            "-DEXPECT_TEXT=virtual-thread-interrupt ok virtual=true interrupted=true"
+            -P "${CHECK}")
+
+    add_test(NAME virtual_thread_pinning
+        COMMAND "${CMAKE_COMMAND}"
+            "-DPROG=${CMAKE_COMMAND}"
+            "-DARGS=-E;env;DARKS_JVM_MP=1;DARKS_VTHREAD_PINNING=warn;${JVM};-cp;${CLASSES_DIR};PinningTest"
+            -DEXPECT_RC=0 -DTIMEOUT=120
+            "-DEXPECT_TEXT=pinned in a native call"
+            "-DEXPECT_TEXT2=pinning ok virtual=true platform=false"
+            -P "${CHECK}")
+    endif()
 
     # ------------------------------------------------------------------
     # Producer/consumer example (examples/producer-consumer) and the

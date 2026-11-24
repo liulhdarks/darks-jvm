@@ -41,6 +41,16 @@ enum CoroutineState
 	CO_TERMINATED
 };
 
+// Thread kind as exposed to the Java API.  Both kinds currently run on the
+// same coroutine scheduler; the field keeps isVirtual()/diagnostics faithful
+// and gives a place to bind platform threads to dedicated carriers later.
+enum CoroutineKind
+{
+	CO_KIND_MAIN = 0,
+	CO_KIND_PLATFORM,
+	CO_KIND_VIRTUAL
+};
+
 // One Java thread.  Fields marked "root" are registered as GC roots for their
 // whole lifetime (their addresses are stable because Coroutine objects are
 // heap allocated and never copied).
@@ -56,6 +66,8 @@ struct Coroutine
 	lpCoroutine join_target;
 	int saved_count;           // monitor recursion count restored after wait
 	int state;
+	int kind;                  // CoroutineKind
+	int carrier_id;            // worker index currently running it, -1 if unmounted
 	int64_t deadline_ns;       // 0 => no timer
 	uint64_t timer_generation;
 	LPOBJECT_REF injected;     // InterruptedException to raise on resume (root)
@@ -63,6 +75,10 @@ struct Coroutine
 	bool interrupt_flag;
 	bool throw_on_resume;
 	bool resume_from_wait;
+	// Virtual-thread diagnostics: number of nested native calls and whether a
+	// pinning warning was already emitted (one warning per coroutine).
+	int pinned_depth;
+	bool pinning_warned;
 	// True when ownership of a monitor was handed to this coroutine by a
 	// releasing owner; the retried monitorenter must not bump the recursion
 	// count a second time.
@@ -128,6 +144,7 @@ public:
 
 	// ---- thread lifecycle (natives) --------------------------------------
 	bool StartThread(LPOBJECT_REF thread_obj);
+	bool StartVirtualThread(LPOBJECT_REF thread_obj);
 	void InterruptThread(LPOBJECT_REF thread_obj);
 	bool IsInterrupted(LPOBJECT_REF thread_obj, bool clear);
 	bool ThreadAlive(LPOBJECT_REF thread_obj);
@@ -170,6 +187,7 @@ private:
 	void MarkAtSafepoint(bool at);
 	void DetachCoroutine(lpCoroutine co);
 	bool SetupThread(lpCoroutine co, LPOBJECT_REF thread_obj);
+	bool StartThreadInternal(LPOBJECT_REF thread_obj, int kind);
 
 	struct Impl;
 	Impl *impl;

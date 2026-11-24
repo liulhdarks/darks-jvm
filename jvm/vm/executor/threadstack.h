@@ -70,4 +70,9 @@ public:
 
 	// Marks references held by every frame on this stack.
 	void MarkRoots(ObjectHeap *heap);
+
+	// True when any frame on this stack currently holds a Java monitor.
+	// Used by virtual-thread pinning diagnostics: entering a native method
+	// while holding a monitor may pin the carrier thread.
+	bool HoldsMonitor() const;
 };
