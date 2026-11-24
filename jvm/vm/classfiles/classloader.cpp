@@ -187,6 +187,34 @@ JVM_API bool DarksVM_FindResourceBytes(const std::string &resource_name,
 	return false;
 }
 
+namespace {
+
+std::string FileUrlPath(const std::string &path)
+{
+	std::string result = path;
+	for (size_t i = 0; i < result.size(); i++)
+	{
+		if (result[i] == '\\')
+		{
+			result[i] = '/';
+		}
+	}
+#if defined(_WIN32)
+	// A drive-letter path is absolute, but a file URL keeps the leading slash
+	// ("file:/C:/dir") that HotSpot also produces.  FopenUtf8 drops it again
+	// before calling the CRT.
+	if (result.size() >= 2 && result[1] == ':' &&
+	    ((result[0] >= 'A' && result[0] <= 'Z') ||
+	     (result[0] >= 'a' && result[0] <= 'z')))
+	{
+		result.insert(result.begin(), '/');
+	}
+#endif
+	return result;
+}
+
+} // namespace
+
 JVM_API bool DarksVM_FindResourceUrls(const std::string &resource_name,
                                       std::vector<std::string> &urls)
 {
@@ -214,7 +242,7 @@ JVM_API bool DarksVM_FindResourceUrls(const std::string &resource_name,
 			std::string candidate = dk::JoinPath(entry, name);
 			if (dk::FileExists(candidate))
 			{
-				urls.push_back("file:" + candidate);
+				urls.push_back("file:" + FileUrlPath(candidate));
 			}
 			continue;
 		}
@@ -225,7 +253,7 @@ JVM_API bool DarksVM_FindResourceUrls(const std::string &resource_name,
 		ZipFile *zip = OpenArchive(entry);
 		if (zip && zip->HasEntry(name))
 		{
-			urls.push_back("jar:file:" + entry + "!/" + name);
+			urls.push_back("jar:file:" + FileUrlPath(entry) + "!/" + name);
 		}
 	}
 	return !urls.empty();

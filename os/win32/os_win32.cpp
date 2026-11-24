@@ -21,6 +21,48 @@ void *TryLoad(const std::string &path)
 	return reinterpret_cast<void *>(handle);
 }
 
+std::string &LoadErrorStorage()
+{
+	static std::string *message = new std::string();
+	return *message;
+}
+
+std::string FormatLastError()
+{
+	DWORD code = GetLastError();
+	if (code == 0)
+	{
+		return std::string();
+	}
+	LPWSTR buffer = NULL;
+	DWORD length = FormatMessageW(
+		FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+			FORMAT_MESSAGE_IGNORE_INSERTS,
+		NULL, code, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+		reinterpret_cast<LPWSTR>(&buffer), 0, NULL);
+	std::string reason;
+	if (length > 0 && buffer)
+	{
+		std::vector<uint16_t> units;
+		for (DWORD i = 0; i < length; i++)
+		{
+			units.push_back(static_cast<uint16_t>(buffer[i]));
+		}
+		reason = dk::Utf16ToUtf8(units);
+		while (!reason.empty() &&
+		       (reason[reason.size() - 1] == '\r' || reason[reason.size() - 1] == '\n'))
+		{
+			reason.erase(reason.size() - 1);
+		}
+	}
+	if (buffer)
+	{
+		LocalFree(buffer);
+	}
+	std::string prefix = "error " + std::to_string(static_cast<unsigned>(code));
+	return reason.empty() ? prefix : prefix + ": " + reason;
+}
+
 } // namespace
 
 LONG64 OS::GetCurrentTimeMillis()
@@ -36,6 +78,7 @@ LONG64 OS::GetCurrentTimeMillis()
 
 void* OS::LoadNativeLibrary(const char* libs_name)
 {
+	LoadErrorStorage().clear();
 	if (!libs_name || !*libs_name)
 	{
 		return NULL;
@@ -67,8 +110,14 @@ void* OS::LoadNativeLibrary(const char* libs_name)
 			return handle;
 		}
 	}
+	LoadErrorStorage() = FormatLastError();
 	dk::DebugPrint(("LoadLibrary failed for " + mapped + "\n").c_str());
 	return NULL;
+}
+
+const std::string &OS::LastLoadError()
+{
+	return LoadErrorStorage();
 }
 
 void OS::ReleaseNativeLibrary(void* handle)

@@ -29,6 +29,7 @@ class NativeLibraryManager
 private:
 	map<string, lpNativeLibrary> libs_map;
 	map<string, NATIVE_FUNC> func_map;
+	map<string, string> load_errors;
 
 public:
 
@@ -43,6 +44,10 @@ public:
 
 	// Handle of an already loaded library (NULL when unknown).
 	void *GetLibraryHandle(LPCSTR libs_name);
+
+	// OS loader message recorded when loading libs_name failed (empty when
+	// the library loaded or no reason was available).
+	const std::string &GetLoadError(LPCSTR libs_name) const;
 
 	LPSTR MapLibraryName(LPCSTR libs_name);
 

@@ -229,7 +229,14 @@ std::FILE *FopenUtf8(const std::string &path, const char *mode) {
 #if defined(_WIN32)
     std::vector<uint16_t> mode_units = Utf8ToUtf16(mode ? mode : "rb");
     std::wstring wide_mode(mode_units.begin(), mode_units.end());
-    return ::_wfopen(WidePath(path).c_str(), wide_mode.c_str());
+    // A file URL yields "/C:/dir/file"; the CRT wants "C:/dir/file".
+    const char *open_path = path.c_str();
+    if (path.size() >= 3 && path[0] == '/' && path[2] == ':' &&
+        ((path[1] >= 'A' && path[1] <= 'Z') ||
+         (path[1] >= 'a' && path[1] <= 'z'))) {
+        open_path++;
+    }
+    return ::_wfopen(WidePath(open_path).c_str(), wide_mode.c_str());
 #else
     return std::fopen(path.c_str(), mode);
 #endif

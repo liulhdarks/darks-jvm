@@ -165,7 +165,12 @@ public class RuntimeCompat
         check("clearProperty", "v".equals(System.clearProperty("compat.dynamic")) &&
                                System.getProperty("compat.dynamic") == null);
         check("getenv", System.getenv("PATH") != null);
-        check("mapLibraryName", System.mapLibraryName("demo").startsWith("lib"));
+        String mappedLibrary = System.mapLibraryName("demo");
+        String osName = System.getProperty("os.name");
+        boolean windows = osName != null && osName.startsWith("Windows");
+        check("mapLibraryName", windows
+            ? mappedLibrary.endsWith(".dll") && !mappedLibrary.startsWith("lib")
+            : mappedLibrary.startsWith("lib"));
 
         int[] overlap = {1, 2, 3, 4, 5};
         System.arraycopy(overlap, 0, overlap, 1, 4);
