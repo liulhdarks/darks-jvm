@@ -27,6 +27,7 @@ class StackFrame;
 class Method;
 
 struct Coroutine;
+struct Monitor;
 
 typedef Coroutine *lpCoroutine;
 
@@ -259,6 +260,13 @@ public:
 	// stack location because their frames may still be mutating.
 	void SnapshotThreads(std::vector<DiagThread> &out);
 
+	// Diagnostic request: SIGQUIT handler.  Only sets a flag (the handler
+	// itself must be async-signal-safe); the scheduler dumps full Java stacks
+	// from its idle point, where no coroutine is executing on this thread.
+	void RequestThreadDump();
+	// Writes every live coroutine and every nested executor stack to stderr.
+	void DumpThreads();
+
 	// Diagnostic request: walks the wait-for graph (monitor owners, join
 	// targets including StructuredTaskScope subtasks, channel send/receive
 	// peers) and reports a cycle or an all-blocked state.  Returns true when
@@ -294,6 +302,11 @@ private:
 	// Stable ids for decision-log events (heap pointers differ per run).
 	uint64_t DeterministicObjectId(LPOBJECT_REF obj, lpClass cls);
 	void RecordMonitorGrant(lpCoroutine owner, LPOBJECT_REF obj, lpClass cls);
+	// Moves a released monitor's waiters on: an Object.wait() resumer (which
+	// resumes past the wait call and needs the saved recursion count) is given
+	// ownership, otherwise every monitorenter waiter is only made runnable and
+	// the monitor stays free.  Caller holds the scheduler lock.
+	void GiveUpMonitor(Monitor *mon, LPOBJECT_REF obj, lpClass cls);
 	void ReapTimers();
 	void WaitForWork(int64_t timeout_ns);
 	int64_t NextDeadline() const;

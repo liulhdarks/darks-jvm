@@ -30,6 +30,19 @@
 #include <thread>
 #include <vector>
 
+struct Monitor
+{
+	Monitor()
+	{
+		owner = NULL;
+		count = 0;
+	}
+	lpCoroutine owner;
+	int count;
+	std::vector<lpCoroutine> entry;    // waiting to acquire (retry or wait-resume)
+	std::vector<lpCoroutine> waiters;  // Object.wait
+};
+
 namespace {
 
 int64_t NowNs()
@@ -75,19 +88,6 @@ struct ReadyKey
 	}
 };
 
-struct Monitor
-{
-	Monitor()
-	{
-		owner = NULL;
-		count = 0;
-	}
-	lpCoroutine owner;
-	int count;
-	std::vector<lpCoroutine> entry;    // waiting to acquire (retry or wait-resume)
-	std::vector<lpCoroutine> waiters;  // Object.wait
-};
-
 struct WorkerInfo
 {
 	WorkerInfo()
@@ -125,6 +125,10 @@ thread_local lpCoroutine t_owner = NULL;
 thread_local WorkerInfo *t_worker = NULL;
 
 std::atomic<bool> g_stw_requested(false);
+
+// Set by Scheduler::RequestThreadDump (SIGQUIT); cleared by whichever
+// scheduler loop picks it up.
+static std::atomic<bool> g_thread_dump_request(false);
 
 int EnvParallelism()
 {
@@ -1312,6 +1316,57 @@ bool Scheduler::MonitorEnterClass(StackFrame *frame, lpClass clazz)
 	return false;
 }
 
+void Scheduler::GiveUpMonitor(Monitor *mon, LPOBJECT_REF obj, lpClass cls)
+{
+	if (!mon || mon->entry.empty())
+	{
+		return;
+	}
+	// An Object.wait() resumer returns past the wait call and expects the
+	// monitor and its saved recursion count to be held already, so it cannot
+	// retry a monitorenter.
+	for (size_t i = 0; i < mon->entry.size(); i++)
+	{
+		lpCoroutine co = mon->entry[i];
+		if (!co || !co->resume_from_wait)
+		{
+			continue;
+		}
+		mon->entry.erase(mon->entry.begin() + i);
+		mon->owner = co;
+		RecordMonitorGrant(co, obj, cls);
+		mon->count = co->saved_count;
+		if (mon->count < 1)
+		{
+			mon->count = 1;
+		}
+		co->monitor_granted = false;
+		co->resume_from_wait = false;
+		co->block_obj = NULL;
+		co->block_class = NULL;
+		Enqueue(co, static_cast<int>(co->id));
+		return;
+	}
+	// Handing ownership to a parked coroutine only works once its own awaiter
+	// runs; that awaiter can be blocked behind a coroutine waiting for this
+	// very monitor, which leaves the handoff undeliverable and the VM stuck.
+	// Wake every monitorenter waiter instead and leave the monitor free, so
+	// the first awaiter that regains control retries the enter and acquires it.
+	std::vector<lpCoroutine> waiters;
+	waiters.swap(mon->entry);
+	for (size_t i = 0; i < waiters.size(); i++)
+	{
+		lpCoroutine co = waiters[i];
+		if (!co || co->state != CO_MONITOR)
+		{
+			continue;
+		}
+		co->block_obj = NULL;
+		co->block_class = NULL;
+		Enqueue(co, static_cast<int>(co->id));
+	}
+}
+
 void Scheduler::MonitorExit(LPOBJECT_REF obj)
 {
 	if (!impl || !obj)
@@ -1337,33 +1392,7 @@ void Scheduler::MonitorExit(LPOBJECT_REF obj)
 	}
 	mon->count = 0;
 	mon->owner = NULL;
-	lpCoroutine next = NULL;
-	if (!mon->entry.empty())
-	{
-		next = mon->entry.front();
-		mon->entry.erase(mon->entry.begin());
-		mon->owner = next;
-		RecordMonitorGrant(next, obj, NULL);
-		mon->count = next->resume_from_wait ? next->saved_count : 1;
-		if (mon->count < 1) mon->count = 1;
-		next->monitor_granted = !next->resume_from_wait;
-		next->resume_from_wait = false;
-		next->block_obj = NULL;
-		next->block_class = NULL;
-		next->state = CO_READY;
-		next->ready_since_ns = NowNs();
-	}
-	if (next)
-	{		if (next->pin_main)
-		{
-			impl->cv.notify_all();
-		}
-		else
-		{
-			PushReady(next, static_cast<size_t>(next->id));
-			impl->cv.notify_one();
-		}
-	}
+	GiveUpMonitor(mon, obj, NULL);
 	EraseMonitor(impl->monitors, impl->class_monitors, obj, NULL, mon);
 }
 
@@ -1392,29 +1421,7 @@ void Scheduler::MonitorExitClass(lpClass clazz)
 	}
 	mon->count = 0;
 	mon->owner = NULL;
-	if (!mon->entry.empty())
-	{
-		lpCoroutine next = mon->entry.front();
-		mon->entry.erase(mon->entry.begin());
-		mon->owner = next;
-		RecordMonitorGrant(next, NULL, clazz);
-		mon->count = next->resume_from_wait ? next->saved_count : 1;
-		if (mon->count < 1) mon->count = 1;
-		next->monitor_granted = !next->resume_from_wait;
-		next->resume_from_wait = false;
-		next->block_obj = NULL;
-		next->block_class = NULL;
-		next->state = CO_READY;
-		if (next->pin_main)
-		{
-			impl->cv.notify_all();
-		}
-		else
-		{
-			PushReady(next, static_cast<size_t>(next->id));
-			impl->cv.notify_one();
-		}
-	}
+	GiveUpMonitor(mon, NULL, clazz);
 	EraseMonitor(impl->monitors, impl->class_monitors, NULL, clazz, mon);
 }
 
@@ -1577,34 +1584,7 @@ bool Scheduler::WaitCurrent(ThreadStack *ts, LPOBJECT_REF obj, int64_t millis)
 	co->state = CO_WAITING;
 	mon->waiters.push_back(co);
 	// Let a coroutine blocked on monitorenter proceed while we wait.
-	if (!mon->entry.empty())
-	{
-		lpCoroutine next = mon->entry.front();
-		mon->entry.erase(mon->entry.begin());
-		mon->owner = next;
-		RecordMonitorGrant(next, obj, NULL);
-		mon->count = next->resume_from_wait ? next->saved_count : 1;
-		if (mon->count < 1) mon->count = 1;
-		next->monitor_granted = !next->resume_from_wait;
-		next->resume_from_wait = false;
-		next->block_obj = NULL;
-		next->block_class = NULL;
-		// Publish the wakeup before making the coroutine runnable.  The main
-		// coroutine is resumed by PumpMain only when its state is CO_READY, so
-		// omitting this left main parked in CO_MONITOR forever when it
-		// happened to be the next entry-queue owner at a wait() handoff.
-		next->state = CO_READY;
-		next->ready_since_ns = NowNs();
-		if (next->pin_main)
-		{
-			impl->cv.notify_all();
-		}
-		else
-		{
-			PushReady(next, static_cast<size_t>(next->id));
-			impl->cv.notify_one();
-		}
-	}
+	GiveUpMonitor(mon, obj, NULL);
 	if (millis > 0)
 	{
 		co->deadline_ns = SchedulerNowNs() + millis * 1000000LL;
@@ -1658,6 +1638,10 @@ bool Scheduler::AwaitCurrentResume(ThreadStack *ts)
 	}
 	for (;;)
 	{
+		if (g_thread_dump_request.exchange(false))
+		{
+			DumpThreads();
+		}
 		lpCoroutine next = NULL;
 		{
 			std::unique_lock<std::recursive_mutex> lk(impl->m);
@@ -1708,6 +1692,41 @@ bool Scheduler::AwaitCurrentResume(ThreadStack *ts)
 					t_worker->at_safepoint = false;
 				}
 				continue;
+			}
+			if (next != co && getenv("DARKS_NESTED_TRACE"))
+			{
+				uint64_t holder = 0;
+				if (co->state == CO_MONITOR)
+				{
+					Monitor *wmon = NULL;
+					if (co->block_class)
+					{
+						std::map<lpClass, Monitor *>::iterator mi =
+							impl->class_monitors.find(co->block_class);
+						if (mi != impl->class_monitors.end())
+						{
+							wmon = mi->second;
+						}
+					}
+					else
+					{
+						std::map<LPOBJECT_REF, Monitor *>::iterator mi =
+							impl->monitors.find(co->block_obj);
+						if (mi != impl->monitors.end())
+						{
+							wmon = mi->second;
+						}
+					}
+					if (wmon && wmon->owner)
+					{
+						holder = wmon->owner->id;
+					}
+				}
+				fprintf(stderr, "NESTED host=#%llu state=%s holder=#%llu guest=#%llu\n",
+				        static_cast<unsigned long long>(co->id), DiagStateName(co->state),
+				        static_cast<unsigned long long>(holder),
+				        static_cast<unsigned long long>(next->id));
+				fflush(stderr);
 			}
 			if (next == co)
 			{
@@ -2540,6 +2559,10 @@ void Scheduler::PumpMain(lpCoroutine main_co, bool yield_to_others)
 {
 	while (impl && impl->running)
 	{
+		if (g_thread_dump_request.exchange(false))
+		{
+			DumpThreads();
+		}
 		lpCoroutine co = NULL;
 		bool idle = false;
 		{
@@ -2753,6 +2776,10 @@ void Scheduler::RunNonDaemonThreads()
 	}
 	for (;;)
 	{
+		if (g_thread_dump_request.exchange(false))
+		{
+			DumpThreads();
+		}
 		std::vector<LPOBJECT_REF> refs;
 		{
 			std::lock_guard<std::recursive_mutex> lk(impl->m);
@@ -3186,6 +3213,101 @@ bool Scheduler::DiagnosticsEnabled() const
 	return impl && impl->diag_any;
 }
 
+void Scheduler::RequestThreadDump()
+{
+	g_thread_dump_request.store(true, std::memory_order_relaxed);
+}
+
+static void AppendJavaFrames(std::string &out, ThreadStack *ts)
+{
+	std::vector<ThreadStack::FrameInfo> frames;
+	ts->DescribeJavaFrames(frames);
+	for (size_t i = 0; i < frames.size(); i++)
+	{
+		const ThreadStack::FrameInfo &frame = frames[i];
+		out += "        at ";
+		out += frame.declaring_class;
+		out += ".";
+		out += frame.method_name;
+		out += "(";
+		out += frame.file_name.empty() ? "Unknown Source" : frame.file_name;
+		if (frame.line_number >= 0)
+		{
+			char buf[32];
+			snprintf(buf, sizeof(buf), ":%d", frame.line_number);
+			out += buf;
+		}
+		out += ")\n";
+	}
+}
+
+void Scheduler::DumpThreads()
+{
+	if (!impl)
+	{
+		return;
+	}
+	std::string out = "\ndarks-jvm: thread dump\n";
+	VMLock vmlk;
+	std::map<ThreadStack *, lpCoroutine> owned;
+	std::vector<DiagNode> nodes;
+	{
+		std::lock_guard<std::recursive_mutex> lk(impl->m);
+		BuildDiagNodes(impl->live, impl->monitors, impl->class_monitors, nodes);
+		char buf[128];
+		snprintf(buf, sizeof(buf), "  current t_co=#%llu%s\n",
+		         t_co ? static_cast<unsigned long long>(t_co->id) : 0ULL,
+		         t_co ? "" : " (none)");
+		out += buf;
+		for (size_t q = 0; q < impl->queues.size(); q++)
+		{
+			const std::deque<lpCoroutine> &dq = impl->queues[q];
+			snprintf(buf, sizeof(buf), "  ready[%zu] size=%zu front:", q, dq.size());
+			out += buf;
+			for (size_t k = 0; k < dq.size() && k < 8; k++)
+			{
+				lpCoroutine c = dq[k];
+				if (!c)
+				{
+					continue;
+				}
+				snprintf(buf, sizeof(buf), " #%llu(%s busy=%d queued=%d)",
+				         static_cast<unsigned long long>(c->id), DiagStateName(c->state),
+				         c->busy.load() ? 1 : 0, c->queued ? 1 : 0);
+				out += buf;
+			}
+			out += "\n";
+		}
+	}
+	for (size_t i = 0; i < nodes.size(); i++)
+	{
+		AppendDiagNode(out, nodes[i]);
+		if (!nodes[i].co || !nodes[i].co->ts)
+		{
+			continue;
+		}
+		owned[nodes[i].co->ts] = nodes[i].co;
+		AppendJavaFrames(out, nodes[i].co->ts);
+	}
+	if (VMContext::object_heap)
+	{
+		std::vector<ThreadStack *> stacks;
+		VMContext::object_heap->SnapshotThreadStacks(stacks);
+		for (size_t i = 0; i < stacks.size(); i++)
+		{
+			if (!stacks[i] || owned.find(stacks[i]) != owned.end())
+			{
+				continue;
+			}
+			out += "  nested executor stack (class initialisation / JNI)\n";
+			AppendJavaFrames(out, stacks[i]);
+		}
+	}
+	out += "\n";
+	fwrite(out.data(), 1, out.size(), stderr);
+	fflush(stderr);
+}
+
 void Scheduler::SnapshotThreads(std::vector<DiagThread> &out)
 {
 	out.clear();
@@ -3437,6 +3559,10 @@ void Scheduler::WorkerMain(int index)
 	}
 	while (true)
 	{
+		if (g_thread_dump_request.exchange(false))
+		{
+			DumpThreads();
+		}
 		lpCoroutine co = NULL;
 		bool idle = false;
 		{

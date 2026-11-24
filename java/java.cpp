@@ -25,12 +25,20 @@
 #include "vm/executor/deterministic.h"
 
 #include <cstdio>
+#include <csignal>
 #include <iostream>
 #include <string>
 #include <vector>
 using namespace std;
 
 static const char *kVersion = "darks-jvm 1.0 (cross-platform build)";
+
+// SIGQUIT / SIGUSR1 print a Java thread dump.  Only a flag is set here; the
+// scheduler formats the stacks from a safe point.
+static void request_thread_dump(int)
+{
+	Scheduler::Instance().RequestThreadDump();
+}
 
 static void print_usage()
 {
@@ -291,6 +299,8 @@ static int run_class(const string &class_name, int argc, char **argv)
 
 int main(int argc, char **argv)
 {
+	std::signal(SIGQUIT, request_thread_dump);
+	std::signal(SIGUSR1, request_thread_dump);
 	const char *debug = getenv("DARKS_JVM_DEBUG");
 	if (debug && *debug && string(debug) != "0")
 	{

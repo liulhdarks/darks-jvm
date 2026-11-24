@@ -95,6 +95,9 @@ public:
 
 	void RegisterThreadStack(ThreadStack *stack);
 	void UnregisterThreadStack(ThreadStack *stack);
+	// Diagnostic: copies the registered stacks so a caller can walk them
+	// without holding the heap lock while formatting frames.
+	void SnapshotThreadStacks(std::vector<ThreadStack *> &out);
 
 	// Nested no-collect regions. Native code may hold JNI references that
 	// are not visible to the collector, so automatic collection is deferred

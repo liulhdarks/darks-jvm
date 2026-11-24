@@ -247,6 +247,12 @@ void ObjectHeap::UnregisterThreadStack(ThreadStack *stack)
 	}
 }
 
+void ObjectHeap::SnapshotThreadStacks(std::vector<ThreadStack *> &out)
+{
+	VMLock lk;
+	out = thread_stacks;
+}
+
 void ObjectHeap::PushNoGc()
 {
 	VMLock lk;

@@ -13,6 +13,11 @@ public class ClassLoader
 
     private HashMap<String, Class<?>> loadedClasses;
     private HashMap<String, Package> packages;
+    // One lock object per class name, mirroring the JDK's parallel-capable
+    // loaders.  Serialising every load on the loader instance made unrelated
+    // class loads wait for the slowest one; with coroutines that turns into a
+    // deadlock because a suspended loader's awaiter may run the waiter.
+    private HashMap<String, Object> parallelLocks;
     private ClassLoader parent;
     private long vmLoader;
 
@@ -74,18 +79,21 @@ public class ClassLoader
         String specVersion, String specVendor, String implTitle,
         String implVersion, String implVendor, URL sealBase)
     {
-        if (packages == null)
+        synchronized (this)
         {
-            packages = new HashMap<String, Package>();
+            if (packages == null)
+            {
+                packages = new HashMap<String, Package>();
+            }
+            if (packages.get(name) != null)
+            {
+                throw new IllegalArgumentException(name);
+            }
+            Package pkg = new Package(name, specTitle, specVersion, specVendor,
+                implTitle, implVersion, implVendor);
+            packages.put(name, pkg);
+            return pkg;
         }
-        if (packages.get(name) != null)
-        {
-            throw new IllegalArgumentException(name);
-        }
-        Package pkg = new Package(name, specTitle, specVersion, specVendor,
-            implTitle, implVersion, implVendor);
-        packages.put(name, pkg);
-        return pkg;
     }
 
     protected static boolean registerAsParallelCapable()
@@ -100,10 +108,32 @@ public class ClassLoader
 
     protected Object getClassLoadingLock(String className)
     {
-        return this;
+        synchronized (this)
+        {
+            if (parallelLocks == null)
+            {
+                parallelLocks = new HashMap<String, Object>();
+            }
+            Object lock = parallelLocks.get(className);
+            if (lock == null)
+            {
+                lock = new Object();
+                parallelLocks.put(className, lock);
+            }
+            return lock;
+        }
     }
 
-    protected synchronized Class<?> loadClass(String name, boolean resolve)
+    protected Class<?> loadClass(String name, boolean resolve)
+        throws ClassNotFoundException
+    {
+        synchronized (getClassLoadingLock(name))
+        {
+            return loadClassImpl(name, resolve);
+        }
+    }
+
+    private Class<?> loadClassImpl(String name, boolean resolve)
         throws ClassNotFoundException
     {
         if (name == null)
@@ -141,27 +171,31 @@ public class ClassLoader
 
     protected final Class<?> findLoadedClass(String name)
     {
-        if (loadedClasses != null)
+        synchronized (this)
         {
-            Class<?> cached = loadedClasses.get(name);
-            if (cached != null)
+            if (loadedClasses != null)
             {
-                return cached;
+                Class<?> cached = loadedClasses.get(name);
+                if (cached != null)
+                {
+                    return cached;
+                }
             }
-        }
-        if (vmLoader != 0)
-        {
-            // Classes are registered in the native loader during defineClass,
-            // before their static initializer runs, so a <clinit> that asks for
-            // its own class (cglib's generated methods do) resolves here.
-            Class<?> defined = findLoadedClass0(vmLoader, name);
-            if (defined != null)
+            if (vmLoader != 0)
             {
-                cacheClass(name, defined);
-                return defined;
+                // Classes are registered in the native loader during
+                // defineClass, before their static initializer runs, so a
+                // <clinit> that asks for its own class (cglib's generated
+                // methods do) resolves here.
+                Class<?> defined = findLoadedClass0(vmLoader, name);
+                if (defined != null)
+                {
+                    cacheClass(name, defined);
+                    return defined;
+                }
             }
+            return null;
         }
-        return null;
     }
 
     protected Class<?> findClass(String name) throws ClassNotFoundException
@@ -364,11 +398,14 @@ public class ClassLoader
 
     private void cacheClass(String name, Class<?> clazz)
     {
-        if (loadedClasses == null)
+        synchronized (this)
         {
-            loadedClasses = new HashMap<String, Class<?>>();
+            if (loadedClasses == null)
+            {
+                loadedClasses = new HashMap<String, Class<?>>();
+            }
+            loadedClasses.put(name, clazz);
         }
-        loadedClasses.put(name, clazz);
     }
 
     private static native Class<?> loadClass0(String name);

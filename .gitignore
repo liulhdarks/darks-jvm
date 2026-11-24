@@ -9,3 +9,5 @@ ipch/
 build/
 build-*/
 worktrees/
+# Example run products (clone, Maven target, darks-jvm logs)
+examples/spring-petclinic/work/
