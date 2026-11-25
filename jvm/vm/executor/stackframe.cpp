@@ -976,8 +976,11 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 			op_stack->push(s2.fValue / s1.fValue);
 			break;
 		case ddiv:
-			dValue = popDouble() / popDouble();
-			op_stack->push(dValue);
+			// Operand evaluation order of "popDouble() / popDouble()" is
+			// unspecified, which turned a division into its reciprocal.
+			dValue = popDouble();
+			dValue2 = popDouble();
+			op_stack->push(dValue2 / dValue);
 			break;
 		case irem:
 			op_stack->pop(s1);
@@ -1900,8 +1903,9 @@ EventNotify StackFrame::ExecuteCode()
 		op_stack->push(s2.fValue / s1.fValue);	
 		break;
 	case ddiv:
-		dValue = popDouble() / popDouble();
-		op_stack->push(dValue);
+		dValue = popDouble();
+		dValue2 = popDouble();
+		op_stack->push(dValue2 / dValue);
 		break;
 	case irem:
 		op_stack->pop(s1);
@@ -3068,22 +3072,37 @@ bool StackFrame::AppendStringRefUnits(LPOBJECT_REF ref, std::vector<uint16_t> &o
 	{
 		return false;
 	}
-	const std::string key("value:[C");
+	const std::string key("value:[B");
 	std::map<std::string, lpFieldValue>::iterator it = str->varants.find(key);
 	if (it == str->varants.end() || !it->second || !it->second->field_value.heapPtr)
 	{
 		return true; // empty string
 	}
-	lpObject chars = NULL;
-	if (!VMContext::object_heap->GetObject(it->second->field_value.heapPtr, chars) ||
-	    !chars || !chars->array_var)
+	lpObject bytes = NULL;
+	if (!VMContext::object_heap->GetObject(it->second->field_value.heapPtr, bytes) ||
+	    !bytes || !bytes->array_var)
 	{
 		return false;
 	}
-	uint16_t *units = static_cast<uint16_t *>(chars->array_var);
-	for (int i = 0; i < chars->array_length; i++)
+	const std::string coder_key("coder:B");
+	std::map<std::string, lpFieldValue>::iterator coder_it = str->varants.find(coder_key);
+	bool utf16 = coder_it != str->varants.end() && coder_it->second &&
+	             (coder_it->second->field_value.bValue & 1) != 0;
+	const uint8_t *data = static_cast<const uint8_t *>(bytes->array_var);
+	int length = bytes->array_length;
+	if (!utf16)
 	{
-		out.push_back(units[i]);
+		for (int i = 0; i < length; i++)
+		{
+			out.push_back(data[i]);
+		}
+	}
+	else
+	{
+		for (int i = 0; i + 1 < length; i += 2)
+		{
+			out.push_back(static_cast<uint16_t>(data[i] | (data[i + 1] << 8)));
+		}
 	}
 	return true;
 }

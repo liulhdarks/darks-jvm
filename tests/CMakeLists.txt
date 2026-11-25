@@ -25,6 +25,9 @@ target_link_libraries(unit_tests PRIVATE darksvm)
 
 add_executable(gc_tests gc_tests.cpp)
 target_link_libraries(gc_tests PRIVATE darksvm)
+# gc_tests embeds the VM and loads the JNI library, which resolves the VM's
+# native symbols from this executable, so they have to be exported.
+set_target_properties(gc_tests PROPERTIES ENABLE_EXPORTS ON)
 
 if(ZLIB_FOUND)
     add_executable(zip_tests zip_tests.cpp)
@@ -49,6 +52,9 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/invoke/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/ref/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/annotation/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/jdk/internal/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/jdk/internal/math/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/jdk/internal/vm/annotation/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/management/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/org/xml/sax/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/org/w3c/dom/*.java"
@@ -128,6 +134,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/BitSetTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/ProtectionDomainTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/RuntimeCompat.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/DoubleDiv.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/LongArrayInit.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/P0Checks.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/channel/ChannelPingPong.java"
@@ -207,12 +214,17 @@ if(JAVAC)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/resources/sdkcl/resource.txt"
                 "${CLASSES_DIR}/sdkcl/resource.txt"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CLASSES_DIR}/java/lang"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/resources/java/lang/uniName.dat"
+                "${CLASSES_DIR}/java/lang/uniName.dat"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CLASSES_DIR}/META-INF/services"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/resources/services/META-INF/services/sdkcl.Plugin"
                 "${CLASSES_DIR}/META-INF/services/sdkcl.Plugin"
         COMMAND "${CMAKE_COMMAND}" -E touch "${CLASS_STAMP}"
         DEPENDS ${JAVA_SOURCES}
+                "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/resources/java/lang/uniName.dat"
         COMMENT "Compiling the minimal Java runtime and test classes"
         VERBATIM
     )
@@ -721,6 +733,11 @@ if(JAVAC)
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
                 "-DARGS=-cp;${CLASSES_DIR};RuntimeCompat" -DEXPECT_RC=0
                 "-DEXPECT_TEXT=runtime-compat\ checks=[0-9]+\ failures=0" -P "${CHECK}")
+
+    add_test(NAME double_div
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};DoubleDiv" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=double-div\ checks=[0-9]+\ failures=0" -P "${CHECK}")
 
     add_test(NAME sdk_classloader
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}

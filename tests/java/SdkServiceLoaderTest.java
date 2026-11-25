@@ -20,7 +20,7 @@ public class SdkServiceLoaderTest
     {
         protected Integer computeValue(Class<?> type)
         {
-            return Integer.valueOf(type.getName().length());
+            return Integer.valueOf(1000 + type.getName().length());
         }
     }
 
@@ -54,7 +54,7 @@ public class SdkServiceLoaderTest
         Integer second = value.get(SdkServiceLoaderTest.class);
         check("classvalue-stable", first == second);
         check("classvalue-computed",
-            first.intValue() == "SdkServiceLoaderTest".length());
+            first.intValue() == 1000 + "SdkServiceLoaderTest".length());
         value.remove(SdkServiceLoaderTest.class);
         check("classvalue-remove", value.get(SdkServiceLoaderTest.class) != first);
 
