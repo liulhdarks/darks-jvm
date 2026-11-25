@@ -130,6 +130,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/BitSetTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/ProtectionDomainTest.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/RuntimeCompat.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/DoubleDiv.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/LongArrayInit.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/P0Checks.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/channel/ChannelPingPong.java"
@@ -728,6 +729,11 @@ if(JAVAC)
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
                 "-DARGS=-cp;${CLASSES_DIR};RuntimeCompat" -DEXPECT_RC=0
                 "-DEXPECT_TEXT=runtime-compat\ checks=[0-9]+\ failures=0" -P "${CHECK}")
+
+    add_test(NAME double_div
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-cp;${CLASSES_DIR};DoubleDiv" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=double-div\ checks=[0-9]+\ failures=0" -P "${CHECK}")
 
     add_test(NAME sdk_classloader
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}

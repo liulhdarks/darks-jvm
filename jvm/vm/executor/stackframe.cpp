@@ -976,8 +976,11 @@ EventNotify StackFrame::ExecuteJit(const darksjit::Program *program)
 			op_stack->push(s2.fValue / s1.fValue);
 			break;
 		case ddiv:
-			dValue = popDouble() / popDouble();
-			op_stack->push(dValue);
+			// Operand evaluation order of "popDouble() / popDouble()" is
+			// unspecified, which turned a division into its reciprocal.
+			dValue = popDouble();
+			dValue2 = popDouble();
+			op_stack->push(dValue2 / dValue);
 			break;
 		case irem:
 			op_stack->pop(s1);
@@ -1900,8 +1903,9 @@ EventNotify StackFrame::ExecuteCode()
 		op_stack->push(s2.fValue / s1.fValue);	
 		break;
 	case ddiv:
-		dValue = popDouble() / popDouble();
-		op_stack->push(dValue);
+		dValue = popDouble();
+		dValue2 = popDouble();
+		op_stack->push(dValue2 / dValue);
 		break;
 	case irem:
 		op_stack->pop(s1);
