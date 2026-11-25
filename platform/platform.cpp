@@ -164,6 +164,16 @@ uint64_t NanoTime() {
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
+#if defined(_WIN32)
+namespace {
+// Windows file APIs take UTF-16 paths; ours are UTF-8.
+std::wstring WidePath(const std::string &path) {
+    std::vector<uint16_t> units = Utf8ToUtf16(path);
+    return std::wstring(units.begin(), units.end());
+}
+} // namespace
+#endif
+
 char PathListSeparator() {
 #if defined(_WIN32)
     return ';';
@@ -197,7 +207,7 @@ std::string DirectoryName(const std::string &path) {
 
 bool FileExists(const std::string &path) {
 #if defined(_WIN32)
-    DWORD attr = GetFileAttributesA(path.c_str());
+    DWORD attr = GetFileAttributesW(WidePath(path).c_str());
     return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
 #else
     struct stat st;
@@ -207,7 +217,7 @@ bool FileExists(const std::string &path) {
 
 bool IsDirectory(const std::string &path) {
 #if defined(_WIN32)
-    DWORD attr = GetFileAttributesA(path.c_str());
+    DWORD attr = GetFileAttributesW(WidePath(path).c_str());
     return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
 #else
     struct stat st;
@@ -215,10 +225,27 @@ bool IsDirectory(const std::string &path) {
 #endif
 }
 
+std::FILE *FopenUtf8(const std::string &path, const char *mode) {
+#if defined(_WIN32)
+    std::vector<uint16_t> mode_units = Utf8ToUtf16(mode ? mode : "rb");
+    std::wstring wide_mode(mode_units.begin(), mode_units.end());
+    // A file URL yields "/C:/dir/file"; the CRT wants "C:/dir/file".
+    const char *open_path = path.c_str();
+    if (path.size() >= 3 && path[0] == '/' && path[2] == ':' &&
+        ((path[1] >= 'A' && path[1] <= 'Z') ||
+         (path[1] >= 'a' && path[1] <= 'z'))) {
+        open_path++;
+    }
+    return ::_wfopen(WidePath(open_path).c_str(), wide_mode.c_str());
+#else
+    return std::fopen(path.c_str(), mode);
+#endif
+}
+
 bool ReadFileBytes(const std::string &path, std::vector<uint8_t> &out) {
     // Always open in binary read-only mode: the original code used "rb+" which
     // fails on read-only files.
-    FILE *fp = std::fopen(path.c_str(), "rb");
+    FILE *fp = FopenUtf8(path, "rb");
     if (!fp) {
         return false;
     }

@@ -39,10 +39,10 @@ extern "C" JNIEXPORT jlong JNICALL Java_java_io_RandomAccessFile_open0(
 {
 	DarksDeterministic::Instance().Boundary("io.RandomAccessFile.open");
 	std::string path = JStringToUtf8(env, name);
-	FILE *file = fopen(path.c_str(), writeable ? "r+b" : "rb");
+	FILE *file = dk::FopenUtf8(path, writeable ? "r+b" : "rb");
 	if (!file && writeable)
 	{
-		file = fopen(path.c_str(), "w+b");
+		file = dk::FopenUtf8(path, "w+b");
 	}
 	return reinterpret_cast<jlong>(file);
 }

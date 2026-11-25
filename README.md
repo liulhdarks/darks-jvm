@@ -27,7 +27,7 @@ runs on Linux and macOS.
 |----------|----------|----------------|
 | Linux    | GCC/Clang (C++11) | `cmake`, `libffi-dev`, a JDK (`javac`) for the tests |
 | macOS    | Apple Clang (C++11) | `cmake`, `libffi` (`brew install libffi`), a JDK |
-| Windows  | MSVC 2015+ (C++11) | `cmake`, libffi (vcpkg), a JDK |
+| Windows  | MSVC 2015+ or MinGW-w64 GCC (C++11) | `cmake`, libffi, a JDK |
 
 CMake 3.10 or newer is required. The JDK is only needed to compile the small
 Java runtime and the test programs; the VM itself does not use it.
@@ -64,6 +64,36 @@ Artifacts:
 The executable is linked with an RPATH of `@loader_path/../lib`, so it finds
 `libnative.dylib` next to it when run from `build/bin/`.
 
+### Windows (MinGW-w64 / MSYS2)
+
+From an MSYS2 *MINGW64* shell:
+
+```bash
+pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake \
+      mingw-w64-x86_64-ninja mingw-w64-x86_64-libffi \
+      mingw-w64-x86_64-zlib mingw-w64-x86_64-pcre2
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+```
+
+Artifacts (all in `build/bin`):
+
+* `darks-jvm.exe`
+* `darksvm.dll` (VM core)
+* `native.dll` (JNI natives)
+
+Keep the three files in the same directory; the launcher looks for
+`native.dll` next to the executable, then in `<exe dir>/../lib`, then in
+`DARKS_JVM_NATIVE_PATH` and `PATH`. `libstdc++-6.dll`, `libgcc_s_seh-1.dll` and
+`libwinpthread-1.dll` from `mingw64\bin` must be on `PATH` (an MSYS2 shell
+sets this up already).
+
+The test suite builds with a native MinGW build and needs a Windows JDK (for
+`javac` and `include/win32/jni_md.h`). When *cross*-compiling the whole project
+from another host for Windows, the suite cannot link against the host JDK; it
+is skipped unless a JDK for the target platform is available
+(`-DDARKS_JVM_BUILD_TESTS=OFF` builds only the VM).
+
 ### Windows (MSVC)
 
 From a *Developer Command Prompt*:
@@ -77,6 +107,7 @@ cmake --build build --config Release
 Artifacts (in `build/bin/Release` and `build/lib/Release`):
 
 * `darks-jvm.exe`
+* `darksvm.dll`
 * `native.dll`
 
 ## Run

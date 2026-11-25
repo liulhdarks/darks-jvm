@@ -7,6 +7,18 @@ if(NOT DEFINED PROG)
     message(FATAL_ERROR "check.cmake: PROG is not set")
 endif()
 
+# A multi-entry class path is spelled with '|' in the -DARGS list, because a
+# literal ';' would be parsed as CMake's list separator and split the
+# argument.  Substitute the platform separator here; on Windows the ';' must
+# remain inside one argument, so it is escaped as "\;".
+if(DEFINED ARGS AND ARGS MATCHES "\\|")
+    if(WIN32)
+        string(REPLACE "|" "\\;" ARGS "${ARGS}")
+    else()
+        string(REPLACE "|" ":" ARGS "${ARGS}")
+    endif()
+endif()
+
 # Optional: a file that must NOT exist before the run and must exist after it
 # (used to observe native JNI_OnUnload side effects).
 if(DEFINED REMOVE_FILE AND EXISTS "${REMOVE_FILE}")

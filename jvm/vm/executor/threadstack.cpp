@@ -2,7 +2,6 @@
 #include "threadstack.h"
 #include <cstdio>
 #include <cstring>
-#include <execinfo.h>
 #include "exec_common.h"
 #include "objectheap.h"
 #include "scheduler.h"

@@ -510,24 +510,24 @@ jobject WrapInvocationTarget(JNIEnv *env, LPOBJECT_REF target)
 	}
 	GCRootScope root(VMContext::object_heap, &target);
 	PrintUncaughtException(target);
-	VMContext::pending_exception = NULL;
+	VMContext::SetPendingException(NULL);
 	lpClass wrapper_class = JniFindClass(env,
 		"java/lang/reflect/InvocationTargetException");
 	if (!wrapper_class)
 	{
-		VMContext::pending_exception = target;
+		VMContext::SetPendingException(target);
 		return NULL;
 	}
 	LPOBJECT_REF wrapper = NULL;
 	if (!VMContext::object_heap->NewObject(wrapper_class, wrapper))
 	{
-		VMContext::pending_exception = target;
+		VMContext::SetPendingException(target);
 		return NULL;
 	}
 	jobject wrapper_obj = JniObject(wrapper);
 	JniAddLocalRef(env, wrapper_obj);
 	JniSetObjectFieldByName(wrapper_obj, "target", JniObject(target));
-	VMContext::pending_exception = wrapper;
+	VMContext::SetPendingException(wrapper);
 	return NULL;
 }
 
@@ -2360,9 +2360,9 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_invoke0(JNIEnv *env,
 		if (!DarksVM_InvokeProxyHandler(env, receiver, target, values,
 		                                return_type, proxy_result))
 		{
-			if (VMContext::pending_exception)
+			if (VMContext::PendingException())
 			{
-				return WrapInvocationTarget(env, VMContext::pending_exception);
+				return WrapInvocationTarget(env, VMContext::PendingException());
 			}
 			return NULL;
 		}
@@ -2391,9 +2391,9 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Method_invoke0(JNIEnv *env,
 	jvalue result = JniInvokeMethod(env, receiver,
 		reinterpret_cast<jclass>(declaring), reinterpret_cast<jmethodID>(target),
 		values.empty() ? NULL : &values[0], target->isStatic(), false);
-	if (VMContext::pending_exception)
+	if (VMContext::PendingException())
 	{
-		return WrapInvocationTarget(env, VMContext::pending_exception);
+		return WrapInvocationTarget(env, VMContext::PendingException());
 	}
 	return VariantToObject(env, result_desc.data_type,
 		JValueToVariant(result, result_desc.data_type));
@@ -2665,9 +2665,9 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Constructor_newInstance0(JNIEnv
 	JniInvokeMethod(env, object, reinterpret_cast<jclass>(declaring),
 		reinterpret_cast<jmethodID>(init), values.empty() ? NULL : &values[0],
 		false, true);
-	if (VMContext::pending_exception)
+	if (VMContext::PendingException())
 	{
-		return WrapInvocationTarget(env, VMContext::pending_exception);
+		return WrapInvocationTarget(env, VMContext::PendingException());
 	}
 	return object;
 }
@@ -2789,8 +2789,8 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Array_newInstance0(JNIEnv *env,
 {
 	if (length < 0)
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/NegativeArraySizeException", "negative array size");
+		VMContext::SetPendingException(CreateJavaException(
+			"java/lang/NegativeArraySizeException", "negative array size"));
 		return NULL;
 	}
 	lpClass component_class = MirrorClass(component);
@@ -2826,8 +2826,8 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Array_newInstance0(JNIEnv *env,
 	LPOBJECT_REF ref = NULL;
 	if (!VMContext::object_heap->NewObjectArrayObject(length, array_class, ref))
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/OutOfMemoryError", "cannot allocate array");
+		VMContext::SetPendingException(CreateJavaException(
+			"java/lang/OutOfMemoryError", "cannot allocate array"));
 		return NULL;
 	}
 	jobject result = JniObject(ref);

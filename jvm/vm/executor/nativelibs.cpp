@@ -94,19 +94,31 @@ bool NativeLibraryManager::LoadNativeLibrary(LPCSTR libs_name)
 		}
 	}
 
+	std::string first_error;
+	bool have_first_error = false;
 	for (size_t i = 0; i < candidates.size(); i++)
 	{
 		void *handle = OS::LoadNativeLibrary(candidates[i].c_str());
 		if (!handle)
 		{
+			// The first candidate is the platform-correct file name; later
+			// spellings exist only as a fallback, so their "not found" is
+			// not the interesting reason.
+			if (!have_first_error)
+			{
+				first_error = OS::LastLoadError();
+				have_first_error = true;
+			}
 			continue;
 		}
 		lpNativeLibrary native_lib = new NativeLibrary(str_libs);
 		native_lib->handle = handle;
 		DebugUtils::print(2, "Load native library ", candidates[i].c_str());
 		libs_map[str_libs] = native_lib;
+		load_errors.erase(str_libs);
 		return true;
 	}
+	load_errors[str_libs] = first_error;
 	return false;
 }
 
@@ -127,8 +139,10 @@ bool NativeLibraryManager::LoadNativeLibraryPath(LPCSTR path)
 	{
 		DebugUtils::print(2, "Load native library ", path);
 		libs_map[str_libs] = native_lib;
+		load_errors.erase(str_libs);
 		return true;
 	}
+	load_errors[str_libs] = OS::LastLoadError();
 	delete native_lib;
 	return false;
 }
@@ -150,6 +164,17 @@ void *NativeLibraryManager::GetLibraryHandle(LPCSTR libs_name)
 LPSTR NativeLibraryManager::MapLibraryName(LPCSTR libs_name)
 {
 	return OS::MapLibraryName(libs_name);
+}
+
+const std::string &NativeLibraryManager::GetLoadError(LPCSTR libs_name) const
+{
+	static const std::string empty;
+	if (!libs_name)
+	{
+		return empty;
+	}
+	map<string, string>::const_iterator it = load_errors.find(string(libs_name));
+	return it == load_errors.end() ? empty : it->second;
 }
 
 bool NativeLibraryManager::GetNativeFunction(LPCSTR func_name, NATIVE_FUNC& native_func)

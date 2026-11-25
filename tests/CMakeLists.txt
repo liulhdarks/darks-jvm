@@ -185,10 +185,20 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/M3JarInputStreamTest.java"
     )
     set(CLASS_STAMP "${CLASSES_DIR}/.stamp")
+    # Several hundred source files in one javac command line exceed the
+    # 8191-character limit cmd.exe imposes on Windows build commands, so pass
+    # them through a javac argument file ("@file") instead.
+    set(JAVAC_SOURCES_FILE "${CMAKE_CURRENT_BINARY_DIR}/javac-classes.args")
+    set(JAVAC_SOURCES_CONTENT "")
+    foreach(_source ${JAVA_SOURCES})
+        string(APPEND JAVAC_SOURCES_CONTENT "\"${_source}\"\n")
+    endforeach()
+    file(WRITE "${JAVAC_SOURCES_FILE}" "${JAVAC_SOURCES_CONTENT}")
     add_custom_command(
         OUTPUT "${CLASS_STAMP}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CLASSES_DIR}"
-        COMMAND "${JAVAC}" -source 8 -target 8 -d "${CLASSES_DIR}" ${JAVA_SOURCES}
+        COMMAND "${JAVAC}" -source 8 -target 8 -d "${CLASSES_DIR}"
+                "@${JAVAC_SOURCES_FILE}"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CLASSES_DIR}/compat"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/resources/compat/message.txt"
@@ -209,6 +219,12 @@ if(JAVAC)
     add_custom_target(java_classes ALL DEPENDS "${CLASS_STAMP}")
     add_dependencies(unit_tests java_classes)
     add_dependencies(gc_tests java_classes)
+
+    # Consumers that package or copy the whole class tree (jar fixtures) must
+    # run after every producer has finished writing into it: m2_broken removes
+    # class files again and the other fixtures add classes to the same tree,
+    # which races parallel builds that read it.
+    add_custom_target(test_classes_ready)
 
     # Classes whose superclass/superinterface is deliberately absent at run
     # time.  They are compiled together with the missing base types, then the
@@ -238,6 +254,7 @@ if(JAVAC)
         VERBATIM)
     add_custom_target(m2_broken_classes ALL DEPENDS "${M2_BROKEN_STAMP}")
     add_dependencies(m2_broken_classes java_classes)
+    add_dependencies(test_classes_ready m2_broken_classes)
 
     # Virtual-thread tests call Java 21-era APIs (Thread.ofVirtual,
     # Executors.newVirtualThreadPerTaskExecutor) that are not part of the
@@ -273,6 +290,7 @@ if(JAVAC)
             COMMENT "Compiling virtual-thread tests")
         add_custom_target(concurrent_classes ALL DEPENDS "${CONCURRENT_STAMP}")
         add_dependencies(concurrent_classes java_classes)
+        add_dependencies(test_classes_ready concurrent_classes)
     else()
         message(STATUS "javac 21 not found: virtual-thread tests disabled.")
     endif()
@@ -305,6 +323,7 @@ if(JAVAC)
             COMMENT "Compiling Java 11 language-feature tests")
         add_custom_target(java11_classes ALL DEPENDS "${JAVA11_STAMP}")
         add_dependencies(java11_classes java_classes)
+        add_dependencies(test_classes_ready java11_classes)
 
         add_test(NAME java11_language
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
@@ -372,7 +391,7 @@ if(JAVAC)
             add_test(NAME m2_missing_linkage_mp${mp}
                 COMMAND "${CMAKE_COMMAND}"
                     "-DPROG=${CMAKE_COMMAND}"
-                    "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR}:${M2_BROKEN_DIR};M2BrokenChecks"
+                    "-DARGS=-E;env;DARKS_JVM_MP=${mp};${JVM};-cp;${CLASSES_DIR}|${M2_BROKEN_DIR};M2BrokenChecks"
                     -DEXPECT_RC=0
                     "-DEXPECT_TEXT=m2\ broken-load\ checks=[0-9]+\ failures=0"
                     "-DEXPECT_TEXT2=m2\ broken\ loads:\ ok" -P "${CHECK}")
@@ -474,6 +493,7 @@ if(JAVAC)
             COMMENT "Compiling the Java 11 module-info fixture")
         add_custom_target(java11_module_classes ALL DEPENDS "${JAVA11_MODULE_STAMP}")
         add_dependencies(java11_module_classes java_classes)
+        add_dependencies(test_classes_ready java11_module_classes)
 
         add_test(NAME java11_module_dump
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
@@ -499,6 +519,7 @@ if(JAVAC)
                 COMMENT "Compiling a post-Java-11 class for the rejection test")
             add_custom_target(java11_reject_classes ALL DEPENDS "${JAVA11_REJECT_STAMP}")
             add_dependencies(java11_reject_classes java_classes)
+            add_dependencies(test_classes_ready java11_reject_classes)
 
             add_test(NAME java11_reject_newer
                 COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
@@ -593,13 +614,7 @@ if(JAVAC)
             DEPENDS ${JAR_DEPS}
             COMMENT "Packaging the executable jar fixture")
         add_custom_target(test_app_jar ALL DEPENDS "${TEST_APP_JAR}")
-        add_dependencies(test_app_jar java_classes)
-        if(TARGET java11_module_classes)
-            add_dependencies(test_app_jar java11_module_classes)
-        endif()
-        if(TARGET java11_reject_classes)
-            add_dependencies(test_app_jar java11_reject_classes)
-        endif()
+        add_dependencies(test_app_jar test_classes_ready)
 
         add_test(NAME jar_main_class
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
@@ -699,7 +714,7 @@ if(JAVAC)
         DEPENDS "${JDKOBJECT_DIR}/java/lang/Object.class")
     add_test(NAME object_jdk_clinit
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
-                "-DARGS=-cp;${JDKOBJECT_DIR}:${CLASSES_DIR};Hello"
+                "-DARGS=-cp;${JDKOBJECT_DIR}|${CLASSES_DIR};Hello"
                 -DEXPECT_RC=0 "-DEXPECT_TEXT=Hello,\ darks-jvm!" -P "${CHECK}")
 
     add_test(NAME runtime_compat
@@ -933,19 +948,19 @@ if(JAVAC)
 
     add_test(NAME resolution_nosuchmethod
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
-                "-DARGS=-cp;${RES_DIR}:${CLASSES_DIR};CallNoMethod"
+                "-DARGS=-cp;${RES_DIR}|${CLASSES_DIR};CallNoMethod"
                 -DEXPECT_RC=3
                 "-DEXPECT_TEXT=java.lang.NoSuchMethodError" -P "${CHECK}")
 
     add_test(NAME resolution_nosuchfield
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
-                "-DARGS=-cp;${RES_DIR}:${CLASSES_DIR};CallNoField"
+                "-DARGS=-cp;${RES_DIR}|${CLASSES_DIR};CallNoField"
                 -DEXPECT_RC=3
                 "-DEXPECT_TEXT=java.lang.NoSuchFieldError" -P "${CHECK}")
 
     add_test(NAME resolution_noclassdef
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
-                "-DARGS=-cp;${RES_DIR}:${CLASSES_DIR};CallNoClass"
+                "-DARGS=-cp;${RES_DIR}|${CLASSES_DIR};CallNoClass"
                 -DEXPECT_RC=3
                 "-DEXPECT_TEXT=java.lang.NoClassDefFoundError" -P "${CHECK}")
 
@@ -978,7 +993,7 @@ if(JAVAC)
 
         add_test(NAME resolution_abstractmethod
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
-                    "-DARGS=-cp;${RES_DIR}:${CLASSES_DIR};CallAbstract"
+                    "-DARGS=-cp;${RES_DIR}|${CLASSES_DIR};CallAbstract"
                     -DEXPECT_RC=3
                     "-DEXPECT_TEXT=java.lang.AbstractMethodError" -P "${CHECK}")
 
@@ -999,7 +1014,7 @@ if(JAVAC)
 
         add_test(NAME wide_ret
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
-                    "-DARGS=-cp;${RES_DIR}:${CLASSES_DIR};RetCheck"
+                    "-DARGS=-cp;${RES_DIR}|${CLASSES_DIR};RetCheck"
                     -DEXPECT_RC=0 "-DEXPECT_TEXT=wide-ret=2" -P "${CHECK}")
     endif()
 
@@ -1289,6 +1304,7 @@ if(JAVAC)
         COMMENT "Compiling the producer/consumer example")
     add_custom_target(producer_consumer_classes ALL DEPENDS "${PC_STAMP}")
     add_dependencies(producer_consumer_classes java_classes)
+    add_dependencies(test_classes_ready producer_consumer_classes)
 
     foreach(mp 1 4)
         add_test(NAME producer_consumer_e2e_mp${mp}
@@ -1410,6 +1426,7 @@ if(JAVAC)
             COMMENT "Packaging the Manifest Class-Path fixture")
         add_custom_target(jar_classpath_fixture ALL
             DEPENDS "${JARCOMPAT_ROOT}/main.jar")
+        add_dependencies(jar_classpath_fixture test_classes_ready)
         add_test(NAME jar_manifest_classpath
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
                     "-DARGS=-jar;${JARCOMPAT_ROOT}/main.jar" -DEXPECT_RC=0

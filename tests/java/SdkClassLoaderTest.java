@@ -69,7 +69,15 @@ public class SdkClassLoaderTest
             value = input.read();
         }
         input.close();
-        return new String(output.toByteArray());
+        byte[] bytes = output.toByteArray();
+        int length = bytes.length;
+        // A checkout with core.autocrlf=true stores the resource with CRLF;
+        // only '\n' ends the line above, so drop the trailing '\r'.
+        if (length > 0 && bytes[length - 1] == '\r')
+        {
+            length--;
+        }
+        return new String(bytes, 0, length);
     }
 
     public static void main(String[] args) throws Exception

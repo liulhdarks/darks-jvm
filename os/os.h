@@ -18,6 +18,10 @@ public:
 
 	static void *LoadNativeLibrary(const char *libs_name);
 
+	// OS loader message for the most recent failed LoadNativeLibrary call
+	// (empty when the last call succeeded or the loader gave no reason).
+	static const std::string &LastLoadError();
+
 	static void ReleaseNativeLibrary(void *handle);
 
 	static char *MapLibraryName(const char *libs_name);

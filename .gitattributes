@@ -1,0 +1,3 @@
+# Test fixtures are compared against literal strings, so keep their line
+# endings stable regardless of core.autocrlf on the checkout.
+tests/resources/** text eol=lf

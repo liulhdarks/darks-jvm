@@ -9,6 +9,16 @@ lpNativeLibraryManager VMContext::native_libs = NULL;
 thread_local LPOBJECT_REF VMContext::pending_exception = NULL;
 std::vector<void*> VMContext::jni_envs;
 
+LPOBJECT_REF VMContext::PendingException()
+{
+	return pending_exception;
+}
+
+void VMContext::SetPendingException(LPOBJECT_REF value)
+{
+	pending_exception = value;
+}
+
 bool VMContext::initialize()
 {
 	object_heap = new ObjectHeap();

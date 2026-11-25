@@ -42,7 +42,11 @@ typedef uint32_t UINT32;
 typedef short SHORT;
 typedef unsigned short USHORT;
 typedef int64_t LONG64;
+#ifndef _WIN32
+// windows.h already defines ULONG as unsigned long; redefining it as
+// uint32_t (unsigned int) is a conflicting typedef on MinGW/MSVC.
 typedef uint32_t ULONG;
+#endif
 typedef INT32 *LPINT32;
 #ifndef _WIN32
 typedef void *LPVOID;

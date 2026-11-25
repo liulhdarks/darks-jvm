@@ -10,6 +10,12 @@
 cmake_minimum_required(VERSION 3.10)
 project(darks-jvm C CXX)
 
+if(WIN32)
+    # WSAPoll/WSAPOLLFD and other Vista+ APIs are gated on _WIN32_WINNT;
+    # MinGW defaults to 0x0502 (Server 2003), so request Windows 7.
+    add_definitions(-D_WIN32_WINNT=0x0601)
+endif()
+
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -96,6 +102,16 @@ endif()
 
 if(WIN32)
     add_library(darksvm SHARED ${DARKS_JVM_CORE_SOURCES})
+    # The core is consumed by both the launcher and native.dll, so all of its
+    # API has to leave the DLL: most classes are not annotated with JVM_API,
+    # because on POSIX default visibility is enough.  Drop MinGW's "lib"
+    # prefix so the artifacts are darksvm.dll / native.dll.
+    set_target_properties(darksvm PROPERTIES PREFIX "")
+    if(MSVC)
+        set_target_properties(darksvm PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        set_target_properties(darksvm PROPERTIES LINK_FLAGS "-Wl,--export-all-symbols")
+    endif()
 else()
     add_library(darksvm STATIC ${DARKS_JVM_CORE_SOURCES})
 endif()
@@ -145,6 +161,13 @@ endif()
 # ---------------------------------------------------------------------------
 add_executable(darks-jvm java/java.cpp)
 target_link_libraries(darks-jvm PRIVATE darksvm)
+
+if(MINGW)
+    # The launcher defines wmain() on Windows so that command line arguments
+    # are decoded as UTF-16; MinGW needs this flag to pick the matching CRT
+    # entry point (MSVC selects it automatically).
+    set_property(TARGET darks-jvm APPEND_STRING PROPERTY LINK_FLAGS " -municode")
+endif()
 
 # Export the VM symbols so that the native library (dlopen'ed at run time) can
 # resolve them without linking a second copy of the VM state.
@@ -209,7 +232,18 @@ if(PCRE2_INCLUDE_DIR AND PCRE2_32_LIBRARY)
     target_compile_definitions(native PRIVATE DARKS_HAVE_PCRE2=1)
 endif()
 if(WIN32)
-    target_link_libraries(native PRIVATE darksvm)
+    # MapLibraryName() looks for "native.dll"; MinGW would emit libnative.dll.
+    set_target_properties(native PROPERTIES PREFIX "")
+    target_link_libraries(native PRIVATE darksvm ws2_32)
+    # JNI entry points are plain C symbols and a missing JNIEXPORT would make
+    # them invisible to GetProcAddress.  Export the whole table so that a
+    # definition that forgets the attribute cannot silently disappear.
+    if(MSVC)
+        set_target_properties(native PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        set_target_properties(native PROPERTIES
+            LINK_FLAGS "-Wl,--export-all-symbols")
+    endif()
 else()
     # On POSIX the symbols are provided by the darks-jvm executable (built with
     # ENABLE_EXPORTS); leave them undefined in the shared object.
@@ -232,5 +266,14 @@ endif()
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-enable_testing()
-add_subdirectory(tests)
+option(DARKS_JVM_BUILD_TESTS "Build the test suite" ON)
+if(DARKS_JVM_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
+    enable_testing()
+    add_subdirectory(tests)
+elseif(DARKS_JVM_BUILD_TESTS)
+    # The test suite links against the host JDK's jni.h/jni_md.h and runs the
+    # produced binaries, so it cannot be built for another target platform
+    # without a JDK for that platform. Native builds (including MinGW on
+    # Windows) keep the suite enabled.
+    message(STATUS "Cross-compiling: skipping test suite (needs a JDK for the target)")
+endif()

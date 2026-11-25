@@ -8,6 +8,16 @@
 #if !defined(_WIN32)
 #include <dlfcn.h>
 
+namespace {
+
+std::string &LoadErrorStorage()
+{
+	static std::string *message = new std::string();
+	return *message;
+}
+
+} // namespace
+
 LONG64 OS::GetCurrentTimeMillis()
 {
 	return static_cast<LONG64>(dk::CurrentTimeMillis());
@@ -15,6 +25,7 @@ LONG64 OS::GetCurrentTimeMillis()
 
 void *OS::LoadNativeLibrary(const char *libs_name)
 {
+	LoadErrorStorage().clear();
 	if (!libs_name)
 	{
 		return NULL;
@@ -49,10 +60,20 @@ void *OS::LoadNativeLibrary(const char *libs_name)
 		const char *err = dlerror();
 		if (err)
 		{
+			LoadErrorStorage().assign(err);
 			dk::DebugPrint((std::string("dlopen failed: ") + err + "\n").c_str());
+		}
+		else
+		{
+			LoadErrorStorage().clear();
 		}
 	}
 	return handle;
+}
+
+const std::string &OS::LastLoadError()
+{
+	return LoadErrorStorage();
 }
 
 void OS::ReleaseNativeLibrary(void *handle)
