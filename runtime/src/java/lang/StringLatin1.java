@@ -154,8 +154,8 @@ final class StringLatin1 {
         int lim = Math.min(len1, len2);
         for (int k = 0; k < lim; k++) {
             if (value[k] != other[k]) {
-                char c1 = (char) CharacterDataLatin1.instance.toUpperCase(getChar(value, k));
-                char c2 = (char) CharacterDataLatin1.instance.toUpperCase(getChar(other, k));
+                char c1 = Character.toUpperCase(getChar(value, k));
+                char c2 = Character.toUpperCase(getChar(other, k));
                 if (c1 != c2) {
                     c1 = Character.toLowerCase(c1);
                     c2 = Character.toLowerCase(c2);
