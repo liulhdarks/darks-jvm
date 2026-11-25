@@ -209,12 +209,17 @@ if(JAVAC)
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/resources/sdkcl/resource.txt"
                 "${CLASSES_DIR}/sdkcl/resource.txt"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${CLASSES_DIR}/java/lang"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/resources/java/lang/uniName.dat"
+                "${CLASSES_DIR}/java/lang/uniName.dat"
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${CLASSES_DIR}/META-INF/services"
         COMMAND "${CMAKE_COMMAND}" -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/resources/services/META-INF/services/sdkcl.Plugin"
                 "${CLASSES_DIR}/META-INF/services/sdkcl.Plugin"
         COMMAND "${CMAKE_COMMAND}" -E touch "${CLASS_STAMP}"
         DEPENDS ${JAVA_SOURCES}
+                "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/resources/java/lang/uniName.dat"
         COMMENT "Compiling the minimal Java runtime and test classes"
         VERBATIM
     )
