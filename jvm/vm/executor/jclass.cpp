@@ -9,6 +9,8 @@
 #include <map>
 #include <string>
 #include "utils/DebugUtils.h"
+#include "perf.h"
+#include <chrono>
 
 #include <set>
 #include <string>
@@ -176,6 +178,13 @@ bool Class::initialize(bool load_super)
 	}
 	lpVMExecutor exec = new VMExecutor();
 	exec->Initialize();
+	uint64_t clinit_start = 0;
+	if (darksperf::Enabled())
+	{
+		clinit_start = static_cast<uint64_t>(
+			std::chrono::duration_cast<std::chrono::nanoseconds>(
+				std::chrono::steady_clock::now().time_since_epoch()).count());
+	}
 	try
 	{
 		exec->Execute(this, clinitMethod);
@@ -187,6 +196,14 @@ bool Class::initialize(bool load_super)
 		throw;
 	}
 	delete exec;
+	if (darksperf::Enabled() && clinit_start)
+	{
+		uint64_t clinit_end = static_cast<uint64_t>(
+			std::chrono::duration_cast<std::chrono::nanoseconds>(
+				std::chrono::steady_clock::now().time_since_epoch()).count());
+		darksperf::NoteClinit();
+		darksperf::AddClinitNs(clinit_end - clinit_start);
+	}
 	LPOBJECT_REF thrown = VMContext::pending_exception;
 	if (thrown)
 	{

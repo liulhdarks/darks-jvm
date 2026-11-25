@@ -14,6 +14,8 @@
 #include "vm/executor/threadstack.h"
 #include "vm/executor/javaexception.h"
 #include "jni/jni_impl.h"
+#include "vm/executor/perf.h"
+#include <chrono>
 
 #include <map>
 #include <cstdio>
@@ -476,6 +478,14 @@ bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool initialize)
 		}
 		jclass = NULL;
 		bool found = GetClass(classname, jclass);
+		if (found)
+		{
+			darksperf::NoteClassCacheHit();
+		}
+		else
+		{
+			darksperf::NoteClassCacheMiss();
+		}
 		if (!found && parent)
 		{
 			try
@@ -512,7 +522,22 @@ bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool initialize)
 		{
 			LPBYTE bytes = NULL;
 			int len = 0;
+			uint64_t read_start = 0;
+			if (darksperf::Enabled())
+			{
+				read_start = static_cast<uint64_t>(
+					std::chrono::duration_cast<std::chrono::nanoseconds>(
+						std::chrono::steady_clock::now().time_since_epoch()).count());
+			}
 			LoadClass(classname, bytes, len);
+			if (darksperf::Enabled() && bytes)
+			{
+				uint64_t read_end = static_cast<uint64_t>(
+					std::chrono::duration_cast<std::chrono::nanoseconds>(
+						std::chrono::steady_clock::now().time_since_epoch()).count());
+				darksperf::NoteClassRead();
+				darksperf::AddClassReadNs(read_end - read_start);
+			}
 			if (!bytes)
 			{
 				if (FindClassThroughJava(this, classname, jclass))
@@ -534,7 +559,22 @@ bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool initialize)
 				jclass->classloader = this;
 				try
 				{
+					uint64_t link_start = 0;
+					if (darksperf::Enabled())
+					{
+						link_start = static_cast<uint64_t>(
+							std::chrono::duration_cast<std::chrono::nanoseconds>(
+								std::chrono::steady_clock::now().time_since_epoch()).count());
+					}
 					LinkClass(jclass);
+					if (darksperf::Enabled())
+					{
+						uint64_t link_end = static_cast<uint64_t>(
+							std::chrono::duration_cast<std::chrono::nanoseconds>(
+								std::chrono::steady_clock::now().time_since_epoch()).count());
+						darksperf::NoteClassLinked();
+						darksperf::AddClassLinkNs(link_end - link_start);
+					}
 				}
 				catch (...)
 				{
@@ -679,7 +719,22 @@ void ClassLoader::LoadClass(LPCSTR classname, LPBYTE &bytes, int &length)
 
 bool ClassLoader::DefineClass(LPBYTE bytes, int length, lpClass &jclass)
 {
+	uint64_t parse_start = 0;
+	if (darksperf::Enabled())
+	{
+		parse_start = static_cast<uint64_t>(
+			std::chrono::duration_cast<std::chrono::nanoseconds>(
+				std::chrono::steady_clock::now().time_since_epoch()).count());
+	}
 	bool result = parse_class_bytes(bytes, length, jclass);
+	if (darksperf::Enabled() && result)
+	{
+		uint64_t parse_end = static_cast<uint64_t>(
+			std::chrono::duration_cast<std::chrono::nanoseconds>(
+				std::chrono::steady_clock::now().time_since_epoch()).count());
+		darksperf::NoteClassParsed();
+		darksperf::AddClassParseNs(parse_end - parse_start);
+	}
 	if (result && jclass && jclass->thisClass && jclass->thisClass->GetName())
 	{
 		classMap[string(jclass->thisClass->GetName())] = jclass;

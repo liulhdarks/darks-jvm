@@ -10,6 +10,7 @@
 
 #include "stdafx.h"
 #include "jni_impl.h"
+#include "vm/executor/perf.h"
 
 #include <cerrno>
 #include <cstring>
@@ -178,6 +179,7 @@ JNIEXPORT jint JNICALL Java_java_net_SocketOps_accept0(JNIEnv *env, jclass, jint
 		jint p = ntohs(addr.sin_port);
 		env->SetIntArrayRegion(port, 0, 1, &p);
 	}
+	darksperf::NoteFirstConnection();
 	return static_cast<jint>(s);
 }
 
@@ -590,6 +592,7 @@ JNIEXPORT jint JNICALL Java_java_net_SocketOps_accept0(JNIEnv *env, jclass, jint
 		jint p = ntohs(addr.sin_port);
 		env->SetIntArrayRegion(port, 0, 1, &p);
 	}
+	darksperf::NoteFirstConnection();
 	return s;
 }
 

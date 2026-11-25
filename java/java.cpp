@@ -23,6 +23,7 @@
 #include "vm/executor/javaexception.h"
 #include "vm/executor/scheduler.h"
 #include "vm/executor/deterministic.h"
+#include "vm/executor/perf.h"
 
 #include <cstdio>
 #include <csignal>
@@ -188,22 +189,26 @@ static int run_class(const string &class_name, int argc, char **argv)
 		return 4;
 	}
 
-	if (!VMContext::initialize())
-	{
-		cerr << "Error: failed to initialize the VM." << endl;
-		return 3;
-	}
-
 	int result = 0;
 	lpVMExecutor exec = NULL;
 	try
 	{
+		darksperf::BeginPhase(darksperf::PHASE_VM_INIT);
+		bool vm_ready = VMContext::initialize();
+		darksperf::EndPhase(darksperf::PHASE_VM_INIT);
+		if (!vm_ready)
+		{
+			cerr << "Error: failed to initialize the VM." << endl;
+			return 3;
+		}
+		darksperf::BeginPhase(darksperf::PHASE_MAIN_CLASS);
 		lpClass clazz = NULL;
 		if (!VMContext::bootstrap_classloader->FindClass(class_name.c_str(), clazz) ||
 		    !clazz)
 		{
 			throw new VMException("Failed to load main class.");
 		}
+		darksperf::EndPhase(darksperf::PHASE_MAIN_CLASS);
 		if (!clazz->mainMethod)
 		{
 			throw new VMException("Main method not found.");
@@ -246,7 +251,9 @@ static int run_class(const string &class_name, int argc, char **argv)
 		// Only the top-level executor becomes the scheduler's main coroutine.
 		// Executors created internally for class initialisation stay nested.
 		Scheduler::Instance().AttachMain(exec->GetThreadStack());
+		darksperf::BeginPhase(darksperf::PHASE_MAIN);
 		exec->Execute(clazz, clazz->mainMethod, &args_var, 1);
+		darksperf::EndPhase(darksperf::PHASE_MAIN);
 		if (!VMContext::PendingException())
 		{
 			// The JVM stays alive while non-daemon threads are still running;

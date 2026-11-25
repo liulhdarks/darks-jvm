@@ -14,6 +14,7 @@
 #include "scheduler.h"
 #include "vmmutex.h"
 #include "proxy.h"
+#include "perf.h"
 
 #include <ffi.h>
 
@@ -510,6 +511,10 @@ EventNotify StackFrame::Execute()
 {
 	if (!inited)
 	{
+		if (darksperf::Enabled())
+		{
+			darksperf::NoteMethod();
+		}
 		init();
 	}
 	if (!jit_checked)
@@ -578,6 +583,10 @@ EventNotify StackFrame::BeginInstruction()
 		}
 	}
 	last_pc = pc;
+	if (darksperf::Enabled())
+	{
+		darksperf::NoteInstruction(codes[pc]);
+	}
 	if (op_stack)
 	{
 		op_stack->debug_method = method && method->fullName ? method->fullName : "?";
@@ -6131,6 +6140,7 @@ bool StackFrame::PutField(U2 index)
 	fv->field_value = slot_val;
 	return true;
 }
+
 
 void StackFrame::TableSwitch()
 {

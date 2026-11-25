@@ -2,6 +2,7 @@
 #include "context.h"
 #include "methodarea.h"
 #include "scheduler.h"
+#include "perf.h"
 
 lpObjectHeap VMContext::object_heap = NULL;
 lpClassLoader VMContext::bootstrap_classloader = NULL;
@@ -49,6 +50,7 @@ bool VMContext::initialize()
 bool VMContext::destroy()
 {
 	// Stop coroutine workers before tearing down the heap they reference.
+	darksperf::BeginPhase(darksperf::PHASE_SHUTDOWN);
 	Scheduler::Instance().Shutdown();
 	// Class statics belong to this VM instance; drop them before the heap
 	// so the field values do not outlive the objects they point to.
@@ -69,5 +71,7 @@ bool VMContext::destroy()
 		delete native_libs;
 		native_libs = NULL;
 	}
+	darksperf::EndPhase(darksperf::PHASE_SHUTDOWN);
+	darksperf::PrintSummary();
 	return true;
 }

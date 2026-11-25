@@ -13,7 +13,9 @@
 #include "jni/jni.h"
 #include "scheduler.h"
 #include "vmmutex.h"
+#include "perf.h"
 
+#include <chrono>
 #include <string>
 
 namespace {
@@ -169,8 +171,10 @@ void ObjectHeap::AccountAllocation(lpObject obj)
 	{
 		return;
 	}
-	live_bytes += ObjectBytes(obj);
+	size_t bytes = ObjectBytes(obj);
+	live_bytes += bytes;
 	live_objects++;
+	darksperf::AddAllocated(bytes);
 }
 
 void ObjectHeap::MaybeGC()
@@ -598,6 +602,14 @@ void ObjectHeap::gc()
 	// its JNI local references are registered roots.
 	Scheduler::Instance().SafepointBegin();
 	in_gc = true;
+	uint64_t gc_start_ns = 0;
+	if (darksperf::Enabled())
+	{
+		darksperf::BeginGc();
+		gc_start_ns = static_cast<uint64_t>(
+			std::chrono::duration_cast<std::chrono::nanoseconds>(
+				std::chrono::steady_clock::now().time_since_epoch()).count());
+	}
 
 	ref_index.clear();
 	for (size_t i = 1; i < objs.size(); i++)
@@ -731,6 +743,13 @@ void ObjectHeap::gc()
 			gc_runs, freed_objects, freed_bytes, live_bytes);
 	}
 
+	if (gc_start_ns)
+	{
+		uint64_t gc_end_ns = static_cast<uint64_t>(
+			std::chrono::duration_cast<std::chrono::nanoseconds>(
+				std::chrono::steady_clock::now().time_since_epoch()).count());
+		darksperf::AddGcPauseNs(gc_end_ns - gc_start_ns);
+	}
 	in_gc = false;
 	Scheduler::Instance().SafepointEnd();
 }
