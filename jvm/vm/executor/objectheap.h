@@ -4,6 +4,7 @@
 #include "jobject.h"
 #include "jclass.h"
 #include "vmmutex.h"
+#include <atomic>
 #include <map>
 #include <utility>
 #include <vector>
@@ -116,7 +117,7 @@ public:
 	void MarkObjectRef(LPOBJECT_REF ref);
 
 	// ---- statistics -------------------------------------------------------
-	size_t LiveBytes() const { return live_bytes; }
+	size_t LiveBytes() const { return live_bytes.load(std::memory_order_relaxed); }
 	size_t LiveObjectCount() const { return live_objects; }
 	int GcRuns() const { return gc_runs; }
 	size_t TotalFreedBytes() const { return gc_freed_total; }
@@ -125,7 +126,8 @@ public:
 
 private:
 
-	bool Register(lpObject obj, LPOBJECT_REF &object_ref);
+	// Caller must hold VMLock.
+	bool RegisterLocked(lpObject obj, LPOBJECT_REF &object_ref);
 
 	// Creates one array dimension. level is the index into nums; the array
 	// class name must contain (count - level) leading '[' characters.
@@ -174,8 +176,8 @@ private:
 	int no_gc_depth;
 	size_t initial_threshold;
 	size_t max_threshold;
-	size_t threshold;
-	size_t live_bytes;
+	std::atomic<size_t> threshold;
+	std::atomic<size_t> live_bytes;
 	int gc_runs;
 	size_t gc_freed_total;
 	size_t gc_freed_last;

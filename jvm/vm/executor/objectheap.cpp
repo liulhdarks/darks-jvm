@@ -233,13 +233,22 @@ void ObjectHeap::AccountAllocation(lpObject obj)
 		return;
 	}
 	size_t bytes = ObjectBytes(obj);
-	live_bytes += bytes;
+	live_bytes.fetch_add(bytes, std::memory_order_relaxed);
 	live_objects++;
 	darksperf::AddAllocated(bytes);
 }
 
 void ObjectHeap::MaybeGC()
 {
+	// Fast path: allocations normally stay well below the threshold, so avoid
+	// taking the VM lock (and the scheduler's safepoint bookkeeping) for every
+	// single object.  The counters are relaxed atomics; the decision is
+	// re-validated under the lock before collecting.
+	if (live_bytes.load(std::memory_order_relaxed) <
+	    threshold.load(std::memory_order_relaxed))
+	{
+		return;
+	}
 	// Read the accounting under the heap mutex (allocations update it there),
 	// then collect without it: the collector stops the world, and the
 	// safepoint handshake must not run with the heap mutex already held.
@@ -250,7 +259,8 @@ void ObjectHeap::MaybeGC()
 		{
 			return;
 		}
-		needed = (live_bytes >= threshold);
+		needed = live_bytes.load(std::memory_order_relaxed) >=
+			threshold.load(std::memory_order_relaxed);
 	}
 	if (needed)
 	{
@@ -782,7 +792,7 @@ void ObjectHeap::gc()
 		}
 	}
 
-	live_bytes = live;
+	live_bytes.store(live, std::memory_order_relaxed);
 	live_objects = live_count;
 	gc_runs++;
 	gc_freed_last = freed_bytes;
@@ -796,30 +806,30 @@ void ObjectHeap::gc()
 	// proportional headroom instead of collecting on every allocation, so long
 	// runs degrade into slower collections rather than GC thrashing.
 	size_t next_threshold = initial_threshold;
-	if (live_bytes > next_threshold / 2)
+	if (live > next_threshold / 2)
 	{
-		if (live_bytes > max_threshold / 2)
+		if (live > max_threshold / 2)
 		{
-			size_t headroom = live_bytes / 2;
+			size_t headroom = live / 2;
 			if (headroom < initial_threshold)
 			{
 				headroom = initial_threshold;
 			}
 			size_t limit = static_cast<size_t>(-1);
-			next_threshold = (live_bytes > limit - headroom) ? limit : live_bytes + headroom;
+			next_threshold = (live > limit - headroom) ? limit : live + headroom;
 		}
 		else
 		{
-			next_threshold = live_bytes * 2;
+			next_threshold = live * 2;
 		}
 	}
-	threshold = next_threshold;
+	threshold.store(next_threshold, std::memory_order_relaxed);
 
 	if (gc_log)
 	{
 		fprintf(stderr,
 			"gc-collect run=%d objects=%zu freed=%zu bytes live=%zu bytes threshold=%zu bytes\n",
-			gc_runs, freed_objects, freed_bytes, live_bytes, threshold);
+			gc_runs, freed_objects, freed_bytes, live, next_threshold);
 	}
 
 	if (gc_start_ns)
@@ -833,9 +843,8 @@ void ObjectHeap::gc()
 	Scheduler::Instance().SafepointEnd();
 }
 
-bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
+bool ObjectHeap::RegisterLocked(lpObject obj, LPOBJECT_REF &object_ref)
 {
-	VMLock lk;
 	if (!obj)
 	{
 		return false;
@@ -876,7 +885,7 @@ bool ObjectHeap::NewObject(lpClass clazz, LPOBJECT_REF &object_ref)
 		delete obj;
 		return false;
 	}
-	if (!Register(obj, object_ref))
+	if (!RegisterLocked(obj, object_ref))
 	{
 		delete obj;
 		return false;
@@ -895,7 +904,7 @@ bool ObjectHeap::NewArrayObject(int size, lpClass clazz, LPOBJECT_REF &object_re
 	}
 	lpObject obj = new JObject(clazz);
 	LPOBJECT_REF ref = NULL;
-	if (!Register(obj, ref) || !obj->newArrayInstance(size))
+	if (!RegisterLocked(obj, ref) || !obj->newArrayInstance(size))
 	{
 		if (obj->index > 0 && static_cast<size_t>(obj->index) < objs.size())
 		{
@@ -935,7 +944,7 @@ bool ObjectHeap::NewObjectArrayObject(int size, lpClass clazz, LPOBJECT_REF &obj
 			element_type = type_desc.data_type;
 		}
 	}
-	if (!Register(obj, ref) || !obj->newArrayInstance(element_type, size))
+	if (!RegisterLocked(obj, ref) || !obj->newArrayInstance(element_type, size))
 	{
 		if (obj->index > 0 && static_cast<size_t>(obj->index) < objs.size())
 		{
@@ -963,7 +972,7 @@ bool ObjectHeap::CreateArrayDimension(lpClass array_class, LPINT32 nums, int lev
 	MaybeGC();
 	lpObject obj = new JObject(array_class);
 	LPOBJECT_REF ref = NULL;
-	if (!Register(obj, ref))
+	if (!RegisterLocked(obj, ref))
 	{
 		delete obj;
 		return false;
