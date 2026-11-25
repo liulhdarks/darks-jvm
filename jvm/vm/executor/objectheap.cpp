@@ -70,6 +70,15 @@ bool ParseByteSize(const char *text, size_t &out)
 
 namespace {
 
+size_t HashPointer(const void *pointer)
+{
+	uint64_t value = reinterpret_cast<uint64_t>(pointer);
+	value ^= value >> 33;
+	value *= 0xff51afd7ed558ccdULL;
+	value ^= value >> 33;
+	return static_cast<size_t>(value);
+}
+
 size_t ElementBytes(DATA_TYPE data_type)
 {
 	switch (data_type)
@@ -349,16 +358,16 @@ void ObjectHeap::MarkObjectRef(LPOBJECT_REF ref)
 	{
 		return;
 	}
-	// The candidate pointer is never dereferenced: random integer/float slot
-	// contents must not fault. Only pointers that are exactly the address of a
-	// live object's index field are accepted, so the scan is conservative.
-	std::map<const OBJECT_REF *, OBJECT_REF>::iterator it = ref_index.find(ref);
-	if (it == ref_index.end())
+	// The candidate pointer is never dereferenced before the index table
+	// confirms it: random integer/float slot contents must not fault. Only
+	// pointers that are exactly the address of a live object's index field are
+	// accepted, so the scan is conservative.
+	OBJECT_REF idx = LookupRefIndex(ref);
+	if (idx <= 0)
 	{
 		return;
 	}
-	OBJECT_REF idx = it->second;
-	if (idx <= 0 || static_cast<size_t>(idx) >= objs.size())
+	if (static_cast<size_t>(idx) >= objs.size())
 	{
 		return;
 	}
@@ -368,6 +377,68 @@ void ObjectHeap::MarkObjectRef(LPOBJECT_REF ref)
 	}
 	marked[static_cast<size_t>(idx)] = true;
 	mark_stack.push_back(idx);
+}
+
+void ObjectHeap::BuildRefIndex()
+{
+	// Count live objects first so the table is allocated once at the right
+	// size; a full rebuild is much cheaper than growing a node-based map.
+	size_t live = 0;
+	for (size_t i = 1; i < objs.size(); i++)
+	{
+		if (objs[i])
+		{
+			live++;
+		}
+	}
+	size_t capacity = 1024;
+	size_t wanted = live + live / 2 + 16;
+	while (capacity < wanted)
+	{
+		capacity <<= 1;
+	}
+	ref_keys.assign(capacity, NULL);
+	ref_mask = capacity - 1;
+	size_t mask = ref_mask;
+	for (size_t i = 1; i < objs.size(); i++)
+	{
+		if (!objs[i])
+		{
+			continue;
+		}
+		const OBJECT_REF *key = &objs[i]->index;
+		size_t slot = HashPointer(key) & mask;
+		while (ref_keys[slot])
+		{
+			slot = (slot + 1) & mask;
+		}
+		ref_keys[slot] = key;
+	}
+}
+
+OBJECT_REF ObjectHeap::LookupRefIndex(const OBJECT_REF *key) const
+{
+	if (!key || ref_keys.empty())
+	{
+		return 0;
+	}
+	size_t mask = ref_mask;
+	size_t slot = HashPointer(key) & mask;
+	while (true)
+	{
+		const OBJECT_REF *candidate = ref_keys[slot];
+		if (!candidate)
+		{
+			return 0;
+		}
+		if (candidate == key)
+		{
+			// The table only holds addresses of live index fields, so the
+			// dereference is safe and the index is the slot value itself.
+			return *candidate;
+		}
+		slot = (slot + 1) & mask;
+	}
 }
 
 void ObjectHeap::MarkThreadStackRoots()
@@ -559,13 +630,10 @@ void ObjectHeap::ProcessWeakReferences()
 		}
 		LPOBJECT_REF target = referent->field_value.heapPtr;
 		bool reachable = false;
-		std::map<const OBJECT_REF *, OBJECT_REF>::iterator target_it =
-			ref_index.find(target);
-		if (target_it != ref_index.end())
+		OBJECT_REF target_index = LookupRefIndex(target);
+		if (target_index > 0)
 		{
-			OBJECT_REF target_index = target_it->second;
-			reachable = target_index > 0 &&
-				static_cast<size_t>(target_index) < marked.size() &&
+			reachable = static_cast<size_t>(target_index) < marked.size() &&
 				marked[static_cast<size_t>(target_index)];
 		}
 		if (reachable)
@@ -682,14 +750,7 @@ void ObjectHeap::gc()
 				std::chrono::steady_clock::now().time_since_epoch()).count());
 	}
 
-	ref_index.clear();
-	for (size_t i = 1; i < objs.size(); i++)
-	{
-		if (objs[i])
-		{
-			ref_index[&objs[i]->index] = static_cast<OBJECT_REF>(i);
-		}
-	}
+	BuildRefIndex();
 
 	marked.assign(objs.size(), false);
 	mark_stack.clear();

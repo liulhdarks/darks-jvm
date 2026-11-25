@@ -50,6 +50,7 @@ public:
 		gc_freed_total = 0;
 		gc_freed_last = 0;
 		live_objects = 0;
+		ref_mask = 0;
 	}
 
 	~ObjectHeap();
@@ -158,10 +159,19 @@ private:
 
 	size_t ObjectBytes(lpObject obj) const;
 
+	// Maps the address of a live object's index field to that index.  A flat
+	// open-addressing table is rebuilt at the start of each collection: the
+	// collector calls it for every scanned pointer, so a node-based map is far
+	// too expensive.  The index value is read from the object itself (the key
+	// is only accepted when it matches a live object's field address).
+	void BuildRefIndex();
+	OBJECT_REF LookupRefIndex(const OBJECT_REF *key) const;
+
 	std::vector<bool> marked;
 	std::vector<OBJECT_REF> mark_stack;
 	std::vector<OBJECT_REF> weak_reference_objects;
-	std::map<const OBJECT_REF *, OBJECT_REF> ref_index;
+	std::vector<const OBJECT_REF *> ref_keys;
+	size_t ref_mask;
 
 	std::vector<OBJECT_REF> free_indices;
 	std::vector<LPOBJECT_REF *> root_slots;
