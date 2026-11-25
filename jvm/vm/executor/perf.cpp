@@ -60,7 +60,10 @@ struct ThreadAccumulator
 		memset(opcodes, 0, sizeof(opcodes));
 	}
 
-	~ThreadAccumulator()
+	// Publish this thread's counters to the global totals. Called every
+	// 64K bytecodes so a startup snapshot taken on another thread sees
+	// near-complete numbers, and at thread exit.
+	void Flush()
 	{
 		if (!g_enabled)
 		{
@@ -69,18 +72,26 @@ struct ThreadAccumulator
 		if (bytecodes)
 		{
 			g_bytecodes.fetch_add(bytecodes, std::memory_order_relaxed);
+			bytecodes = 0;
 		}
 		if (methods)
 		{
 			g_methods.fetch_add(methods, std::memory_order_relaxed);
+			methods = 0;
 		}
 		for (int i = 0; i < 256; i++)
 		{
 			if (opcodes[i])
 			{
 				g_opcodes[i].fetch_add(opcodes[i], std::memory_order_relaxed);
+				opcodes[i] = 0;
 			}
 		}
+	}
+
+	~ThreadAccumulator()
+	{
+		Flush();
 	}
 };
 
@@ -250,6 +261,10 @@ void NoteInstruction(unsigned op)
 		{
 			t_accumulator.opcodes[op]++;
 		}
+		if (t_accumulator.bytecodes >= 65536)
+		{
+			t_accumulator.Flush();
+		}
 	}
 }
 
@@ -285,8 +300,17 @@ void NoteFirstConnection()
 		return;
 	}
 	uint64_t expected = 0;
-	g_first_connection_ns.compare_exchange_strong(expected, SinceStartNs(),
-		std::memory_order_relaxed);
+	if (!g_first_connection_ns.compare_exchange_strong(expected, SinceStartNs(),
+	        std::memory_order_relaxed))
+	{
+		return;
+	}
+	// Startup snapshot: everything up to the first accepted connection is
+	// what a server cold-start measurement cares about, so do not make the
+	// user wait for shutdown to see it. Other threads may still hold up to
+	// 64K unflushed instructions each.
+	fprintf(stderr, "[perf] startup snapshot (first connection)\n");
+	PrintSummary();
 }
 
 void AddJitProgram(size_t bytes)
@@ -305,30 +329,9 @@ void PrintSummary()
 	{
 		return;
 	}
-	// The scheduler has already joined its workers here; any remaining
-	// per-thread counters belong to this thread and are merged on exit, so
-	// flush them explicitly first.
-	{
-		ThreadAccumulator &a = t_accumulator;
-		if (a.bytecodes)
-		{
-			g_bytecodes.fetch_add(a.bytecodes, std::memory_order_relaxed);
-			a.bytecodes = 0;
-		}
-		if (a.methods)
-		{
-			g_methods.fetch_add(a.methods, std::memory_order_relaxed);
-			a.methods = 0;
-		}
-		for (int i = 0; i < 256; i++)
-		{
-			if (a.opcodes[i])
-			{
-				g_opcodes[i].fetch_add(a.opcodes[i], std::memory_order_relaxed);
-				a.opcodes[i] = 0;
-			}
-		}
-	}
+	// Workers are gone at shutdown, but this thread's accumulator may still
+	// hold a tail of instructions; publish it so the totals are complete.
+	t_accumulator.Flush();
 
 	fprintf(stderr,
 		"[perf] uptime_ms=%.1f\n", Ms(SinceStartNs()));
