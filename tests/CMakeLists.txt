@@ -25,6 +25,9 @@ target_link_libraries(unit_tests PRIVATE darksvm)
 
 add_executable(gc_tests gc_tests.cpp)
 target_link_libraries(gc_tests PRIVATE darksvm)
+# gc_tests embeds the VM and loads the JNI library, which resolves the VM's
+# native symbols from this executable, so they have to be exported.
+set_target_properties(gc_tests PROPERTIES ENABLE_EXPORTS ON)
 
 if(ZLIB_FOUND)
     add_executable(zip_tests zip_tests.cpp)
