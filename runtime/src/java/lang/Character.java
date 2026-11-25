@@ -673,4 +673,38 @@ public final class Character implements Comparable<Character>, java.io.Serializa
     {
         return toString(value);
     }
+
+    public static final char MIN_HIGH_SURROGATE = '\uD800';
+    public static final char MAX_HIGH_SURROGATE = '\uDBFF';
+    public static final char MIN_LOW_SURROGATE = '\uDC00';
+    public static final char MAX_LOW_SURROGATE = '\uDFFF';
+    public static final char MIN_SURROGATE = MIN_HIGH_SURROGATE;
+    public static final char MAX_SURROGATE = MAX_LOW_SURROGATE;
+
+    public static char highSurrogate(int codePoint)
+    {
+        return (char)((codePoint >>> 10)
+            + (MIN_HIGH_SURROGATE - (MIN_SUPPLEMENTARY_CODE_POINT >>> 10)));
+    }
+
+    public static char lowSurrogate(int codePoint)
+    {
+        return (char)((codePoint & 0x3ff) + MIN_LOW_SURROGATE);
+    }
+
+    public static final int MIN_SUPPLEMENTARY_CODE_POINT = 0x010000;
+    public static final int MIN_CODE_POINT = 0x000000;
+    public static final int MAX_CODE_POINT = 0x10FFFF;
+
+    static final int ERROR = 0xFFFFFFFF;
+
+    static int toUpperCaseEx(int codePoint)
+    {
+        return toUpperCase(codePoint);
+    }
+
+    static char[] toUpperCaseCharArray(int codePoint)
+    {
+        return null;
+    }
 }
