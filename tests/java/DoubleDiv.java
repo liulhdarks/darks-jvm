@@ -64,6 +64,11 @@ public class DoubleDiv
         check("pow", Math.pow(2.0, 10.0) == 1024.0);
         check("pow-frac", Math.pow(9.0, 0.5) == 3.0);
         check("hypot", Math.hypot(3.0, 4.0) == 5.0);
+        check("exp", Math.abs(Math.exp(1.0) - 2.718281828459045) < 1e-15);
+        check("cbrt", Math.cbrt(27.0) == 3.0);
+        check("log", Math.abs(Math.log(2.0) - 0.6931471805599453) < 1e-15);
+        check("strict-pow", StrictMath.pow(1.5, 3.0) == 3.375);
+        check("strict-exp", StrictMath.exp(1.0) == Math.exp(1.0));
         check("bigdecimal-dv", java.math.BigDecimal.valueOf(10.0).doubleValue() == 10.0);
         check("string-format-div", String.valueOf(1.0 / 8.0).equals("0.125"));
         check("double-tostring", Double.toString(0.75).equals("0.75"));

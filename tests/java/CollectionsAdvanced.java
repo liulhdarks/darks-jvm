@@ -265,7 +265,7 @@ public class CollectionsAdvanced
         eq("math-floor", (long)Math.floor(2.9), 2L);
         eq("math-ceil", (long)Math.ceil(2.1), 3L);
         eq("math-round", Math.round(2.5), 3L);
-        eq("math-round-negative", Math.round(-2.5), -3L);
+        eq("math-round-negative", Math.round(-2.5), -2L);
         eq("math-signum", Math.signum(-3), -1);
         eq("math-toIntExact", Math.toIntExact(2147483647L), 2147483647);
         eq("math-floorDiv", Math.floorDiv(-7, 2), -4);

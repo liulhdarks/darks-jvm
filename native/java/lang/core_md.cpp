@@ -398,33 +398,38 @@ JNIEXPORT jdouble JNICALL Java_java_lang_Double_longBitsToDouble(JNIEnv *, jclas
 	return value;
 }
 
-JNIEXPORT jdouble JNICALL Java_java_lang_Math_sqrt(JNIEnv *env, jclass clazz, jdouble value)
+#define DARKS_STRICTMATH_UNARY(name, func) \
+	JNIEXPORT jdouble JNICALL Java_java_lang_StrictMath_##name(JNIEnv *, jclass, jdouble a) \
+	{ \
+		return func(a); \
+	}
+
+DARKS_STRICTMATH_UNARY(sin, std::sin)
+DARKS_STRICTMATH_UNARY(cos, std::cos)
+DARKS_STRICTMATH_UNARY(tan, std::tan)
+DARKS_STRICTMATH_UNARY(asin, std::asin)
+DARKS_STRICTMATH_UNARY(acos, std::acos)
+DARKS_STRICTMATH_UNARY(atan, std::atan)
+DARKS_STRICTMATH_UNARY(log, std::log)
+DARKS_STRICTMATH_UNARY(log10, std::log10)
+DARKS_STRICTMATH_UNARY(sqrt, std::sqrt)
+DARKS_STRICTMATH_UNARY(sinh, std::sinh)
+DARKS_STRICTMATH_UNARY(cosh, std::cosh)
+DARKS_STRICTMATH_UNARY(tanh, std::tanh)
+DARKS_STRICTMATH_UNARY(expm1, std::expm1)
+DARKS_STRICTMATH_UNARY(log1p, std::log1p)
+
+#undef DARKS_STRICTMATH_UNARY
+
+JNIEXPORT jdouble JNICALL Java_java_lang_StrictMath_atan2(JNIEnv *, jclass, jdouble y, jdouble x)
 {
-	(void)env;
-	(void)clazz;
-	return std::sqrt(value);
+	return std::atan2(y, x);
 }
 
-JNIEXPORT jdouble JNICALL Java_java_lang_Math_pow(JNIEnv *env, jclass clazz, jdouble base,
-	jdouble exponent)
+JNIEXPORT jdouble JNICALL Java_java_lang_StrictMath_IEEEremainder(JNIEnv *, jclass, jdouble f1,
+	jdouble f2)
 {
-	(void)env;
-	(void)clazz;
-	return std::pow(base, exponent);
-}
-
-JNIEXPORT jdouble JNICALL Java_java_lang_Math_floor(JNIEnv *env, jclass clazz, jdouble value)
-{
-	(void)env;
-	(void)clazz;
-	return std::floor(value);
-}
-
-JNIEXPORT jdouble JNICALL Java_java_lang_Math_ceil(JNIEnv *env, jclass clazz, jdouble value)
-{
-	(void)env;
-	(void)clazz;
-	return std::ceil(value);
+	return std::remainder(f1, f2);
 }
 
 // ---------------------------------------------------------------------------
