@@ -216,8 +216,8 @@ public final class String
      * unnecessary since Strings are immutable.
      */
     public String() {
-        this.value = "".value;
-        this.coder = "".coder;
+        this.value = new byte[0];
+        this.coder = LATIN1;
     }
 
     /**
@@ -311,8 +311,8 @@ public final class String
     public String(int[] codePoints, int offset, int count) {
         checkBoundsOffCount(offset, count, codePoints.length);
         if (count == 0) {
-            this.value = "".value;
-            this.coder = "".coder;
+            this.value = new byte[0];
+            this.coder = LATIN1;
             return;
         }
         if (COMPACT_STRINGS) {
@@ -371,8 +371,8 @@ public final class String
     public String(byte ascii[], int hibyte, int offset, int count) {
         checkBoundsOffCount(offset, count, ascii.length);
         if (count == 0) {
-            this.value = "".value;
-            this.coder = "".coder;
+            this.value = new byte[0];
+            this.coder = LATIN1;
             return;
         }
         if (COMPACT_STRINGS && (byte)hibyte == 0) {
@@ -3207,8 +3207,8 @@ public final class String
      */
     String(char[] value, int off, int len, Void sig) {
         if (len == 0) {
-            this.value = "".value;
-            this.coder = "".coder;
+            this.value = new byte[0];
+            this.coder = LATIN1;
             return;
         }
         if (COMPACT_STRINGS) {
