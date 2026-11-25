@@ -109,6 +109,9 @@ lpField JniFindField(lpClass clazz, const char *name, const char *sig, bool isSt
 lpClass JniDeclaringFieldClass(lpClass clazz, lpField field);
 
 // String helpers.
+// Decodes a Java String (byte[] value + byte coder) into UTF-16 code units.
+bool JniReadString(LPOBJECT_REF string_ref, std::vector<uint16_t> &units);
+// Allocates a jchar copy of the string; the caller owns it (ReleaseStringChars).
 bool JniStringChars(LPOBJECT_REF string_ref, jchar **chars, jsize *length);
 jstring JniMakeString(JNIEnv *env, const char *utf8);
 jstring JniMakeString(JNIEnv *env, const jchar *units, jsize length);

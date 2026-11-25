@@ -1124,13 +1124,12 @@ extern "C" JNIEXPORT jlong JNICALL Java_java_util_regex_Pattern_nativeCompile
 	(JNIEnv *env, jclass clazz, jstring pattern, jint flags)
 {
 	(void)clazz;
-	jchar *units = NULL;
-	jsize length = 0;
-	if (!pattern || !JniStringChars(JniRef(pattern), &units, &length))
+	std::vector<uint16_t> units;
+	if (!pattern || !JniReadString(JniRef(pattern), units))
 	{
 		return 0;
 	}
-	std::wstring source(units, units + length);
+	std::wstring source(units.begin(), units.end());
 	if ((flags & FLAG_LITERAL) != 0)
 	{
 		source = EscapeLiteral(source);
@@ -1322,12 +1321,12 @@ extern "C" JNIEXPORT jlongArray JNICALL Java_java_util_regex_Pattern_nativeMatch
 	{
 		return NULL;
 	}
-	jchar *units = NULL;
-	jsize length = 0;
-	if (!JniStringChars(JniRef(input), &units, &length))
+	std::vector<uint16_t> units;
+	if (!JniReadString(JniRef(input), units))
 	{
 		return NULL;
 	}
+	jsize length = static_cast<jsize>(units.size());
 	if (start < 0)
 	{
 		start = 0;
@@ -1337,7 +1336,7 @@ extern "C" JNIEXPORT jlongArray JNICALL Java_java_util_regex_Pattern_nativeMatch
 		return NULL;
 	}
 	WideInput text;
-	if (!BuildWide(units, length, &text))
+	if (!BuildWide(reinterpret_cast<const jchar *>(units.data()), length, &text))
 	{
 		return NULL;
 	}

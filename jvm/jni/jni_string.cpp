@@ -1,5 +1,6 @@
-// JNI string functions. java.lang.String is a pure-Java class whose payload
-// is the private char[] field "value".
+// JNI string functions. java.lang.String stores its payload as the private
+// byte[] field "value" plus a "coder" byte: 0 means LATIN1 (one byte per
+// character), 1 means UTF16 (little-endian code units).
 
 #include "stdafx.h"
 #include "jni_impl.h"
@@ -12,65 +13,94 @@
 
 namespace {
 
-lpObject StringCharsObject(LPOBJECT_REF string_ref)
+// Reads the value:[B and coder:B fields and expands them into UTF-16 code
+// units. Returns false when the reference is not a usable String.
+bool ReadStringUnits(LPOBJECT_REF string_ref, std::vector<uint16_t> &units)
 {
-	lpObject string_obj = NULL;
+	units.clear();
 	if (!string_ref || !VMContext::object_heap)
 	{
-		return NULL;
+		return false;
 	}
+	lpObject string_obj = NULL;
 	if (!VMContext::object_heap->GetObject(string_ref, string_obj) || !string_obj ||
 	    !string_obj->obj_class)
 	{
-		return NULL;
+		return false;
 	}
-	std::map<std::string, lpField>::iterator it =
-		string_obj->obj_class->fields_map.find("value:[C");
-	if (it == string_obj->obj_class->fields_map.end())
+	lpFieldValue value_fv = string_obj->GetFieldValueByName("value:[B");
+	if (!value_fv || !value_fv->field_value.heapPtr)
 	{
-		return NULL;
+		return false;
 	}
-	lpFieldValue fv = string_obj->GetFieldValue(it->second);
-	if (!fv || !fv->field_value.heapPtr)
+	lpObject bytes = NULL;
+	if (!VMContext::object_heap->GetObject(value_fv->field_value.heapPtr, bytes) ||
+	    !bytes || !bytes->array_var || bytes->array_length < 0)
 	{
-		return NULL;
+		return false;
 	}
-	lpObject chars = NULL;
-	if (!VMContext::object_heap->GetObject(fv->field_value.heapPtr, chars))
+	lpFieldValue coder_fv = string_obj->GetFieldValueByName("coder:B");
+	bool utf16 = coder_fv && (coder_fv->field_value.bValue & 1) != 0;
+	const uint8_t *data = static_cast<const uint8_t *>(bytes->array_var);
+	int length = bytes->array_length;
+	if (!utf16)
 	{
-		return NULL;
+		units.reserve(static_cast<size_t>(length));
+		for (int i = 0; i < length; i++)
+		{
+			units.push_back(data[i]);
+		}
 	}
-	return chars;
+	else
+	{
+		units.reserve(static_cast<size_t>(length / 2));
+		for (int i = 0; i + 1 < length; i += 2)
+		{
+			units.push_back(static_cast<uint16_t>(data[i] | (data[i + 1] << 8)));
+		}
+	}
+	return true;
 }
 
-std::string Utf8Of(jstring str)
+std::string Utf8Of(jstring str, bool &ok)
 {
-	lpObject chars = StringCharsObject(JniRef(reinterpret_cast<jobject>(str)));
-	if (!chars || !chars->array_var)
+	std::vector<uint16_t> units;
+	ok = ReadStringUnits(JniRef(reinterpret_cast<jobject>(str)), units);
+	if (!ok)
 	{
 		return std::string();
 	}
-	const jchar *data = static_cast<const jchar *>(chars->array_var);
-	std::vector<uint16_t> units(data, data + chars->array_length);
 	return dk::Utf16ToUtf8(units);
 }
 
 } // namespace
 
+bool JniReadString(LPOBJECT_REF string_ref, std::vector<uint16_t> &units)
+{
+	return ReadStringUnits(string_ref, units);
+}
+
+// Fills *chars with a freshly allocated copy of the string contents; the
+// caller releases it with JNI_ReleaseStringChars.
 bool JniStringChars(LPOBJECT_REF string_ref, jchar **chars, jsize *length)
 {
-	lpObject chars_obj = StringCharsObject(string_ref);
-	if (!chars_obj || !chars_obj->array_var)
+	std::vector<uint16_t> units;
+	if (!ReadStringUnits(string_ref, units))
 	{
 		return false;
 	}
-	if (chars)
-	{
-		*chars = static_cast<jchar *>(chars_obj->array_var);
-	}
 	if (length)
 	{
-		*length = static_cast<jsize>(chars_obj->array_length);
+		*length = static_cast<jsize>(units.size());
+	}
+	if (chars)
+	{
+		jchar *copy = new jchar[units.empty() ? 1 : units.size()];
+		for (size_t i = 0; i < units.size(); i++)
+		{
+			copy[i] = static_cast<jchar>(units[i]);
+		}
+		*chars = copy;
 	}
 	return true;
 }
@@ -147,7 +177,7 @@ extern "C" JNIEXPORT const jchar * JNICALL JNI_GetStringChars(JNIEnv *env, jstri
 	}
 	if (isCopy)
 	{
-		*isCopy = JNI_FALSE;
+		*isCopy = JNI_TRUE;
 	}
 	return chars;
 }
@@ -157,20 +187,22 @@ extern "C" JNIEXPORT void JNICALL JNI_ReleaseStringChars(JNIEnv *env, jstring st
 {
 	(void)env;
 	(void)str;
-	(void)chars;
+	delete[] chars;
 }
 
 extern "C" JNIEXPORT jsize JNICALL JNI_GetStringUTFLength(JNIEnv *env, jstring str)
 {
 	(void)env;
-	return static_cast<jsize>(Utf8Of(str).size());
+	bool ok = false;
+	return static_cast<jsize>(Utf8Of(str, ok).size());
 }
 
 extern "C" JNIEXPORT const char * JNICALL JNI_GetStringUTFChars(JNIEnv *env, jstring str,
 	jboolean *isCopy)
 {
 	(void)env;
-	std::string utf8 = Utf8Of(str);
+	bool ok = false;
+	std::string utf8 = Utf8Of(str, ok);
 	char *buffer = new char[utf8.size() + 1];
 	memcpy(buffer, utf8.c_str(), utf8.size() + 1);
 	if (isCopy)
@@ -192,35 +224,44 @@ extern "C" JNIEXPORT void JNICALL JNI_GetStringRegion(JNIEnv *env, jstring str,
 	jsize start, jsize len, jchar *buf)
 {
 	(void)env;
-	jchar *chars = NULL;
-	jsize length = 0;
-	if (!buf || !JniStringChars(JniRef(reinterpret_cast<jobject>(str)), &chars, &length))
+	if (!buf)
 	{
 		return;
 	}
-	if (start < 0 || len < 0 || start + len > length)
+	std::vector<uint16_t> units;
+	if (!ReadStringUnits(JniRef(reinterpret_cast<jobject>(str)), units))
 	{
 		return;
 	}
-	memcpy(buf, chars + start, static_cast<size_t>(len) * sizeof(jchar));
+	if (start < 0 || len < 0 || start + len > static_cast<jsize>(units.size()))
+	{
+		return;
+	}
+	for (jsize i = 0; i < len; i++)
+	{
+		buf[i] = static_cast<jchar>(units[start + i]);
+	}
 }
 
 extern "C" JNIEXPORT void JNICALL JNI_GetStringUTFRegion(JNIEnv *env, jstring str,
 	jsize start, jsize len, char *buf)
 {
 	(void)env;
-	jchar *chars = NULL;
-	jsize length = 0;
-	if (!buf || !JniStringChars(JniRef(reinterpret_cast<jobject>(str)), &chars, &length))
+	if (!buf)
 	{
 		return;
 	}
-	if (start < 0 || len < 0 || start + len > length)
+	std::vector<uint16_t> units;
+	if (!ReadStringUnits(JniRef(reinterpret_cast<jobject>(str)), units))
 	{
 		return;
 	}
-	std::vector<uint16_t> units(chars + start, chars + start + len);
-	std::string utf8 = dk::Utf16ToUtf8(units);
+	if (start < 0 || len < 0 || start + len > static_cast<jsize>(units.size()))
+	{
+		return;
+	}
+	std::vector<uint16_t> slice(units.begin() + start, units.begin() + start + len);
+	std::string utf8 = dk::Utf16ToUtf8(slice);
 	memcpy(buf, utf8.data(), utf8.size());
 	buf[utf8.size()] = '\0';
 }
@@ -228,7 +269,6 @@ extern "C" JNIEXPORT void JNICALL JNI_GetStringUTFRegion(JNIEnv *env, jstring st
 extern "C" JNIEXPORT const jchar * JNICALL JNI_GetStringCritical(JNIEnv *env, jstring str,
 	jboolean *isCopy)
 {
-	(void)env;
 	return JNI_GetStringChars(env, str, isCopy);
 }
 

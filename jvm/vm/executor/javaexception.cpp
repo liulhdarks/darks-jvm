@@ -365,21 +365,41 @@ bool JavaStringToUtf8(LPOBJECT_REF ref, std::string &out)
 	{
 		return false;
 	}
-	lpFieldValue fv = str->varants.count(std::string("value:[C"))
-		? str->varants[std::string("value:[C")] : NULL;
+	lpFieldValue fv = str->varants.count(std::string("value:[B"))
+		? str->varants[std::string("value:[B")] : NULL;
 	if (!fv || !fv->field_value.heapPtr)
 	{
 		out.clear();
 		return true; // empty string
 	}
-	lpObject chars = NULL;
-	if (!VMContext::object_heap->GetObject(fv->field_value.heapPtr, chars) || !chars ||
-	    !chars->array_var)
+	lpObject bytes = NULL;
+	if (!VMContext::object_heap->GetObject(fv->field_value.heapPtr, bytes) || !bytes ||
+	    !bytes->array_var)
 	{
 		return false;
 	}
-	std::vector<uint16_t> units(static_cast<uint16_t *>(chars->array_var),
-	                            static_cast<uint16_t *>(chars->array_var) + chars->array_length);
+	lpFieldValue coder = str->varants.count(std::string("coder:B"))
+		? str->varants[std::string("coder:B")] : NULL;
+	bool utf16 = coder && (coder->field_value.bValue & 1) != 0;
+	const uint8_t *data = static_cast<const uint8_t *>(bytes->array_var);
+	int length = bytes->array_length;
+	std::vector<uint16_t> units;
+	if (!utf16)
+	{
+		units.reserve(static_cast<size_t>(length));
+		for (int i = 0; i < length; i++)
+		{
+			units.push_back(data[i]);
+		}
+	}
+	else
+	{
+		units.reserve(static_cast<size_t>(length / 2));
+		for (int i = 0; i + 1 < length; i += 2)
+		{
+			units.push_back(static_cast<uint16_t>(data[i] | (data[i + 1] << 8)));
+		}
+	}
 	out = dk::Utf16ToUtf8(units);
 	return true;
 }
