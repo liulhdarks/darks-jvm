@@ -44,6 +44,32 @@ void JObject::DeleteArray()
 	array_var = NULL;
 }
 
+size_t JObjectIndexOffset()
+{
+	static const size_t offset = []() {
+		JObject probe;
+		return static_cast<size_t>(
+			reinterpret_cast<const char *>(&probe.index) -
+			reinterpret_cast<const char *>(&probe));
+	}();
+	return offset;
+}
+
+lpObject JObject::FromRef(LPOBJECT_REF ref)
+{
+	if (!ref)
+	{
+		return NULL;
+	}
+	lpObject obj = reinterpret_cast<lpObject>(
+		reinterpret_cast<char *>(ref) - JObjectIndexOffset());
+	if (obj->magic != OBJECT_MAGIC)
+	{
+		return NULL;
+	}
+	return obj;
+}
+
 JObject::~JObject()
 {
 	// Values are owned exactly once, through owned_values.  Both the name map

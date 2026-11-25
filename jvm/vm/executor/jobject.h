@@ -12,6 +12,11 @@ class JObject
 {
 
 public:
+	// Guards JObject::FromRef: only objects created by this VM carry it, so a
+	// non-reference slot value is rejected instead of being reinterpreted.
+	static const uint64_t OBJECT_MAGIC = 0x6a6f626a65637431ULL;
+	uint64_t magic;
+
 	// Name-keyed view of all values (real instance fields and VM-synthetic
 	// entries such as "$lambda:id").  It does not own the values.
 	FIELD_MAP varants;
@@ -32,6 +37,7 @@ private:
 public:
 	JObject()
 	{
+		magic = OBJECT_MAGIC;
 		obj_class = NULL;
 		array_length = 0;
 		array_var = NULL;
@@ -41,6 +47,7 @@ public:
 
 	JObject(lpClass obj_class)
 	{
+		magic = OBJECT_MAGIC;
 		this->obj_class = obj_class;
 		array_length = 0;
 		array_var = NULL;
@@ -51,6 +58,11 @@ public:
 	~JObject();
 
 	lpFieldValue GetFieldValue(lpField field);
+
+	// Converts an interpreter reference (&object->index) back to the object
+	// without the heap index map. Only valid for a live reference held in a GC
+	// root (the interpreter operand stack/locals), which the collector scans.
+	static lpObject FromRef(LPOBJECT_REF ref);
 
 	// Takes ownership of a FieldValue created for a VM-synthetic entry and
 	// publishes it in the name map.

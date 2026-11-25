@@ -5904,7 +5904,6 @@ bool StackFrame::ArrayLength()
 
 bool StackFrame::PutStatic(U2 index)
 {
-	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
@@ -5912,6 +5911,38 @@ bool StackFrame::PutStatic(U2 index)
 			"java/lang/NoSuchFieldError", "invalid field constant index");
 		return false;
 	}
+	// Steady-state fast path: the declaring class has been initialised and the
+	// descriptor decoded once, so the value is written directly into the
+	// static slot without the global VM lock or a descriptor re-parse.
+	lpFieldValue cached = frc->resolved_static_value.load(std::memory_order_acquire);
+	int cached_type = frc->cached_type.load(std::memory_order_relaxed);
+	if (cached && cached_type != 0)
+	{
+		int flags = frc->cached_flags.load(std::memory_order_relaxed);
+		if (flags & 1)
+		{
+			std::atomic_thread_fence(std::memory_order_seq_cst);
+		}
+		switch (cached_type)
+		{
+		case DT_LONG:
+			cached->field_value.lValue = popLong();
+			break;
+		case DT_DOUBLE:
+			cached->field_value.dValue = popDouble();
+			break;
+		default:
+			op_stack->pop(cached->field_value);
+			break;
+		}
+		if (flags & 1)
+		{
+			std::atomic_thread_fence(std::memory_order_seq_cst);
+		}
+		return true;
+	}
+
+	VMLock lk;
 	lpField field = NULL;
 	lpFieldValue fv = NULL;
 	if (!ResolveStaticField(class_loader, frc, field, fv))
@@ -5931,6 +5962,10 @@ bool StackFrame::PutStatic(U2 index)
 	{
 		type_desc.data_type = DT_ARRAY;
 	}
+	frc->cached_type.store(static_cast<int>(type_desc.data_type),
+		std::memory_order_relaxed);
+	frc->cached_flags.store((field->accFlag & ACF_VOLATILE) ? 1 : 0,
+		std::memory_order_relaxed);
 	switch (type_desc.data_type)
 	{
 	case DT_LONG:
@@ -5948,7 +5983,6 @@ bool StackFrame::PutStatic(U2 index)
 
 bool StackFrame::GetStatic(U2 index)
 {
-	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
@@ -5956,6 +5990,35 @@ bool StackFrame::GetStatic(U2 index)
 			"java/lang/NoSuchFieldError", "invalid field constant index");
 		return false;
 	}
+	lpFieldValue cached = frc->resolved_static_value.load(std::memory_order_acquire);
+	int cached_type = frc->cached_type.load(std::memory_order_relaxed);
+	if (cached && cached_type != 0)
+	{
+		int flags = frc->cached_flags.load(std::memory_order_relaxed);
+		if (flags & 1)
+		{
+			std::atomic_thread_fence(std::memory_order_seq_cst);
+		}
+		switch (cached_type)
+		{
+		case DT_LONG:
+			op_stack->push(cached->field_value.lValue);
+			break;
+		case DT_DOUBLE:
+			op_stack->push(cached->field_value.dValue);
+			break;
+		default:
+			op_stack->push(cached->field_value);
+			break;
+		}
+		if (flags & 1)
+		{
+			std::atomic_thread_fence(std::memory_order_seq_cst);
+		}
+		return true;
+	}
+
+	VMLock lk;
 	lpField field = NULL;
 	lpFieldValue fv = NULL;
 	if (!ResolveStaticField(class_loader, frc, field, fv))
@@ -5973,6 +6036,10 @@ bool StackFrame::GetStatic(U2 index)
 	{
 		type_desc.data_type = DT_ARRAY;
 	}
+	frc->cached_type.store(static_cast<int>(type_desc.data_type),
+		std::memory_order_relaxed);
+	frc->cached_flags.store((field->accFlag & ACF_VOLATILE) ? 1 : 0,
+		std::memory_order_relaxed);
 	switch (type_desc.data_type)
 	{
 	case DT_LONG:
@@ -5990,7 +6057,6 @@ bool StackFrame::GetStatic(U2 index)
 
 bool StackFrame::GetField(U2 index)
 {
-	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
@@ -5998,6 +6064,61 @@ bool StackFrame::GetField(U2 index)
 			"java/lang/NoSuchFieldError", "invalid field constant index");
 		return false;
 	}
+	int cached_slot = frc->cached_slot.load(std::memory_order_acquire);
+	int cached_type = frc->cached_type.load(std::memory_order_relaxed);
+	if (cached_slot >= 0 && cached_type != 0)
+	{
+		int flags = frc->cached_flags.load(std::memory_order_relaxed);
+		Slot slot_obj;
+		op_stack->pop(slot_obj);
+		LPOBJECT_REF obj_ref = slot_obj.heapPtr;
+		if (!obj_ref)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NullPointerException", "null object reference");
+			return false;
+		}
+		// The receiver is a live reference rooted on the operand stack, so the
+		// heap cannot have reclaimed it; resolve it in place instead of taking
+		// the global heap lock.
+		lpObject obj = JObject::FromRef(obj_ref);
+		if (!obj || cached_slot >= static_cast<int>(obj->instance_slots.size()))
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NullPointerException", "invalid object reference");
+			return false;
+		}
+		lpFieldValue fv = obj->instance_slots[static_cast<size_t>(cached_slot)];
+		if (!fv)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NoSuchFieldError", "field storage is missing");
+			return false;
+		}
+		if (flags & 1)
+		{
+			std::atomic_thread_fence(std::memory_order_seq_cst);
+		}
+		switch (cached_type)
+		{
+		case DT_LONG:
+			op_stack->push(fv->field_value.lValue);
+			break;
+		case DT_DOUBLE:
+			op_stack->push(fv->field_value.dValue);
+			break;
+		default:
+			op_stack->push(fv->field_value);
+			break;
+		}
+		if (flags & 1)
+		{
+			std::atomic_thread_fence(std::memory_order_seq_cst);
+		}
+		return true;
+	}
+
+	VMLock lk;
 	// Resolve before popping the receiver: resolution can load classes and
 	// therefore collect, and the receiver must stay rooted on the operand
 	// stack until the field is known.
@@ -6040,6 +6161,14 @@ bool StackFrame::GetField(U2 index)
 	{
 		type_desc.data_type = DT_ARRAY;
 	}
+	frc->cached_type.store(static_cast<int>(type_desc.data_type),
+		std::memory_order_relaxed);
+	frc->cached_flags.store((field->accFlag & ACF_VOLATILE) ? 1 : 0,
+		std::memory_order_relaxed);
+	if (field->slot >= 0)
+	{
+		frc->cached_slot.store(field->slot, std::memory_order_release);
+	}
 	switch (type_desc.data_type)
 	{
 	case DT_BOOL:
@@ -6066,7 +6195,6 @@ bool StackFrame::GetField(U2 index)
 
 bool StackFrame::PutField(U2 index)
 {
-	VMLock lk;
 	FieldRefConstant *frc = (FieldRefConstant*) clazz->const_pool->GetConstant(index);
 	if (!frc)
 	{
@@ -6074,6 +6202,60 @@ bool StackFrame::PutField(U2 index)
 			"java/lang/NoSuchFieldError", "invalid field constant index");
 		return false;
 	}
+	int cached_slot = frc->cached_slot.load(std::memory_order_acquire);
+	int cached_type = frc->cached_type.load(std::memory_order_relaxed);
+	if (cached_slot >= 0 && cached_type != 0)
+	{
+		int flags = frc->cached_flags.load(std::memory_order_relaxed);
+		Slot slot_val;
+		switch (cached_type)
+		{
+		case DT_LONG:
+			slot_val.lValue = popLong();
+			break;
+		case DT_DOUBLE:
+			slot_val.dValue = popDouble();
+			break;
+		default:
+			op_stack->pop(slot_val);
+			break;
+		}
+		Slot slot_obj;
+		op_stack->pop(slot_obj);
+		LPOBJECT_REF obj_ref = slot_obj.heapPtr;
+		if (!obj_ref)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NullPointerException", "null object reference");
+			return false;
+		}
+		lpObject obj = JObject::FromRef(obj_ref);
+		if (!obj || cached_slot >= static_cast<int>(obj->instance_slots.size()))
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NullPointerException", "invalid object reference");
+			return false;
+		}
+		lpFieldValue fv = obj->instance_slots[static_cast<size_t>(cached_slot)];
+		if (!fv)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/NoSuchFieldError", "field storage is missing");
+			return false;
+		}
+		if (flags & 1)
+		{
+			std::atomic_thread_fence(std::memory_order_seq_cst);
+		}
+		fv->field_value = slot_val;
+		if (flags & 1)
+		{
+			std::atomic_thread_fence(std::memory_order_seq_cst);
+		}
+		return true;
+	}
+
+	VMLock lk;
 	lpField field = NULL;
 	if (!ResolveInstanceField(class_loader, frc, field))
 	{
@@ -6137,10 +6319,17 @@ bool StackFrame::PutField(U2 index)
 			"java/lang/NoSuchFieldError", "field storage is missing");
 		return false;
 	}
+	frc->cached_type.store(static_cast<int>(type_desc.data_type),
+		std::memory_order_relaxed);
+	frc->cached_flags.store((field->accFlag & ACF_VOLATILE) ? 1 : 0,
+		std::memory_order_relaxed);
+	if (field->slot >= 0)
+	{
+		frc->cached_slot.store(field->slot, std::memory_order_release);
+	}
 	fv->field_value = slot_val;
 	return true;
 }
-
 
 void StackFrame::TableSwitch()
 {

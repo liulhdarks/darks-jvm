@@ -266,6 +266,13 @@ public:
 	// Monomorphic inline-style dispatch cache for invokevirtual/interface.
 	mutable std::atomic<Class*> cached_receiver_class;
 	mutable std::atomic<Method*> cached_method;
+	// Fast-path caches for get/putfield and get/putstatic.  "cached_slot" is
+	// the instance slot (>= 0 once the receiver class layout is known) and
+	// "cached_type" the pre-decoded DATA_TYPE; both are published after the
+	// descriptor has been resolved so the interpreter can skip re-parsing it.
+	mutable std::atomic<int> cached_slot;
+	mutable std::atomic<int> cached_type;
+	mutable std::atomic<int> cached_flags;
 
 public:
 	FieldRefConstant() : Constant(FIELDREF_CONSTANT, (LPSTR)"Fieldref")
@@ -278,6 +285,9 @@ public:
 		resolved_method.store(NULL);
 		cached_receiver_class.store(NULL);
 		cached_method.store(NULL);
+		cached_slot.store(-1);
+		cached_type.store(0);
+		cached_flags.store(0);
 	}
 
 	FieldRefConstant(ConstantEnum tag, LPSTR flag) : Constant(tag, flag)
