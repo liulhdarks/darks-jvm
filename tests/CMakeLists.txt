@@ -50,6 +50,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/ref/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/annotation/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/jdk/internal/*.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/jdk/internal/math/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/jdk/internal/vm/annotation/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/lang/management/*.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/java/org/xml/sax/*.java"
