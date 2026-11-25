@@ -183,14 +183,23 @@ public final class Matcher
         int start = start();
         int end = end();
         target.append(text.substring(appendPosition, start));
-        appendExpanded(target, replacement);
+        target.append(expandReplacement(replacement));
         appendPosition = end;
         return this;
     }
 
     public Matcher appendReplacement(StringBuffer target, String replacement)
     {
-        return appendReplacement((StringBuilder)target, replacement);
+        if (bounds.length < 2)
+        {
+            throw new IllegalStateException("no match found");
+        }
+        int start = start();
+        int end = end();
+        target.append(text.substring(appendPosition, start));
+        target.append(expandReplacement(replacement));
+        appendPosition = end;
+        return this;
     }
 
     public StringBuilder appendTail(StringBuilder target)
@@ -232,7 +241,7 @@ public final class Matcher
         while (found)
         {
             result.append(text.substring(last, start()));
-            appendExpanded(result, replacement);
+            result.append(expandReplacement(replacement));
             last = end();
             if (!all)
             {
@@ -262,7 +271,7 @@ public final class Matcher
         while (found)
         {
             result.append(text.substring(last, start()));
-            appendExpanded(result, replacement);
+            result.append(expandReplacement(replacement));
             last = end();
             if (!all)
             {
@@ -279,8 +288,9 @@ public final class Matcher
         return result.toString();
     }
 
-    private void appendExpanded(StringBuilder target, String replacement)
+    private String expandReplacement(String replacement)
     {
+        StringBuilder target = new StringBuilder();
         int i = 0;
         while (i < replacement.length())
         {
@@ -324,6 +334,7 @@ public final class Matcher
             target.append(c);
             i = i + 1;
         }
+        return target.toString();
     }
 
     public static String quoteReplacement(String text)
