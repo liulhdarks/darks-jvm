@@ -11,4 +11,21 @@ public class NumberFormatException extends IllegalArgumentException
     {
         super(message);
     }
+
+    static NumberFormatException forInputString(String s)
+    {
+        return new NumberFormatException("For input string: \"" + s + "\"");
+    }
+
+    static NumberFormatException forInputString(String s, int radix)
+    {
+        return new NumberFormatException("For input string: \"" + s + "\"" +
+                (radix == 10 ? "" : " under radix " + radix));
+    }
+
+    static NumberFormatException forCharSequence(CharSequence s, int beginIndex, int endIndex, int radix)
+    {
+        return new NumberFormatException("Error at index " +
+                (endIndex - beginIndex) + " in: \"" + s.toString() + "\"");
+    }
 }

@@ -4,6 +4,9 @@ public final class Character implements Comparable<Character>, java.io.Serializa
 {
     public static final Class TYPE = Class.getPrimitiveClass("char");
 
+    public static final int MIN_RADIX = 2;
+    public static final int MAX_RADIX = 36;
+
     public static final byte UNASSIGNED = 0;
     public static final byte UPPERCASE_LETTER = 1;
     public static final byte LOWERCASE_LETTER = 2;
