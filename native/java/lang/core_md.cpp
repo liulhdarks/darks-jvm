@@ -793,6 +793,7 @@ JNIEXPORT jobject JNICALL Java_java_lang_ClassLoader_defineClass0(JNIEnv *env,
 		loader->DiscardClass(clazz);
 		return NULL;
 	}
+	loader->PublishLinkedClass(clazz);
 	// Classes defined through a Java class loader (Spring Boot's nested jar
 	// loader) must run <clinit> like classes resolved through the native
 	// loader; otherwise static state stays at its default values.

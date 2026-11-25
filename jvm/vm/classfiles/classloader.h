@@ -3,6 +3,7 @@
 #include "vm/types.h"
 #include "vm/executor/jclass.h"
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -71,6 +72,22 @@ private:
 
 	map<string, lpClass> classMap;
 
+	// Read-mostly lookup cache in front of classMap.  Entries are published
+	// once a class has been linked and are never removed (discarded classes
+	// were never published), so readers can probe it without VMLock.
+	struct FastClassEntry
+	{
+		uint64_t hash;
+		const char *name;
+		std::atomic<lpClass> clazz;
+	};
+
+	static const size_t FAST_CLASS_SLOTS = 32768;
+	std::atomic<std::atomic<FastClassEntry *> *> fast_class_table;
+
+	lpClass LookupClassFast(LPCSTR classname) const;
+	void CacheClassFast(const char *name, lpClass clazz);
+
 private:
 	bool GetClass(LPCSTR classname, lpClass &jclass);
 
@@ -99,6 +116,10 @@ public:
 	// Resolves the superclass and every superinterface without running
 	// <clinit>.  Throws ClassLinkageException when a referenced type is missing.
 	void LinkClass(lpClass clazz);
+
+	// Adds a successfully linked class to the lock-free lookup cache.  Must not
+	// be called for a class that can still be discarded.
+	void PublishLinkedClass(lpClass clazz);
 
 	// Removes a freshly defined class that failed linking: its method index
 	// entries are dropped and the Class object (with its methods and constant

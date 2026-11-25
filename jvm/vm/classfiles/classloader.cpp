@@ -24,6 +24,17 @@
 
 namespace {
 
+uint64_t HashClassName(const char *name)
+{
+	uint64_t hash = 1469598103934665603ULL;
+	for (const unsigned char *p = reinterpret_cast<const unsigned char *>(name); *p; p++)
+	{
+		hash ^= *p;
+		hash *= 1099511628211ULL;
+	}
+	return hash;
+}
+
 // Cache of opened archives. Class path entries are few and archives stay open
 // for the process lifetime.  The map itself is heap allocated so that the
 // cached ZipFile objects remain reachable at exit; otherwise the static
@@ -335,17 +346,35 @@ bool DarksVM_LoadClassWithoutInitializing(const std::string &name, lpClass &out)
 ClassLoader::ClassLoader()
 {
 	parent = NULL;
+	fast_class_table.store(NULL, std::memory_order_relaxed);
 	AllLoaders().push_back(this);
 }
 
 ClassLoader::ClassLoader(ClassLoader *parent)
 {
 	this->parent = parent;
+	fast_class_table.store(NULL, std::memory_order_relaxed);
 	AllLoaders().push_back(this);
 }
 
 ClassLoader::~ClassLoader()
 {
+	std::atomic<FastClassEntry *> *table =
+		fast_class_table.load(std::memory_order_relaxed);
+	if (table)
+	{
+		for (size_t i = 0; i < FAST_CLASS_SLOTS; i++)
+		{
+			FastClassEntry *entry = table[i].load(std::memory_order_relaxed);
+			if (entry)
+			{
+				delete[] entry->name;
+				delete entry;
+			}
+		}
+		delete[] table;
+		fast_class_table.store(NULL, std::memory_order_relaxed);
+	}
 	map<string, Class*>::iterator it = classMap.begin();
 	for (; it != classMap.end(); it++)
 	{
@@ -360,8 +389,124 @@ ClassLoader::~ClassLoader()
 	classMap.clear();
 }
 
+lpClass ClassLoader::LookupClassFast(LPCSTR classname) const
+{
+	if (!classname || !*classname)
+	{
+		return NULL;
+	}
+	std::atomic<FastClassEntry *> *table =
+		fast_class_table.load(std::memory_order_acquire);
+	if (!table)
+	{
+		return NULL;
+	}
+	uint64_t hash = HashClassName(classname);
+	size_t mask = FAST_CLASS_SLOTS - 1;
+	size_t index = static_cast<size_t>(hash) & mask;
+	for (size_t probe = 0; probe < FAST_CLASS_SLOTS; probe++)
+	{
+		FastClassEntry *entry = table[(index + probe) & mask].load(
+			std::memory_order_acquire);
+		if (!entry)
+		{
+			return NULL;
+		}
+		if (entry->hash == hash && strcmp(entry->name, classname) == 0)
+		{
+			lpClass clazz = entry->clazz.load(std::memory_order_acquire);
+			if (clazz)
+			{
+				return clazz;
+			}
+			// Entry was never filled in (lost a race at publication); keep
+			// probing in case a later duplicate exists.
+		}
+	}
+	return NULL;
+}
+
+void ClassLoader::CacheClassFast(const char *name, lpClass clazz)
+{
+	if (!name || !*name || !clazz)
+	{
+		return;
+	}
+	std::atomic<FastClassEntry *> *table =
+		fast_class_table.load(std::memory_order_relaxed);
+	if (!table)
+	{
+		table = new std::atomic<FastClassEntry *>[FAST_CLASS_SLOTS];
+		for (size_t i = 0; i < FAST_CLASS_SLOTS; i++)
+		{
+			table[i].store(NULL, std::memory_order_relaxed);
+		}
+		fast_class_table.store(table, std::memory_order_release);
+	}
+	uint64_t hash = HashClassName(name);
+	size_t mask = FAST_CLASS_SLOTS - 1;
+	size_t index = static_cast<size_t>(hash) & mask;
+	for (size_t probe = 0; probe < FAST_CLASS_SLOTS; probe++)
+	{
+		std::atomic<FastClassEntry *> &slot = table[(index + probe) & mask];
+		FastClassEntry *entry = slot.load(std::memory_order_acquire);
+		if (!entry)
+		{
+			FastClassEntry *fresh = new FastClassEntry();
+			size_t length = strlen(name);
+			char *copy = new char[length + 1];
+			memcpy(copy, name, length + 1);
+			fresh->hash = hash;
+			fresh->name = copy;
+			fresh->clazz.store(clazz, std::memory_order_relaxed);
+			FastClassEntry *expected = NULL;
+			if (slot.compare_exchange_strong(expected, fresh,
+			                                 std::memory_order_release,
+			                                 std::memory_order_acquire))
+			{
+				return;
+			}
+			delete[] copy;
+			delete fresh;
+			entry = expected;
+			if (!entry)
+			{
+				continue;
+			}
+		}
+		if (entry->hash == hash && strcmp(entry->name, name) == 0)
+		{
+			// A redefinition in the same loader replaces the classMap value;
+			// keep the fast path in step with it.
+			entry->clazz.store(clazz, std::memory_order_release);
+			return;
+		}
+	}
+}
+
+void ClassLoader::PublishLinkedClass(lpClass clazz)
+{
+	if (!clazz || !clazz->thisClass)
+	{
+		return;
+	}
+	const char *name = clazz->thisClass->GetName();
+	if (!name)
+	{
+		return;
+	}
+	VMLock lk;
+	CacheClassFast(name, clazz);
+}
+
 bool ClassLoader::GetClass(LPCSTR classname, lpClass &jclass)
 {
+	lpClass cached = LookupClassFast(classname);
+	if (cached)
+	{
+		jclass = cached;
+		return true;
+	}
 	VMLock lk;
 	string s(classname);
 	map<string, lpClass>::iterator it = classMap.find(s);
@@ -470,6 +615,17 @@ bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool initialize)
 	// executes Java code, which may suspend at a coroutine blocking point or
 	// safepoint.  Holding the lock across such a suspension would deadlock the
 	// scheduler, because a collection needs the same mutex to stop the world.
+	lpClass cached = LookupClassFast(classname);
+	if (cached)
+	{
+		jclass = cached;
+		darksperf::NoteClassCacheHit();
+		if (initialize)
+		{
+			return cached->initialize(true);
+		}
+		return true;
+	}
 	{
 		VMLock lk;
 		if (!classname)
@@ -516,6 +672,7 @@ bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool initialize)
 			{
 				return false;
 			}
+			PublishLinkedClass(jclass);
 			found = true;
 		}
 		if (!found)
@@ -582,6 +739,7 @@ bool ClassLoader::FindClass(LPCSTR classname, lpClass &jclass, bool initialize)
 					jclass = NULL;
 					throw;
 				}
+				PublishLinkedClass(jclass);
 				found = true;
 			}
 		}
