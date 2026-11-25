@@ -72,7 +72,7 @@ namespace {
 
 size_t HashPointer(const void *pointer)
 {
-	uint64_t value = reinterpret_cast<uint64_t>(pointer);
+	uint64_t value = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(pointer));
 	value ^= value >> 33;
 	value *= 0xff51afd7ed558ccdULL;
 	value ^= value >> 33;
