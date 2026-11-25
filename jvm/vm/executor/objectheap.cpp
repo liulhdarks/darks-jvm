@@ -16,7 +16,57 @@
 #include "perf.h"
 
 #include <chrono>
+#include <limits>
 #include <string>
+
+namespace {
+
+bool ParseByteSize(const char *text, size_t &out)
+{
+	if (!text || !*text)
+	{
+		return false;
+	}
+	char *end = NULL;
+	unsigned long long value = strtoull(text, &end, 10);
+	if (end == text || value == 0)
+	{
+		return false;
+	}
+	unsigned long long scale = 1;
+	if (*end != '\0')
+	{
+		switch (*end)
+		{
+		case 'k':
+		case 'K':
+			scale = 1024ULL;
+			break;
+		case 'm':
+		case 'M':
+			scale = 1024ULL * 1024;
+			break;
+		case 'g':
+		case 'G':
+			scale = 1024ULL * 1024 * 1024;
+			break;
+		default:
+			return false;
+		}
+		if (*(end + 1) != '\0')
+		{
+			return false;
+		}
+	}
+	if (value > static_cast<unsigned long long>((std::numeric_limits<size_t>::max)()) / scale)
+	{
+		return false;
+	}
+	out = static_cast<size_t>(value * scale);
+	return true;
+}
+
+} // namespace
 
 namespace {
 
@@ -136,16 +186,27 @@ void ObjectHeap::ConfigureFromEnvironment()
 	const char *log_env = getenv("DARKS_JVM_GC_LOG");
 	gc_log = (log_env && *log_env && strcmp(log_env, "0") != 0);
 
-	const char *threshold_env = getenv("DARKS_JVM_GC_THRESHOLD");
-	if (threshold_env && *threshold_env)
+	const char *threshold_env = getenv("DARKS_JVM_GC_INITIAL");
+	if (!threshold_env || !*threshold_env)
 	{
-		unsigned long long value = strtoull(threshold_env, NULL, 10);
-		if (value >= 1024)
-		{
-			base_threshold = static_cast<size_t>(value);
-		}
+		// Name used before the startup heap was sized separately from the cap.
+		threshold_env = getenv("DARKS_JVM_GC_THRESHOLD");
 	}
-	threshold = base_threshold;
+	size_t configured = 0;
+	if (threshold_env && ParseByteSize(threshold_env, configured) && configured >= 1024)
+	{
+		initial_threshold = configured;
+	}
+	const char *max_env = getenv("DARKS_JVM_GC_MAX");
+	if (max_env && ParseByteSize(max_env, configured) && configured >= 1024)
+	{
+		max_threshold = configured;
+	}
+	if (max_threshold < initial_threshold)
+	{
+		max_threshold = initial_threshold;
+	}
+	threshold = initial_threshold;
 }
 
 size_t ObjectHeap::ObjectBytes(lpObject obj) const
@@ -727,20 +788,38 @@ void ObjectHeap::gc()
 	gc_freed_last = freed_bytes;
 	gc_freed_total += freed_bytes;
 
-	// Avoid collecting on every single allocation when almost everything is
-	// still reachable: grow the threshold past the surviving heap.
-	size_t next_threshold = base_threshold;
+	// Size the next cycle from the surviving heap: start at the configured
+	// initial value, double the live set, and stay under the cap.  This also
+	// shrinks the threshold again once the live set drops, so the footprint
+	// cannot keep growing just because it grew once.  When the live set itself
+	// exceeds the cap (a genuinely large heap rather than garbage), keep a
+	// proportional headroom instead of collecting on every allocation, so long
+	// runs degrade into slower collections rather than GC thrashing.
+	size_t next_threshold = initial_threshold;
 	if (live_bytes > next_threshold / 2)
 	{
-		next_threshold = live_bytes * 2;
+		if (live_bytes > max_threshold / 2)
+		{
+			size_t headroom = live_bytes / 2;
+			if (headroom < initial_threshold)
+			{
+				headroom = initial_threshold;
+			}
+			size_t limit = static_cast<size_t>(-1);
+			next_threshold = (live_bytes > limit - headroom) ? limit : live_bytes + headroom;
+		}
+		else
+		{
+			next_threshold = live_bytes * 2;
+		}
 	}
 	threshold = next_threshold;
 
 	if (gc_log)
 	{
 		fprintf(stderr,
-			"gc-collect run=%d objects=%zu freed=%zu bytes live=%zu bytes\n",
-			gc_runs, freed_objects, freed_bytes, live_bytes);
+			"gc-collect run=%d objects=%zu freed=%zu bytes live=%zu bytes threshold=%zu bytes\n",
+			gc_runs, freed_objects, freed_bytes, live_bytes, threshold);
 	}
 
 	if (gc_start_ns)

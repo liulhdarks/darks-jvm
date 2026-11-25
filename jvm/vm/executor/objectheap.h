@@ -16,7 +16,12 @@ class ThreadStack;
 //
 // Configuration (environment, DARKS_JVM_* style):
 //   DARKS_JVM_GC=0            disable automatic (allocation-triggered) GC
-//   DARKS_JVM_GC_THRESHOLD=N  collection threshold in heap bytes (default 4 MiB)
+//   DARKS_JVM_GC_INITIAL=N    initial collection threshold in heap bytes
+//                             (default 256 MiB; K/M/G suffixes accepted)
+//   DARKS_JVM_GC_THRESHOLD=N  legacy alias for DARKS_JVM_GC_INITIAL
+//   DARKS_JVM_GC_MAX=N        upper bound for the growing threshold
+//                             (default 1 GiB); a live set larger than this keeps
+//                             a proportional headroom instead of thrashing
 //   DARKS_JVM_GC_LOG=1        log every collection and a final summary to stderr
 class ObjectHeap
 {
@@ -36,8 +41,9 @@ public:
 		gc_log = false;
 		in_gc = false;
 		no_gc_depth = 0;
-		base_threshold = 4 * 1024 * 1024;
-		threshold = base_threshold;
+		initial_threshold = 256 * 1024 * 1024;
+		max_threshold = 1024 * 1024 * 1024;
+		threshold = initial_threshold;
 		live_bytes = 0;
 		gc_runs = 0;
 		gc_freed_total = 0;
@@ -166,7 +172,8 @@ private:
 	bool gc_log;
 	bool in_gc;
 	int no_gc_depth;
-	size_t base_threshold;
+	size_t initial_threshold;
+	size_t max_threshold;
 	size_t threshold;
 	size_t live_bytes;
 	int gc_runs;

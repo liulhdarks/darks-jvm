@@ -1337,7 +1337,7 @@ if(JAVAC)
         add_test(NAME thread_GcThreads_mp${mp}
             COMMAND "${CMAKE_COMMAND}"
                 "-DPROG=${CMAKE_COMMAND}"
-                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_JVM_GC_THRESHOLD=512;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcThreads"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_JVM_GC_INITIAL=64K;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcThreads"
                 -DEXPECT_RC=0 -DTIMEOUT=180
                 "-DEXPECT_TEXT=gc-threads ok" "-DEXPECT_TEXT2=gc-collect" -P "${CHECK}")
     endforeach()
