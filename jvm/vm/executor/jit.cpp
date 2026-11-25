@@ -1,10 +1,12 @@
 #include "stdafx.h"
 #include "jit.h"
 #include "code.h"
+#include "perf.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -21,6 +23,10 @@ struct ProgramPool
 {
 	std::mutex mutex;
 	std::vector<Program *> programs;
+	size_t bytes;
+	std::atomic<size_t> published_bytes;
+
+	ProgramPool() : bytes(0), published_bytes(0) {}
 
 	~ProgramPool()
 	{
@@ -37,12 +43,14 @@ ProgramPool &GetProgramPool()
 	return pool;
 }
 
+// The JIT is on by default.  DARKS_JVM_JIT=0 (or off/false/no) is the explicit
+// escape hatch back to pure interpretation.
 bool ReadEnabled()
 {
 	const char *value = getenv("DARKS_JVM_JIT");
 	if (!value || !value[0])
 	{
-		return false;
+		return true;
 	}
 	if (strcmp(value, "0") == 0 || strcmp(value, "off") == 0 ||
 	    strcmp(value, "false") == 0 || strcmp(value, "no") == 0)
@@ -70,6 +78,25 @@ int ReadThreshold()
 		parsed = 1000000;
 	}
 	return static_cast<int>(parsed);
+}
+
+// Upper bound for retained compiled programs, in bytes.  Programs are never
+// reclaimed, so a long-running process that keeps compiling new methods needs a
+// hard cap; once it is reached methods simply stay interpreted.
+size_t ReadCodeLimit()
+{
+	const char *value = getenv("DARKS_JVM_JIT_CODE_LIMIT");
+	if (!value || !value[0])
+	{
+		return 32 * 1024 * 1024;
+	}
+	char *end = NULL;
+	unsigned long long parsed = strtoull(value, &end, 10);
+	if (end == value || parsed == 0)
+	{
+		return 32 * 1024 * 1024;
+	}
+	return static_cast<size_t>(parsed);
 }
 
 bool Verbose()
@@ -342,6 +369,18 @@ int Threshold()
 	return threshold;
 }
 
+size_t CodeLimit()
+{
+	static const size_t limit = ReadCodeLimit();
+	return limit;
+}
+
+size_t ProgramBytes(const Program &program)
+{
+	return sizeof(Program) + program.insns.size() * sizeof(Insn) +
+		program.pc_index.size() * sizeof(int);
+}
+
 const Program *Acquire(lpMethod method)
 {
 	if (!Enabled() || !method || method->isNative() || !method->code_attr)
@@ -374,6 +413,19 @@ const Program *Acquire(lpMethod method)
 			? method->jit_program.load(std::memory_order_acquire)
 			: NULL;
 	}
+	ProgramPool &pool = GetProgramPool();
+	if (pool.published_bytes.load(std::memory_order_relaxed) >= CodeLimit())
+	{
+		// Code cache exhausted: keep this method interpreted instead of
+		// growing without bound in a long-running process.
+		method->jit_state.store(3, std::memory_order_release);
+		if (Verbose())
+		{
+			fprintf(stderr, "[jit] code limit reached, interpreting %s\n",
+				MethodName(method).c_str());
+		}
+		return NULL;
+	}
 	Program *program = new Program();
 	if (!Compile(method, *program))
 	{
@@ -388,9 +440,11 @@ const Program *Acquire(lpMethod method)
 	}
 	// Publish the program before advertising the compiled state.
 	{
-		ProgramPool &pool = GetProgramPool();
 		std::lock_guard<std::mutex> lock(pool.mutex);
 		pool.programs.push_back(program);
+		pool.bytes += ProgramBytes(*program);
+		pool.published_bytes.store(pool.bytes, std::memory_order_relaxed);
+		darksperf::AddJitProgram(ProgramBytes(*program));
 	}
 	method->jit_program.store(program, std::memory_order_release);
 	method->jit_state.store(2, std::memory_order_release);

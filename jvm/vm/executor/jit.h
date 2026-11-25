@@ -16,8 +16,9 @@
 // those of the interpreter.
 //
 // Configuration (read once per process):
-//   DARKS_JVM_JIT=1|on|true      enable (default: disabled)
+//   DARKS_JVM_JIT=0|off|false|no disable (default: enabled)
 //   DARKS_JVM_JIT_THRESHOLD=N    invocations before compiling (default: 50)
+//   DARKS_JVM_JIT_CODE_LIMIT=N   retained-program cap in bytes (default: 32 MiB)
 //   DARKS_JVM_JIT_VERBOSE=1      log compiled/fallback decisions to stderr
 namespace darksjit {
 
