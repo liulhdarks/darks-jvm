@@ -9,15 +9,18 @@
 #include <vector>
 
 class ThreadStack;
+class GCCollector;
 
 // ObjectHeap owns every Java object. References (LPOBJECT_REF) are pointers to
 // an object's "index" field, so objects must never move; the collector is a
-// non-moving stop-the-world mark-sweep.
+// non-moving mark-sweep.
 //
 // Configuration (environment, DARKS_JVM_* style):
-//   DARKS_JVM_GC=0            disable automatic (allocation-triggered) GC
-//   DARKS_JVM_GC_THRESHOLD=N  collection threshold in heap bytes (default 4 MiB)
-//   DARKS_JVM_GC_LOG=1        log every collection and a final summary to stderr
+//   DARKS_JVM_GC=0               disable automatic (allocation-triggered) GC
+//   DARKS_JVM_GC_IMPL=NAME       collector: marksweep (default) or cms
+//   DARKS_JVM_GC_THRESHOLD=N     collection threshold in heap bytes (default 4 MiB)
+//   DARKS_JVM_GC_LOG=1           log every collection and a final summary to stderr
+//   DARKS_GCSTATS=1              log per-collection STW phase breakdown
 class ObjectHeap
 {
 
@@ -32,6 +35,7 @@ public:
 	ObjectHeap()
 	{
 		sequence = 1;
+		collector = NULL;
 		gc_enabled = true;
 		gc_log = false;
 		in_gc = false;
@@ -146,6 +150,12 @@ private:
 	// Triggers a collection when the live heap size reaches the threshold.
 	void MaybeGC();
 
+	// Mark-sweep implementation, invoked through the selected collector.
+	void CollectMarkSweep(const char *reason);
+
+	friend class MarkSweepCollector;
+	friend class CmsCollector;
+
 	void AccountAllocation(lpObject obj);
 
 	void ConfigureFromEnvironment();
@@ -181,6 +191,7 @@ private:
 	bool gc_log;
 	bool in_gc;
 	int no_gc_depth;
+	GCCollector *collector;
 	size_t base_threshold;
 	size_t threshold;
 	size_t live_bytes;

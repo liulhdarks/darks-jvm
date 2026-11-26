@@ -13,6 +13,7 @@
 #include "jni/jni.h"
 #include "scheduler.h"
 #include "vmmutex.h"
+#include "vm/executor/gc/gccollector.h"
 
 #include <string>
 #include <chrono>
@@ -106,6 +107,8 @@ bool IsReferenceObject(lpObject obj)
 
 ObjectHeap::~ObjectHeap()
 {
+	delete collector;
+	collector = NULL;
 	if (gc_log && gc_runs > 0)
 	{
 		fprintf(stderr, "gc-summary runs=%d freed_total=%zu bytes\n",
@@ -132,6 +135,18 @@ bool ObjectHeap::initialize(int init_size)
 	objs.assign(static_cast<size_t>(init_size), NULL);
 	sequence = 1;
 	ConfigureFromEnvironment();
+	const char *impl_env = getenv("DARKS_JVM_GC_IMPL");
+	if (collector)
+	{
+		delete collector;
+		collector = NULL;
+	}
+	collector = CreateGCCollector(
+		(impl_env && *impl_env) ? impl_env : "marksweep", this);
+	if (collector)
+	{
+		collector->Initialize(this);
+	}
 	return true;
 }
 
@@ -617,6 +632,16 @@ void ObjectHeap::ProcessWeakReferences()
 }
 
 void ObjectHeap::gc(const char *reason)
+{
+	if (collector)
+	{
+		collector->Collect(reason);
+		return;
+	}
+	CollectMarkSweep(reason);
+}
+
+void ObjectHeap::CollectMarkSweep(const char *reason)
 {
 	// Only one collection at a time.  A native call may reach allocation from
 	// another thread; in that case the collection is skipped rather than

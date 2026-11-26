@@ -87,6 +87,9 @@ set(DARKS_JVM_CORE_SOURCES
     jvm/vm/executor/methodarea.cpp
     jvm/vm/executor/nativelibs.cpp
     jvm/vm/executor/objectheap.cpp
+    jvm/vm/executor/gc/cms_collector.cpp
+    jvm/vm/executor/gc/gccollector.cpp
+    jvm/vm/executor/gc/marksweep_collector.cpp
     jvm/vm/executor/proxy.cpp
     jvm/vm/executor/scheduler.cpp
     jvm/vm/executor/stackframe.cpp
