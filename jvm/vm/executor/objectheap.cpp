@@ -1797,12 +1797,16 @@ bool ObjectHeap::NewArrayObject(int size, lpClass clazz, LPOBJECT_REF &object_re
 	{
 		return false;
 	}
+	if (!clazz)
+	{
+		return false;
+	}
 	lpObject obj = new JObject(clazz);
 	if (!obj)
 	{
 		return false;
 	}
-	if (!obj->newArrayInstance(size))
+	if (!obj->newArrayInstance(clazz->ArrayElementType(), size))
 	{
 		delete obj;
 		return false;
@@ -1832,6 +1836,10 @@ bool ObjectHeap::NewObjectArrayObject(int size, lpClass clazz, LPOBJECT_REF &obj
 	{
 		return false;
 	}
+	if (!clazz)
+	{
+		return false;
+	}
 	lpObject obj = new JObject(clazz);
 	if (!obj)
 	{
@@ -1840,19 +1848,7 @@ bool ObjectHeap::NewObjectArrayObject(int size, lpClass clazz, LPOBJECT_REF &obj
 	// An array whose component is itself an array stores references, so the
 	// element representation follows the descriptor depth: only a
 	// one-dimensional array has primitive slots.
-	DATA_TYPE element_type = DT_REF;
-	const char *class_name = (clazz && clazz->thisClass)
-		? clazz->thisClass->GetName() : NULL;
-	if (class_name)
-	{
-		TypeDesc type_desc;
-		parse_desc_type(class_name, type_desc, static_cast<int>(strlen(class_name)));
-		if (type_desc.array_level == 1 && type_desc.data_type != DT_ARRAY)
-		{
-			element_type = type_desc.data_type;
-		}
-	}
-	if (!obj->newArrayInstance(element_type, size))
+	if (!obj->newArrayInstance(clazz->ArrayElementType(), size))
 	{
 		delete obj;
 		return false;
@@ -1898,8 +1894,8 @@ bool ObjectHeap::CreateArrayDimension(lpClass array_class, LPINT32 nums, int lev
 	if (level + 1 == count)
 	{
 		// Innermost dimension: the array class name is a one-dimensional
-		// descriptor such as "[I"; JObject infers the element type from it.
-		if (!obj->newArrayInstance(length))
+		// descriptor such as "[I", so its element type is primitive.
+		if (!obj->newArrayInstance(array_class->ArrayElementType(), length))
 		{
 			ReleaseSlot(obj);
 			object_ref = NULL;

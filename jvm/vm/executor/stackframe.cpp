@@ -45,6 +45,36 @@ static inline DATA_TYPE SlotType(const TypeDesc &type)
 	return type.check_array ? DT_ARRAY : type.data_type;
 }
 
+// Stack-level DATA_TYPE of the field a constant-pool entry names, or 0 when
+// the entry carries no descriptor.  The descriptor belongs to the class file
+// and classes are never unloaded, so the entry is a stable key; two threads
+// that parse it at the same time store the same value.  A negative cache
+// entry records the invalid case.
+static inline int FieldSlotType(FieldRefConstant *frc)
+{
+	int cached = frc->cached_slot_type.load(std::memory_order_relaxed);
+	if (cached > 0)
+	{
+		return cached;
+	}
+	if (cached < 0)
+	{
+		return 0;
+	}
+	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
+		? frc->nameType->descUtf8->GetName() : NULL;
+	if (!desc || !*desc)
+	{
+		frc->cached_slot_type.store(-1, std::memory_order_relaxed);
+		return 0;
+	}
+	TypeDesc type_desc;
+	parse_desc_type(desc, type_desc, static_cast<int>(strlen(desc)));
+	int slot_type = static_cast<int>(SlotType(type_desc));
+	frc->cached_slot_type.store(slot_type, std::memory_order_relaxed);
+	return slot_type;
+}
+
 struct LambdaCapture
 {
 	DATA_TYPE type;      // DT_* of the captured value (DT_REF/DT_ARRAY for refs)
@@ -4080,7 +4110,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 	}
 
 	lpField field = NULL;
-	TypeDesc field_type;
+	int field_type = 0;
 	if (kind == IK_GETTER || kind == IK_SETTER)
 	{
 		int cp_index = method->inline_cp.load(std::memory_order_relaxed);
@@ -4098,25 +4128,18 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 		{
 			return false;
 		}
-		LPSTR fdesc = (frc->nameType && frc->nameType->descUtf8)
-			? frc->nameType->descUtf8->GetName() : NULL;
-		if (!fdesc ||
-		    !parse_desc_type(fdesc, field_type, static_cast<int>(strlen(fdesc))))
+		field_type = FieldSlotType(frc);
+		if (field_type == 0)
 		{
 			return false;
 		}
-		if (field_type.check_array)
-		{
-			field_type.data_type = DT_ARRAY;
-		}
-		bool ref_kind = (field_type.data_type == DT_REF ||
-		                 field_type.data_type == DT_ARRAY);
+		bool ref_kind = (field_type == DT_REF || field_type == DT_ARRAY);
 		if (kind == IK_GETTER)
 		{
 			bool ret_ref = (SlotType(result_desc) == DT_REF ||
 			                SlotType(result_desc) == DT_ARRAY);
 			if ((ref_kind != ret_ref) ||
-			    (!ref_kind && SlotType(field_type) != SlotType(result_desc)))
+			    (!ref_kind && field_type != SlotType(result_desc)))
 			{
 				return false;
 			}
@@ -4130,7 +4153,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 			bool arg_ref = (SlotType(type_desc[0]) == DT_REF ||
 			                SlotType(type_desc[0]) == DT_ARRAY);
 			if ((ref_kind != arg_ref) ||
-			    (!ref_kind && SlotType(field_type) != SlotType(type_desc[0])))
+			    (!ref_kind && field_type != SlotType(type_desc[0])))
 			{
 				return false;
 			}
@@ -4160,7 +4183,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 	if (kind == IK_SETTER)
 	{
 		Slot value;
-		switch (field_type.data_type)
+		switch (field_type)
 		{
 		case DT_LONG:
 			value.lValue = popLong();
@@ -4187,7 +4210,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 				"java/lang/NoSuchFieldError", "field storage is missing");
 			return false;
 		}
-		if (field_type.data_type == DT_REF || field_type.data_type == DT_ARRAY)
+		if (field_type == DT_REF || field_type == DT_ARRAY)
 		{
 			LPOBJECT_REF old_ref = fv->field_value.heapPtr;
 			fv->field_value = value;
@@ -4259,7 +4282,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 				"java/lang/NoSuchFieldError", "field storage is missing");
 			return false;
 		}
-		switch (field_type.data_type)
+		switch (field_type)
 		{
 		case DT_LONG:
 			op_stack->push(fv->field_value.lValue);
@@ -5975,20 +5998,14 @@ bool StackFrame::PutStatic(U2 index)
 	{
 		return false;
 	}
-	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
-		? frc->nameType->descUtf8->GetName() : NULL;
-	TypeDesc type_desc;
-	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	// An array descriptor such as [J keeps its element type in data_type; the
+	// field itself is always a single reference slot.
+	const int field_type = FieldSlotType(frc);
+	if (field_type == 0)
 	{
 		return false;
 	}
-	// An array descriptor such as [J keeps its element type in data_type; the
-	// field itself is always a single reference slot.
-	if (type_desc.check_array)
-	{
-		type_desc.data_type = DT_ARRAY;
-	}
-	switch (type_desc.data_type)
+	switch (field_type)
 	{
 	case DT_LONG:
 		fv->field_value.lValue = popLong();
@@ -6000,8 +6017,8 @@ bool StackFrame::PutStatic(U2 index)
 		{
 			Slot value;
 			op_stack->pop(value);
-			if (type_desc.data_type == DT_REF ||
-			    type_desc.data_type == DT_ARRAY)
+			if (field_type == DT_REF ||
+			    field_type == DT_ARRAY)
 			{
 				LPOBJECT_REF old_ref = fv->field_value.heapPtr;
 				fv->field_value = value;
@@ -6033,18 +6050,12 @@ bool StackFrame::GetStatic(U2 index)
 	{
 		return false;
 	}
-	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
-		? frc->nameType->descUtf8->GetName() : NULL;
-	TypeDesc type_desc;
-	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	int field_type = FieldSlotType(frc);
+	if (field_type == 0)
 	{
 		return false;
 	}
-	if (type_desc.check_array)
-	{
-		type_desc.data_type = DT_ARRAY;
-	}
-	switch (type_desc.data_type)
+	switch (field_type)
 	{
 	case DT_LONG:
 		op_stack->push(fv->field_value.lValue);
@@ -6100,18 +6111,12 @@ bool StackFrame::GetField(U2 index)
 			"java/lang/NoSuchFieldError", "field storage is missing");
 		return false;
 	}
-	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
-		? frc->nameType->descUtf8->GetName() : NULL;
-	TypeDesc type_desc;
-	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	int field_type = FieldSlotType(frc);
+	if (field_type == 0)
 	{
 		return false;
 	}
-	if (type_desc.check_array)
-	{
-		type_desc.data_type = DT_ARRAY;
-	}
-	switch (type_desc.data_type)
+	switch (field_type)
 	{
 	case DT_BOOL:
 	case DT_BYTE:
@@ -6150,20 +6155,14 @@ bool StackFrame::PutField(U2 index)
 	{
 		return false;
 	}
-	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
-		? frc->nameType->descUtf8->GetName() : NULL;
-	TypeDesc type_desc;
-	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	const int field_type = FieldSlotType(frc);
+	if (field_type == 0)
 	{
 		return false;
 	}
-	if (type_desc.check_array)
-	{
-		type_desc.data_type = DT_ARRAY;
-	}
 
 	Slot slot_val;
-	switch (type_desc.data_type)
+	switch (field_type)
 	{
 	case DT_BOOL:
 	case DT_BYTE:
@@ -6208,7 +6207,7 @@ bool StackFrame::PutField(U2 index)
 			"java/lang/NoSuchFieldError", "field storage is missing");
 		return false;
 	}
-	if (type_desc.data_type == DT_REF || type_desc.data_type == DT_ARRAY)
+	if (field_type == DT_REF || field_type == DT_ARRAY)
 	{
 		LPOBJECT_REF old_ref = fv->field_value.heapPtr;
 		fv->field_value = slot_val;

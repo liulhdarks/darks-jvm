@@ -114,18 +114,6 @@ void JObject::AdoptFieldValue(const string &key, lpFieldValue value)
 	varants[key] = value;
 }
 
-bool JObject::newArrayInstance(int size)
-{
-	TypeDesc type_desc;
-	LPSTR desc = obj_class && obj_class->thisClass ? obj_class->thisClass->GetName() : NULL;
-	if (!desc)
-	{
-		return false;
-	}
-	parse_desc_type(desc, type_desc, static_cast<int>(strlen(desc)));
-	return newArrayInstance(type_desc.data_type, size);
-}
-
 bool JObject::newArrayInstance(DATA_TYPE data_type, int size)
 {
 	if (size < 0)
