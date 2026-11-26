@@ -1405,14 +1405,13 @@ if(JAVAC)
     set_tests_properties(producer_consumer_repeat PROPERTIES TIMEOUT 300)
 
     # Continuous allocation with a low GC threshold: the collector must stop
-    # every interpreter worker at a safepoint without deadlocking.  A 1 MiB
-    # threshold keeps the first collection inside the workload instead of the
-    # very first startup allocations (which only amount to a few KiB).
+    # every interpreter worker at a safepoint without deadlocking.  The
+    # threshold has to clear the 1 KiB floor of DARKS_JVM_GC_THRESHOLD.
     foreach(mp 1 4)
         add_test(NAME thread_GcThreads_mp${mp}
             COMMAND "${CMAKE_COMMAND}"
                 "-DPROG=${CMAKE_COMMAND}"
-                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_JVM_GC_THRESHOLD=1048576;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcThreads"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcThreads"
                 -DEXPECT_RC=0 -DTIMEOUT=180
                 "-DEXPECT_TEXT=gc-threads ok" "-DEXPECT_TEXT2=gc-collect" -P "${CHECK}")
     endforeach()

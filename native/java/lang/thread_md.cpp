@@ -100,8 +100,12 @@ LPOBJECT_REF CreateThreadObject()
 	{
 		return NULL;
 	}
+	// The fields below allocate (name string, class resolution): keep the
+	// half-built Thread object and its name reachable across collections.
+	GCRootScope root_ref(VMContext::object_heap, &ref);
 
 	LPOBJECT_REF name_ref = NULL;
+	GCRootScope root_name(VMContext::object_heap, &name_ref);
 	VMContext::object_heap->NewStringObject(const_cast<LPSTR>("main"), 4, name_ref);
 	if (name_ref)
 	{
