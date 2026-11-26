@@ -696,6 +696,15 @@ if(JAVAC)
                 -DEXPECT_RC=0
                 "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
 
+    # The same heap checks with one stop-the-world marking pause per
+    # collection (DARKS_JVM_MARK=stw): the fallback must produce the identical
+    # survivor set and index.
+    add_test(NAME gc_heap_mark_stw
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_MARK=stw;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
+
     add_test(NAME gc_stress_survivors
         COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
                 "-DARGS=-E;env;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
@@ -723,6 +732,23 @@ if(JAVAC)
                 -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
                 "-DEXPECT_TEXT2=gc: static array survived"
                 "-DEXPECT_TEXT3=gc: local chain survived" -P "${CHECK}")
+
+    # Sliced marking fallback: one stop-the-world pause per automatic
+    # collection, same survivors.
+    add_test(NAME gc_stress_mark_stw
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_MARK=stw;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
+                "-DEXPECT_TEXT2=gc: static array survived"
+                "-DEXPECT_TEXT3=gc: local chain survived" -P "${CHECK}")
+
+    # Default sliced marking on the Java path: every automatic collection has
+    # to report its pauses and still keep every root alive.
+    add_test(NAME gc_stress_sliced_mark
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_GCSTATS=1;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
+                "-DEXPECT_TEXT2=\\[gcpause\\] seq=" -P "${CHECK}")
 
     # -Xmx is a hard budget: the allocation that would cross it fails with a
     # Java OutOfMemoryError carrying the JDK message, and the heap keeps

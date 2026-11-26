@@ -29,11 +29,22 @@ public:
 	static void Disable();
 	static bool Enabled();
 
+	// A sliced marking cycle only needs the overwritten values: the snapshot
+	// keeps everything that was reachable when the cycle opened, and every
+	// allocation is marked as it is registered.  Sites stay recorded either
+	// way, so the default keeps both operands for the SATB test to inspect.
+	static void SetRecordNew(bool enable);
+
 	static void Record(LPOBJECT_REF old_value, LPOBJECT_REF new_value,
 	                   Site site);
 
 	// Moves the recorded references out for the remark phase.
 	static void Drain(std::vector<LPOBJECT_REF> &out);
+
+	// Overwrites the buffer refused to record because it was full.
+	static unsigned long long Dropped();
+	// References waiting in the buffer (cheap pacing signal for the marker).
+	static size_t Pending();
 
 	static void PrintStats();
 };

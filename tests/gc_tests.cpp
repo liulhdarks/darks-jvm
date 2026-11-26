@@ -106,6 +106,15 @@ int main(int argc, char **argv)
 	Environment::ClearClassPath();
 	Environment::AddClassPath(classes_dir);
 
+	// The sliced-marking check needs an automatic collection.  Pin the
+	// allocation threshold so it does not depend on the host's -Xms
+	// ergonomics; an explicit setting from the test harness wins.
+#if defined(_WIN32)
+	_putenv_s("DARKS_JVM_GC_THRESHOLD", "4194304");
+#else
+	setenv("DARKS_JVM_GC_THRESHOLD", "4194304", 0);
+#endif
+
 	if (!VMContext::initialize())
 	{
 		std::printf("gc checks: VM initialization failed\n");
@@ -552,6 +561,255 @@ int main(int argc, char **argv)
 		std::printf("gc-test: lazy sweep mode=%s pending_peak=%zu drained=%d\n",
 		            heap->LazySweepEnabled() ? "lazy" : "pause", pending_peak,
 		            drained_ok ? 1 : 0);
+	}
+
+	// ---------------------------------------------------------------- (f)
+	// Sliced marking: with a live set larger than one slice budget an
+	// automatic collection stays open while the loop keeps allocating.  The
+	// objects allocated inside that window are marked as they are registered
+	// (allocate black) and every reachable element must survive the cycle.
+	if (heap->IncrementalMarkEnabled())
+	{
+		const int kLive = 40000;
+		std::vector<LPOBJECT_REF> live(kLive);
+		std::vector<lpObject> expected(kLive);
+		LPOBJECT_REF root_refs = NULL;
+		GCRootScope root(heap, &root_refs);
+		CHECK(heap->NewObjectArrayObject(kLive, object_array_class, root_refs));
+		lpObject root_obj = NULL;
+		CHECK(heap->GetObject(root_refs, root_obj));
+
+		bool saw_open_cycle = false;
+		int constructed = 0;
+		for (int i = 0; i < kLive; i++)
+		{
+			LPOBJECT_REF element = NULL;
+			if (!root_obj || !heap->NewArrayObject(32, int_array_class, element))
+			{
+				break;
+			}
+			lpObject element_obj = NULL;
+			CHECK(heap->GetObject(element, element_obj));
+			if (element_obj)
+			{
+				static_cast<int*>(element_obj->array_var)[0] = i;
+			}
+			live[i] = element;
+			expected[i] = element_obj;
+			static_cast<jobject*>(root_obj->array_var)[i] =
+				reinterpret_cast<jobject>(element);
+			constructed++;
+			if (heap->MarkCycleActive())
+			{
+				saw_open_cycle = true;
+			}
+		}
+		CHECK(constructed == kLive);
+		CHECK(saw_open_cycle);
+
+		// Drive the remaining slices by allocating; the cycle must close.
+		int guard = 0;
+		while (heap->MarkCycleActive() && guard < 400000)
+		{
+			LPOBJECT_REF garbage = NULL;
+			CHECK(heap->NewArrayObject(32, int_array_class, garbage));
+			guard++;
+		}
+		CHECK(!heap->MarkCycleActive());
+		heap->DrainPendingFreeAll();
+
+		bool survivors_ok = true;
+		for (int i = 0; i < constructed; i++)
+		{
+			lpObject now = NULL;
+			int value = -1;
+			if (!heap->GetObject(live[i], now) || now != expected[i] ||
+			    !int_at(heap, live[i], 0, value) || value != i)
+			{
+				survivors_ok = false;
+				break;
+			}
+		}
+		CHECK(survivors_ok);
+		CHECK((size_t)constructed <= heap->LiveObjectCount());
+		CHECK(heap->RefIndexMatchesHeap());
+		CHECK(heap->RefIndexEntries() == heap->LiveObjectCount());
+		std::printf("gc-test: sliced mark open_cycle=%d constructed=%d guard=%d\n",
+		            saw_open_cycle ? 1 : 0, constructed, guard);
+	}
+
+	// ---------------------------------------------------------------- (g)
+	// Reference moves across an open cycle: a payload is copied from one
+	// container slot into an already traced container and the source slot
+	// is cleared.  The SATB journal has to keep the moved payload alive
+	// until the cycle closes, otherwise a destination slot dangles.
+	if (heap->IncrementalMarkEnabled())
+	{
+		const int kContainers = 256;
+		const int kSlots = 4;
+		// Ballast keeps each cycle open across many allocations, so the
+		// moves below really run between marking slices.
+		LPOBJECT_REF ballast_ref = NULL;
+		GCRootScope ballast_root(heap, &ballast_ref);
+		CHECK(heap->NewObjectArrayObject(30000, object_array_class, ballast_ref));
+		lpObject ballast = NULL;
+		CHECK(heap->GetObject(ballast_ref, ballast));
+		for (int i = 0; i < 30000 && ballast; i++)
+		{
+			LPOBJECT_REF element = NULL;
+			if (!heap->NewArrayObject(8, int_array_class, element))
+			{
+				ballast = NULL;
+				break;
+			}
+			static_cast<jobject*>(ballast->array_var)[i] =
+				reinterpret_cast<jobject>(element);
+		}
+		CHECK(ballast != NULL);
+		LPOBJECT_REF holders_ref = NULL;
+		GCRootScope holders_root(heap, &holders_ref);
+		CHECK(heap->NewObjectArrayObject(kContainers, object_array_class, holders_ref));
+		lpObject holders = NULL;
+		CHECK(heap->GetObject(holders_ref, holders));
+
+		std::vector<LPOBJECT_REF> containers(kContainers);
+		bool built = holders != NULL;
+		for (int i = 0; i < kContainers && built; i++)
+		{
+			LPOBJECT_REF holder = NULL;
+			LPOBJECT_REF payload = NULL;
+			if (!heap->NewObjectArrayObject(kSlots, object_array_class, holder) ||
+			    !heap->NewArrayObject(8, int_array_class, payload))
+			{
+				built = false;
+				break;
+			}
+			lpObject holder_obj = NULL;
+			lpObject payload_obj = NULL;
+			if (!heap->GetObject(holder, holder_obj) || !holder_obj ||
+			    !heap->GetObject(payload, payload_obj) || !payload_obj)
+			{
+				built = false;
+				break;
+			}
+			static_cast<int*>(payload_obj->array_var)[0] = i;
+			containers[i] = holder;
+			static_cast<jobject*>(holder_obj->array_var)[0] =
+				reinterpret_cast<jobject>(payload);
+			static_cast<jobject*>(holders->array_var)[i] =
+				reinterpret_cast<jobject>(holder);
+		}
+		CHECK(built);
+
+		bool survived = built;
+		int moved = 0;
+		size_t max_records = 0;
+		for (int round = 0; round < 4 && survived; round++)
+		{
+			int spin = 0;
+			while (!heap->MarkCycleActive() && spin < 400000)
+			{
+				LPOBJECT_REF garbage = NULL;
+				if (!heap->NewArrayObject(8, int_array_class, garbage))
+				{
+					survived = false;
+					break;
+				}
+				spin++;
+			}
+			for (int step = 0; step < 1200 && survived; step++)
+			{
+				const int a = (step * 37 + round * 11) % kContainers;
+				const int b = (step * 17 + round * 23 + 7) % kContainers;
+				LPOBJECT_REF fresh = NULL;
+				if (!heap->NewArrayObject(8, int_array_class, fresh))
+				{
+					survived = false;
+					break;
+				}
+				lpObject fresh_obj = NULL;
+				if (heap->GetObject(fresh, fresh_obj) && fresh_obj)
+				{
+					static_cast<int*>(fresh_obj->array_var)[0] = step;
+				}
+				lpObject a_obj = NULL;
+				lpObject b_obj = NULL;
+				if (!heap->GetObject(containers[a], a_obj) || !a_obj ||
+				    !heap->GetObject(containers[b], b_obj) || !b_obj)
+				{
+					survived = false;
+					break;
+				}
+				// Move the source reference into the destination slot
+				// (overwriting whatever it held) and refill the source
+				// with the fresh payload.  SetArrayIndex is the same
+				// barrier site the interpreter uses for aastore.
+				const int src_slot = step % 2;
+				const int dst_slot = 2 + (step % 2);
+				Slot slot;
+				slot.heapPtr = reinterpret_cast<LPOBJECT_REF>(
+					static_cast<jobject*>(b_obj->array_var)[src_slot]);
+				a_obj->SetArrayIndex(dst_slot, slot);
+				slot.heapPtr = fresh;
+				b_obj->SetArrayIndex(src_slot, slot);
+				if (slot.heapPtr)
+				{
+					moved++;
+				}
+			}
+			if (heap->LastCycleRecords() > max_records)
+			{
+				max_records = heap->LastCycleRecords();
+			}
+			int guard = 0;
+			while (heap->MarkCycleActive() && guard < 400000)
+			{
+				LPOBJECT_REF garbage = NULL;
+				if (!heap->NewArrayObject(8, int_array_class, garbage))
+				{
+					survived = false;
+					break;
+				}
+				guard++;
+			}
+			if (heap->LastCycleRecords() > max_records)
+			{
+				max_records = heap->LastCycleRecords();
+			}
+			heap->DrainPendingFreeAll();
+
+			// Every reference a container still holds must resolve.
+			for (int i = 0; i < kContainers && survived; i++)
+			{
+				lpObject holder_obj = NULL;
+				if (!heap->GetObject(containers[i], holder_obj) || !holder_obj)
+				{
+					survived = false;
+					break;
+				}
+				jobject *slots = static_cast<jobject*>(holder_obj->array_var);
+				for (int s = 0; s < kSlots; s++)
+				{
+					if (!slots[s])
+					{
+						continue;
+					}
+					lpObject obj = NULL;
+					if (!heap->GetObject(
+					        reinterpret_cast<LPOBJECT_REF>(slots[s]), obj) ||
+					    !obj)
+					{
+						survived = false;
+						break;
+					}
+				}
+			}
+		}
+		CHECK(survived);
+		CHECK(max_records > 0);
+		CHECK(heap->RefIndexMatchesHeap());
+		std::printf("gc-test: sliced mark refmove moved=%d records=%zu survived=%d\n",
+		            moved, max_records, survived ? 1 : 0);
 	}
 
 	// Release the last roots and collect everything.

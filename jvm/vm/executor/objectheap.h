@@ -4,7 +4,10 @@
 #include "jobject.h"
 #include "jclass.h"
 #include "vmmutex.h"
+#include <atomic>
+#include <chrono>
 #include <map>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -22,6 +25,8 @@ class GCCollector;
 //   DARKS_JVM_GC_THRESHOLD=N     collection threshold in heap bytes (default 4 MiB)
 //   DARKS_JVM_REFINDEX=MODE      reference index maintenance: incremental
 //                                (default) or full (rebuild on every collection)
+//   DARKS_JVM_MARK=MODE          marking: incremental (default, sliced pauses)
+//                                or stw (one stop-the-world pause)
 //   DARKS_JVM_GC_LOG=1           log every collection and a final summary to stderr
 //   DARKS_GCSTATS=1              log per-collection STW phase breakdown
 class ObjectHeap
@@ -54,6 +59,19 @@ public:
 		ref_index_incremental = true;
 		ref_index_shrink_pending = false;
 		lazy_sweep = true;
+		incremental_mark = true;
+		mark_cycle_active = false;
+		mark_cycle_allocs = 0;
+		cycle_root_ms = 0;
+		cycle_mark_ms = 0;
+		cycle_setup_ms = 0;
+		cycle_pause_sum_ms = 0;
+		cycle_pause_max_ms = 0;
+		cycle_preworld_ms = 0;
+		cycle_pauses = 0;
+		cycle_recorded = 0;
+		cycle_dropped_before = 0;
+		gc_barrier_owned = false;
 		ref_index_repairs = 0;
 		ref_index_shrinks = 0;
 		gc_runs = 0;
@@ -187,6 +205,11 @@ public:
 	void DrainPendingFreeAll();
 	size_t PendingFreeCount() const { return pending_free.size(); }
 	bool LazySweepEnabled() const { return lazy_sweep; }
+	bool IncrementalMarkEnabled() const { return incremental_mark; }
+	// True while a sliced marking cycle has not reached its final pause.
+	bool MarkCycleActive() const { return mark_cycle_active; }
+	// Overwritten references the write barrier journaled in the last cycle.
+	size_t LastCycleRecords() const { return cycle_recorded; }
 
 	// ---- statistics -------------------------------------------------------
 	size_t LiveBytes() const { return live_bytes; }
@@ -231,6 +254,34 @@ private:
 
 	// Mark-sweep implementation, invoked through the selected collector.
 	void CollectMarkSweep(const char *reason);
+	// One stop-the-world collection (DARKS_JVM_MARK=stw).
+	void CollectMarkSweepSTW(const char *reason);
+
+	// ---- incremental (sliced) marking -------------------------------------
+	// A cycle runs as a sequence of bounded pauses: the first one snapshots
+	// the roots and drains a slice of the mark stack, later pauses drain more
+	// slices while the mutator keeps running, and the pause that empties the
+	// stack re-reads every root, clears weak referents and sweeps.  Objects
+	// allocated while the cycle is open are marked as they are registered
+	// ("allocate black").  Edges the mutator overwrites are journaled by the
+	// SATB write barrier (overwritten value only) and drained here, so an
+	// object that was reachable when the cycle opened stays reachable even if
+	// its last edge is moved into an already scanned object and the source
+	// edge is dropped.  The final root re-read covers plain stack/operand
+	// slots, which can be filled without any heap store.
+	void RunMarkPause(const char *reason);
+	void ContinueMarkCycle();
+	// Drains at most max_objects entries of the mark stack (and stops after
+	// max_ms of trace work).  Holds VMLock.  Returns the number scanned.
+	size_t ScanMarkSlice(size_t max_objects, double max_ms);
+	// Scans one marked object and pushes its references.  Holds VMLock.
+	void ScanMarkedObject(OBJECT_REF idx);
+	// Marks an object allocated while a cycle is active (allocate black), so
+	// the sweep cannot reclaim it and its children are scanned by a slice.
+	void MarkNewObjectLocked(lpObject obj);
+	// Prints the short per-pause [gcpause] line (DARKS_GCSTATS output).
+	void PrintSliceStat(const char *reason, const char *phase, double stw_ms,
+	                    double roots_ms, double mark_ms, size_t records);
 
 	friend class MarkSweepCollector;
 	friend class CmsCollector;
@@ -273,6 +324,35 @@ private:
 	bool ref_index_incremental;
 	bool ref_index_shrink_pending;
 	bool lazy_sweep;
+	bool incremental_mark;
+	std::atomic<bool> mark_cycle_active;
+	std::atomic<size_t> mark_cycle_allocs;
+	// Accumulated over the pauses of one cycle, printed on the final
+	// [gcstat] line.
+	double cycle_root_ms;
+	double cycle_mark_ms;
+	double cycle_setup_ms;
+	double cycle_pause_sum_ms;
+	double cycle_pause_max_ms;
+	double cycle_preworld_ms;
+	size_t cycle_pauses;
+	// Trace budget of the current cycle, fixed in its first pause.
+	size_t cycle_slice_budget;
+	// References drained from the write barrier over the whole cycle, and the
+	// overflow counter seen when it opened.
+	size_t cycle_recorded;
+	unsigned long long cycle_dropped_before;
+	// True when this cycle enabled the barrier itself, so it also disables it.
+	bool gc_barrier_owned;
+	// Cycle-start snapshots repeated on the final [gcstat] line so the pause
+	// accounting still describes the whole collection.
+	size_t cycle_slots_before;
+	size_t cycle_free_before;
+	size_t cycle_live_bytes_before;
+	size_t cycle_live_objects_before;
+	size_t cycle_threshold_before;
+	std::string cycle_trigger_frame;
+	std::chrono::steady_clock::time_point cycle_gc_start;
 	size_t ref_index_repairs;
 	size_t ref_index_shrinks;
 

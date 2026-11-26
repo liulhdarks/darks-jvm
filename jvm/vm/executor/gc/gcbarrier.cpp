@@ -24,6 +24,7 @@ std::vector<LPOBJECT_REF> &Recorded()
 std::atomic<unsigned long long> g_site_counts[GCBarrier::SITE_COUNT];
 std::atomic<unsigned long long> g_dropped(0);
 std::atomic<unsigned long long> g_pending(0);
+std::atomic<bool> g_record_new(true);
 
 void PrintStatsAtExit()
 {
@@ -56,11 +57,27 @@ bool GCBarrier::Enabled()
 	return g_gc_barrier_active;
 }
 
+void GCBarrier::SetRecordNew(bool enable)
+{
+	g_record_new.store(enable, std::memory_order_relaxed);
+}
+
+unsigned long long GCBarrier::Dropped()
+{
+	return g_dropped.load(std::memory_order_relaxed);
+}
+
+size_t GCBarrier::Pending()
+{
+	return static_cast<size_t>(g_pending.load(std::memory_order_relaxed));
+}
+
 void GCBarrier::Record(LPOBJECT_REF old_value, LPOBJECT_REF new_value,
                        Site site)
 {
 	g_site_counts[site].fetch_add(1, std::memory_order_relaxed);
-	if (!old_value && !new_value)
+	const bool record_new = g_record_new.load(std::memory_order_relaxed);
+	if (!old_value && (!record_new || !new_value))
 	{
 		return;
 	}
@@ -75,7 +92,7 @@ void GCBarrier::Record(LPOBJECT_REF old_value, LPOBJECT_REF new_value,
 	{
 		recorded.push_back(old_value);
 	}
-	if (new_value)
+	if (record_new && new_value)
 	{
 		recorded.push_back(new_value);
 	}

@@ -43,6 +43,18 @@ typedef std::chrono::steady_clock GcClock;
 const size_t kAllocSweepChunk = 32;
 const size_t kPostPauseSweepChunk = 2048;
 
+// Sliced marking budget.  A bounded pause scans a sixteenth of the slot table,
+// clamped to this range, and never spends more than kMarkSliceMillis of trace
+// work (petclinic traces an object in roughly 0.6 us, so the upper bound is
+// about 80 ms).  Progress is paced by the allocation counter because
+// live_bytes still counts the garbage of the open cycle and therefore stays
+// above the collection threshold.
+const size_t kMarkSliceMinObjects = 8 * 1024;
+const size_t kMarkSliceMaxObjects = 128 * 1024;
+const double kMarkSliceMillis = 80.0;
+const size_t kMarkAllocationsPerSlice = 2048;
+const size_t kMarkRecordsPerSlice = 64 * 1024;
+
 // Physical memory used for the -Xmx/-Xms ergonomics.  Matches what the JDK
 // reports through sysconf(_SC_PHYS_PAGES) (GlobalMemoryStatusEx on Windows).
 size_t DetectPhysicalMemory()
@@ -351,6 +363,24 @@ void ObjectHeap::ConfigureFromEnvironment()
 	{
 		lazy_sweep = false;
 	}
+
+	// Marking runs in bounded slices by default; "stw" restores the single
+	// stop-the-world pause as the fallback.
+	const char *mark_env = getenv("DARKS_JVM_MARK");
+	incremental_mark = true;
+	if (mark_env && *mark_env &&
+	    (strcmp(mark_env, "stw") == 0 || strcmp(mark_env, "pause") == 0 ||
+	     strcmp(mark_env, "0") == 0))
+	{
+		incremental_mark = false;
+	}
+	// The full index is only rebuilt while the world is stopped, so it cannot
+	// describe objects allocated during an open cycle; that fallback keeps the
+	// single-pause collection.
+	if (!ref_index_incremental)
+	{
+		incremental_mark = false;
+	}
 }
 
 size_t ObjectHeap::ObjectBytes(lpObject obj) const
@@ -386,6 +416,7 @@ void ObjectHeap::MaybeGC()
 	// then collect without it: the collector stops the world, and the
 	// safepoint handshake must not run with the heap mutex already held.
 	bool needed = false;
+	bool near_max = false;
 	{
 		VMLock lk;
 		// The OutOfMemoryError itself is allocated while the heap is over
@@ -396,11 +427,45 @@ void ObjectHeap::MaybeGC()
 			return;
 		}
 		needed = (live_bytes >= threshold);
+		near_max = max_heap_bytes != 0 &&
+			live_bytes > max_heap_bytes - (max_heap_bytes >> 3);
 	}
-	if (needed)
+	if (incremental_mark && mark_cycle_active.load())
+	{
+		// The cycle is already open; live_bytes still counts its garbage, so
+		// the threshold cannot pace the trace.  Near -Xmx the cycle is
+		// finished on the spot (a collect-before-OOM) instead of waiting for
+		// the allocation-paced slices; otherwise ContinueMarkCycle does.
+		if (!near_max)
+		{
+			ContinueMarkCycle();
+			return;
+		}
+		std::unique_lock<std::mutex> gc_lock(gc_mutex, std::try_to_lock);
+		if (gc_lock.owns_lock() && !in_gc)
+		{
+			do
+			{
+				RunMarkPause("near-max");
+			} while (mark_cycle_active.load());
+		}
+		return;
+	}
+	if (!needed)
+	{
+		return;
+	}
+	if (!incremental_mark)
 	{
 		gc("threshold");
+		return;
 	}
+	std::unique_lock<std::mutex> gc_lock(gc_mutex, std::try_to_lock);
+	if (!gc_lock.owns_lock() || in_gc)
+	{
+		return;
+	}
+	RunMarkPause("threshold");
 }
 
 void ObjectHeap::AddRootSlot(LPOBJECT_REF *slot)
@@ -496,6 +561,12 @@ void ObjectHeap::MarkObjectRef(LPOBJECT_REF ref)
 	{
 		return;
 	}
+	if (static_cast<size_t>(idx) >= marked.size())
+	{
+		// Objects registered while a cycle is open grow objs[]; keep the mark
+		// bitmap aligned with the slot table.
+		marked.resize(objs.size(), false);
+	}
 	if (marked[static_cast<size_t>(idx)])
 	{
 		return;
@@ -556,6 +627,12 @@ void ObjectHeap::ReleaseSlot(lpObject obj)
 	    objs[static_cast<size_t>(index)] == obj)
 	{
 		objs[static_cast<size_t>(index)] = NULL;
+		if (mark_cycle_active.load() && static_cast<size_t>(index) < marked.size())
+		{
+			// The slot is recycled immediately; drop the allocate-black mark
+			// so a later occupant cannot inherit it.
+			marked[static_cast<size_t>(index)] = false;
+		}
 	}
 	UnindexObject(obj);
 	free_indices.push_back(index);
@@ -938,14 +1015,13 @@ void ObjectHeap::gc(const char *reason)
 
 void ObjectHeap::CollectMarkSweep(const char *reason)
 {
-	// Only one collection at a time.  A native call may reach allocation from
-	// another thread; in that case the collection is skipped rather than
-	// waiting while holding the heap lock.
-	const GcClock::time_point gc_start = GcClock::now();
 	if (!reason)
 	{
 		reason = "unknown";
 	}
+	// Only one collection at a time.  A native call may reach allocation from
+	// another thread; in that case the collection is skipped rather than
+	// waiting while holding the heap lock.
 	std::unique_lock<std::mutex> gc_lock(gc_mutex, std::try_to_lock);
 	if (!gc_lock.owns_lock())
 	{
@@ -955,6 +1031,25 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 	{
 		return;
 	}
+	if (!incremental_mark)
+	{
+		CollectMarkSweepSTW(reason);
+		return;
+	}
+	// An explicit request must return with the collection complete: gc() and
+	// the tests inspect the heap right after the call.  The cycle still runs as
+	// bounded pauses, taken back to back.
+	do
+	{
+		RunMarkPause(reason);
+	} while (mark_cycle_active.load());
+}
+
+// One stop-the-world collection (DARKS_JVM_MARK=stw).  The caller holds
+// gc_mutex and in_gc is false.
+void ObjectHeap::CollectMarkSweepSTW(const char *reason)
+{
+	const GcClock::time_point gc_start = GcClock::now();
 	// Hold the heap mutex before stopping the world.  A worker that is blocked
 	// on this mutex is then genuinely stopped for the whole collection, which
 	// makes the scheduler's "waiting for the heap lock" safepoint state stable.
@@ -1010,67 +1105,7 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 	const GcClock::time_point roots_done = GcClock::now();
 
 	// Iterative trace: scan every marked object for outgoing references.
-	while (!mark_stack.empty())
-	{
-		OBJECT_REF idx = mark_stack.back();
-		mark_stack.pop_back();
-		lpObject obj = objs[static_cast<size_t>(idx)];
-		if (!obj)
-		{
-			continue;
-		}
-		bool reference = IsReferenceObject(obj);
-		if (reference)
-		{
-			weak_reference_objects.push_back(idx);
-		}
-		// Instance fields. Primitive values are tolerated: MarkObjectRef only
-		// accepts pointers that match a live object's index address.  Slots
-		// are scanned first because a subclass field can hide a superclass
-		// field with the same name and descriptor; the name-keyed map below
-		// keeps only one of them, while every field has its own slot.
-		for (size_t k = 0; k < obj->instance_slots.size(); k++)
-		{
-			lpFieldValue fv = obj->instance_slots[k];
-			if (!fv)
-			{
-				continue;
-			}
-			if (reference && fv->field && fv->field->fieldName &&
-			    fv->field->fieldName->GetName() &&
-			    strcmp(fv->field->fieldName->GetName(), "referent") == 0)
-			{
-				continue;
-			}
-			MarkObjectRef(fv->field_value.heapPtr);
-		}
-		FIELD_MAP::iterator field_it = obj->varants.begin();
-
-		for (; field_it != obj->varants.end(); ++field_it)
-		{
-			// Reference.referent is a weak edge; it is handled after the
-			// strong trace once reachability is known.
-			if (reference && field_it->first.compare(0, 9, "referent:") == 0)
-			{
-				continue;
-			}
-			lpFieldValue fv = field_it->second;
-			if (fv)
-			{
-				MarkObjectRef(fv->field_value.heapPtr);
-			}
-		}
-		// Reference arrays (object arrays and nested arrays).
-		if (obj->array_var &&
-		    (obj->array_data_type == DT_REF || obj->array_data_type == DT_ARRAY))
-		{
-			jobject *refs = static_cast<jobject *>(obj->array_var);
-			for (int k = 0; k < obj->array_length; k++)
-			{
-				MarkObjectRef(reinterpret_cast<LPOBJECT_REF>(refs[k]));
-			}
-		}
-	}
+	ScanMarkSlice(static_cast<size_t>(-1), 1.0e30);
 
 	const GcClock::time_point trace_done = GcClock::now();
 	ProcessWeakReferences();
@@ -1183,7 +1218,7 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 		        "stw_ms=%.2f root_ms=%.2f mark_ms=%.2f weak_ms=%.2f "
 		        "sweep_ms=%.2f post_ms=%.2f setup_ms=%.2f roots_ms=%.2f "
 		        "ref_entries=%zu ref_repairs=%zu ref_shrinks=%zu refindex=%s "
-		        "pend_free=%zu sweep=%s "
+		        "pend_free=%zu sweep=%s mark=stw pauses=1 pause_max_ms=%.2f "
 		        "rthread=%.2f rstatic=%.2f "
 		        "rcp=%.2f rtemp=%.2f rglobal=%.2f rjni=%.2f slots=%zu "
 		        "free_before=%zu live_before=%zu objs_before=%zu "
@@ -1196,7 +1231,7 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 		        mark_ms, weak_ms, sweep_ms, post_ms, setup_ms, roots_ms,
 		        ref_index.size(), ref_index_repairs, ref_index_shrinks,
 		        ref_index_incremental ? "incremental" : "full",
-		        pending_free.size(), lazy_sweep ? "lazy" : "pause",
+		        pending_free.size(), lazy_sweep ? "lazy" : "pause", stw_ms,
 		        root_thread_ms,
 		        root_static_ms, root_cp_ms, root_temp_ms, root_global_ms,
 		        root_jni_ms, slots_before, free_before, live_bytes_before,
@@ -1207,6 +1242,449 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 		        root_cp_strings, root_temp_slots, root_global_count,
 		        root_jni_envs, trigger_frame.c_str());
 	}
+}
+
+// One bounded marking pause.  The pause that opens a cycle snapshots the roots
+// and drains a slice of the mark stack; later pauses drain further slices; the
+// pause that empties the stack also re-reads the roots, clears weak referents
+// and sweeps, which completes the collection.  The caller holds gc_mutex.
+void ObjectHeap::RunMarkPause(const char *reason)
+{
+	const bool first = !mark_cycle_active.load();
+	const GcClock::time_point pause_start = GcClock::now();
+	if (first)
+	{
+		cycle_gc_start = pause_start;
+		cycle_root_ms = 0.0;
+		cycle_mark_ms = 0.0;
+		cycle_setup_ms = 0.0;
+		cycle_pause_sum_ms = 0.0;
+		cycle_pause_max_ms = 0.0;
+		cycle_pauses = 0;
+		cycle_preworld_ms = 0.0;
+		cycle_slice_budget = kMarkSliceMinObjects;
+		cycle_trigger_frame.clear();
+	}
+	VMLock heap_lock;
+	if (first)
+	{
+		// Same pre-world work as the stop-the-world path: the dead set of the
+		// previous collection is gone before this trace starts, and the two
+		// dead sets can never share a slot.
+		SweepPending(static_cast<size_t>(-1));
+	}
+	Scheduler::Instance().SafepointBegin();
+	const GcClock::time_point world_stopped = GcClock::now();
+	if (first)
+	{
+		cycle_preworld_ms = std::chrono::duration<double, std::milli>(
+			world_stopped - cycle_gc_start).count();
+		cycle_slots_before = objs.size();
+		cycle_free_before = free_indices.size();
+		cycle_live_bytes_before = live_bytes;
+		cycle_live_objects_before = live_objects;
+		cycle_threshold_before = threshold;
+		ThreadStack *trigger_stack = Scheduler::CurrentStack();
+		if (!trigger_stack || !trigger_stack->DescribeTopFrame(cycle_trigger_frame))
+		{
+			cycle_trigger_frame.assign("native");
+		}
+	}
+	in_gc = true;
+
+	double setup_ms = 0.0;
+	if (first)
+	{
+		const GcClock::time_point setup_start = GcClock::now();
+		if (ref_index_incremental)
+		{
+			RepairRefIndexIfNeeded();
+		}
+		else
+		{
+			RebuildRefIndex();
+		}
+		marked.assign(objs.size(), false);
+		mark_stack.clear();
+		weak_reference_objects.clear();
+		setup_ms = MillisecondsSince(setup_start);
+	}
+	double roots_ms = 0.0;
+	if (first)
+	{
+		// Snapshot of the roots when the cycle opens.  Everything reachable
+		// here stays marked: overwrites are journaled by the barrier below and
+		// allocations are marked as they are registered.
+		const GcClock::time_point roots_start = GcClock::now();
+		MarkRoots();
+		roots_ms = MillisecondsSince(roots_start);
+
+		// Journal overwritten references until the final pause.  Only the old
+		// value is needed: the snapshot carries everything reachable when the
+		// cycle opened, and new objects are allocate-black.
+		cycle_recorded = 0;
+		cycle_dropped_before = GCBarrier::Dropped();
+		if (!GCBarrier::Enabled())
+		{
+			GCBarrier::SetRecordNew(false);
+			GCBarrier::Enable();
+			gc_barrier_owned = true;
+		}
+	}
+
+	// Pull in the references the mutator overwrote since the last pause and
+	// mark them before this slice drains.  The world is stopped here, so the
+	// journal cannot change while it is drained.
+	size_t pause_records = 0;
+	if (GCBarrier::Enabled())
+	{
+		std::vector<LPOBJECT_REF> recorded;
+		GCBarrier::Drain(recorded);
+		pause_records = recorded.size();
+		cycle_recorded += pause_records;
+		for (size_t i = 0; i < recorded.size(); i++)
+		{
+			MarkObjectRef(recorded[i]);
+		}
+	}
+
+	mark_cycle_active.store(true);
+	if (first)
+	{
+		// The slot table is pre-sized, so its size says nothing about the
+		// trace.  Pace the cycle on the last known live count instead: about
+		// sixteen pauses per collection, each bounded in time as well.
+		size_t budget = live_objects / 16;
+		if (budget < kMarkSliceMinObjects)
+		{
+			budget = kMarkSliceMinObjects;
+		}
+		if (budget > kMarkSliceMaxObjects)
+		{
+			budget = kMarkSliceMaxObjects;
+		}
+		cycle_slice_budget = budget;
+	}
+	const GcClock::time_point slice_start = GcClock::now();
+	ScanMarkSlice(cycle_slice_budget, kMarkSliceMillis);
+	double mark_ms = MillisecondsSince(slice_start);
+
+	double weak_ms = 0.0;
+	double sweep_ms = 0.0;
+	size_t freed_bytes = 0;
+	size_t freed_objects = 0;
+	bool finished = false;
+	bool cycle_aborted = false;
+	if (mark_stack.empty())
+	{
+		finished = true;
+		// Final pause.  Re-read every root: a reference can move into a stack
+		// slot, an operand slot or a temporary root without any heap store, so
+		// the reference the mutator holds right now has to be visible to the
+		// trace that decides the dead set.
+		const GcClock::time_point final_roots_start = GcClock::now();
+		MarkRoots();
+		roots_ms += MillisecondsSince(final_roots_start);
+		const GcClock::time_point drain_start = GcClock::now();
+		ScanMarkSlice(static_cast<size_t>(-1), 1.0e30);
+		mark_ms += MillisecondsSince(drain_start);
+
+		if (marked.size() < objs.size())
+		{
+			marked.resize(objs.size(), false);
+		}
+		if (GCBarrier::Dropped() != cycle_dropped_before)
+		{
+			// The journal ran out of room, so an overwritten edge may be
+			// missing.  Freeing on incomplete information would corrupt the
+			// heap: keep every object that exists now and let the next cycle
+			// retry with a journal that the drains keep short.
+			for (size_t i = 1; i < objs.size(); i++)
+			{
+				if (objs[i])
+				{
+					marked[i] = true;
+				}
+			}
+			cycle_aborted = true;
+		}
+		if (gc_barrier_owned)
+		{
+			GCBarrier::Disable();
+			gc_barrier_owned = false;
+		}
+
+		const GcClock::time_point weak_start = GcClock::now();
+		ProcessWeakReferences();
+		weak_ms = MillisecondsSince(weak_start);
+
+		const GcClock::time_point sweep_start = GcClock::now();
+		size_t live = 0;
+		size_t live_count = 0;
+		for (size_t i = 1; i < objs.size(); i++)
+		{
+			lpObject obj = objs[i];
+			if (!obj)
+			{
+				continue;
+			}
+			if (!marked[i])
+			{
+				freed_bytes += ObjectBytes(obj);
+				freed_objects++;
+				pending_free.push_back(static_cast<OBJECT_REF>(i));
+			}
+			else
+			{
+				live += ObjectBytes(obj);
+				live_count++;
+			}
+		}
+		if (lazy_sweep)
+		{
+			SweepPending(kPostPauseSweepChunk);
+		}
+		else
+		{
+			SweepPending(static_cast<size_t>(-1));
+		}
+		sweep_ms = MillisecondsSince(sweep_start);
+
+		live_bytes = live;
+		live_objects = live_count;
+		// A large drop in live objects leaves the hash table oversized.  Only
+		// record the intent here; the rehash runs on the next allocation so
+		// the pause keeps its length.
+		if (ref_index_incremental && ref_index.bucket_count() > 4096 &&
+		    ref_index.size() * 8 < ref_index.bucket_count())
+		{
+			ref_index_shrink_pending = true;
+		}
+		gc_runs++;
+		gc_freed_last = freed_bytes;
+		gc_freed_total += freed_bytes;
+
+		// Avoid collecting on every single allocation when almost everything
+		// is still reachable: grow the threshold past the surviving heap.
+		size_t next_threshold = base_threshold;
+		if (live_bytes > next_threshold / 2)
+		{
+			next_threshold = live_bytes * 2;
+		}
+		if (max_heap_bytes != 0 && next_threshold > max_heap_bytes)
+		{
+			next_threshold = max_heap_bytes;
+		}
+		threshold = next_threshold;
+
+		if (gc_log)
+		{
+			fprintf(stderr,
+				"gc-collect run=%d objects=%zu freed=%zu bytes live=%zu bytes\n",
+				gc_runs, freed_objects, freed_bytes, live_bytes);
+		}
+		mark_cycle_active.store(false);
+	}
+
+	const GcClock::time_point work_done = GcClock::now();
+	in_gc = false;
+	Scheduler::Instance().SafepointEnd();
+	const GcClock::time_point world_resumed = GcClock::now();
+
+	const double stw_ms = MillisecondsSince(pause_start);
+	cycle_root_ms += roots_ms;
+	cycle_mark_ms += mark_ms;
+	cycle_setup_ms += setup_ms;
+	cycle_pauses++;
+	cycle_pause_sum_ms += stw_ms;
+	if (stw_ms > cycle_pause_max_ms)
+	{
+		cycle_pause_max_ms = stw_ms;
+	}
+	mark_cycle_allocs.store(0);
+
+	if (!GcStatsEnabled())
+	{
+		return;
+	}
+	PrintSliceStat(reason, finished ? "finish" : (first ? "begin" : "slice"),
+	               stw_ms, roots_ms, mark_ms, pause_records);
+	if (!finished)
+	{
+		return;
+	}
+	const double cycle_ms =
+		std::chrono::duration<double, std::milli>(world_resumed - cycle_gc_start).count();
+	const double post_ms =
+		std::chrono::duration<double, std::milli>(world_resumed - work_done).count();
+	fprintf(stderr,
+	        "[gcstat] run=%d reason=%s total_ms=%.2f preworld_ms=%.2f "
+	        "stw_ms=%.2f root_ms=%.2f mark_ms=%.2f weak_ms=%.2f "
+	        "sweep_ms=%.2f post_ms=%.2f setup_ms=%.2f roots_ms=%.2f "
+	        "ref_entries=%zu ref_repairs=%zu ref_shrinks=%zu refindex=%s "
+	        "pend_free=%zu sweep=%s mark=incremental pauses=%zu cycle_ms=%.2f "
+	        "pause_sum_ms=%.2f pause_max_ms=%.2f mark_total_ms=%.2f "
+	        "satb_records=%zu satb_dropped=%llu satb_abort=%d "
+	        "rthread=%.2f rstatic=%.2f "
+	        "rcp=%.2f rtemp=%.2f rglobal=%.2f rjni=%.2f slots=%zu "
+	        "free_before=%zu live_before=%zu objs_before=%zu "
+	        "thresh_before=%zu heap_max=%zu heap_used=%zu "
+	        "freed_objs=%zu freed_bytes=%zu "
+	        "live_after=%zu objs_after=%zu stacks=%zu static_fields=%zu "
+	        "classes=%zu cp_entries=%zu cp_strings=%zu temp_slots=%zu "
+	        "globals=%zu jni_envs=%zu frame=%s\n",
+	        gc_runs, reason, stw_ms, cycle_preworld_ms, stw_ms, cycle_root_ms,
+	        mark_ms, weak_ms, sweep_ms, post_ms, cycle_setup_ms, cycle_root_ms,
+	        ref_index.size(), ref_index_repairs, ref_index_shrinks,
+	        ref_index_incremental ? "incremental" : "full",
+	        pending_free.size(), lazy_sweep ? "lazy" : "pause", cycle_pauses,
+	        cycle_ms, cycle_pause_sum_ms, cycle_pause_max_ms, cycle_mark_ms,
+	        cycle_recorded,
+	        static_cast<unsigned long long>(GCBarrier::Dropped()),
+	        cycle_aborted ? 1 : 0, root_thread_ms,
+	        root_static_ms, root_cp_ms, root_temp_ms, root_global_ms,
+	        root_jni_ms, cycle_slots_before, cycle_free_before,
+	        cycle_live_bytes_before, cycle_live_objects_before,
+	        cycle_threshold_before, max_heap_bytes, cycle_live_bytes_before,
+	        freed_objects, freed_bytes, live_bytes, live_objects, root_stacks,
+	        root_static_fields, root_classes, root_cp_entries,
+	        root_cp_strings, root_temp_slots, root_global_count,
+	        root_jni_envs, cycle_trigger_frame.c_str());
+}
+
+size_t ObjectHeap::ScanMarkSlice(size_t max_objects, double max_ms)
+{
+	const GcClock::time_point start = GcClock::now();
+	size_t scanned = 0;
+	while (!mark_stack.empty() && scanned < max_objects)
+	{
+		const OBJECT_REF idx = mark_stack.back();
+		mark_stack.pop_back();
+		ScanMarkedObject(idx);
+		scanned++;
+		if ((scanned & 0xFFF) == 0 && MillisecondsSince(start) >= max_ms)
+		{
+			break;
+		}
+	}
+	return scanned;
+}
+
+void ObjectHeap::ScanMarkedObject(OBJECT_REF idx)
+{
+	lpObject obj = objs[static_cast<size_t>(idx)];
+	if (!obj)
+	{
+		return;
+	}
+	bool reference = IsReferenceObject(obj);
+	if (reference)
+	{
+		weak_reference_objects.push_back(idx);
+	}
+	// Instance fields. Primitive values are tolerated: MarkObjectRef only
+	// accepts pointers that match a live object's index address.  Slots are
+	// scanned first because a subclass field can hide a superclass field with
+	// the same name and descriptor; the name-keyed map below keeps only one of
+	// them, while every field has its own slot.
+	for (size_t k = 0; k < obj->instance_slots.size(); k++)
+	{
+		lpFieldValue fv = obj->instance_slots[k];
+		if (!fv)
+		{
+			continue;
+		}
+		if (reference && fv->field && fv->field->fieldName &&
+		    fv->field->fieldName->GetName() &&
+		    strcmp(fv->field->fieldName->GetName(), "referent") == 0)
+		{
+			continue;
+		}
+		MarkObjectRef(fv->field_value.heapPtr);
+	}
+	FIELD_MAP::iterator field_it = obj->varants.begin();
+
+	for (; field_it != obj->varants.end(); ++field_it)
+	{
+		// Reference.referent is a weak edge; it is handled after the strong
+		// trace once reachability is known.
+		if (reference && field_it->first.compare(0, 9, "referent:") == 0)
+		{
+			continue;
+		}
+		lpFieldValue fv = field_it->second;
+		if (fv)
+		{
+			MarkObjectRef(fv->field_value.heapPtr);
+		}
+	}
+	// Reference arrays (object arrays and nested arrays).
+	if (obj->array_var &&
+	    (obj->array_data_type == DT_REF || obj->array_data_type == DT_ARRAY))
+	{
+		jobject *refs = static_cast<jobject *>(obj->array_var);
+		for (int k = 0; k < obj->array_length; k++)
+		{
+			MarkObjectRef(reinterpret_cast<LPOBJECT_REF>(refs[k]));
+		}
+	}
+}
+
+void ObjectHeap::MarkNewObjectLocked(lpObject obj)
+{
+	if (!obj)
+	{
+		return;
+	}
+	const size_t index = static_cast<size_t>(obj->index);
+	if (objs.size() > marked.size())
+	{
+		marked.resize(objs.size(), false);
+	}
+	if (index == 0 || index >= marked.size() || marked[index])
+	{
+		return;
+	}
+	// Allocate black: an object created while a cycle is open is treated as a
+	// root for that cycle.  It is scanned by the next slice, so the references
+	// it receives after registration are traced too.
+	marked[index] = true;
+	mark_stack.push_back(obj->index);
+}
+
+void ObjectHeap::ContinueMarkCycle()
+{
+	if (!mark_cycle_active.load())
+	{
+		return;
+	}
+	const size_t allocs =
+		mark_cycle_allocs.fetch_add(1, std::memory_order_relaxed) + 1;
+	// Also break in when the journal has grown, so a write-heavy stretch
+	// without allocations cannot outrun the drains.
+	if (allocs < kMarkAllocationsPerSlice &&
+	    GCBarrier::Pending() < kMarkRecordsPerSlice)
+	{
+		return;
+	}
+	mark_cycle_allocs.store(0, std::memory_order_relaxed);
+	std::unique_lock<std::mutex> gc_lock(gc_mutex, std::try_to_lock);
+	if (!gc_lock.owns_lock() || in_gc || !mark_cycle_active.load())
+	{
+		return;
+	}
+	RunMarkPause("slice");
+}
+
+void ObjectHeap::PrintSliceStat(const char *reason, const char *phase,
+                                double stw_ms, double roots_ms, double mark_ms,
+                                size_t records)
+{
+	fprintf(stderr,
+	        "[gcpause] seq=%zu reason=%s phase=%s stw_ms=%.2f roots_ms=%.2f "
+	        "mark_ms=%.2f stack=%zu allocs=%zu records=%zu\n",
+	        cycle_pauses, reason, phase, stw_ms, roots_ms, mark_ms,
+	        mark_stack.size(), mark_cycle_allocs.load(), records);
 }
 
 void ObjectHeap::SweepPending(size_t max_objects)
@@ -1272,6 +1750,10 @@ bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
 	}
 	objs[static_cast<size_t>(index)] = obj;
 	IndexObject(obj);
+	if (mark_cycle_active.load())
+	{
+		MarkNewObjectLocked(obj);
+	}
 	object_ref = &obj->index;
 	return true;
 }
