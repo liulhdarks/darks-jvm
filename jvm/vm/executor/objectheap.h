@@ -53,6 +53,7 @@ public:
 		live_bytes = 0;
 		ref_index_incremental = true;
 		ref_index_shrink_pending = false;
+		lazy_sweep = true;
 		ref_index_repairs = 0;
 		ref_index_shrinks = 0;
 		gc_runs = 0;
@@ -175,6 +176,18 @@ public:
 	// vector.  O(slots), so it is not used on the collection path.
 	bool RefIndexMatchesHeap() const;
 
+	// ---- lazy sweep -------------------------------------------------------
+	// A collection records the dead slots instead of freeing them inside the
+	// pause; the objects are destroyed in bounded chunks from the allocation
+	// path and right after the world resumes.  DrainPendingFreeAll finishes
+	// the work immediately (tests use it before checking the heap invariants).
+	// While a slot is pending its object is still in objs[] but marked dead:
+	// it is unreachable, so no mutator can touch it, and the slot is not
+	// reused until the object has been destroyed.
+	void DrainPendingFreeAll();
+	size_t PendingFreeCount() const { return pending_free.size(); }
+	bool LazySweepEnabled() const { return lazy_sweep; }
+
 	// ---- statistics -------------------------------------------------------
 	size_t LiveBytes() const { return live_bytes; }
 	size_t LiveObjectCount() const { return live_objects; }
@@ -186,6 +199,10 @@ public:
 private:
 
 	bool Register(lpObject obj, LPOBJECT_REF &object_ref);
+
+	// Destroys up to max_objects of the dead objects recorded by the last
+	// collection.  The caller holds VMLock.
+	void SweepPending(size_t max_objects);
 
 	// Index maintenance.  IndexObject is a no-op in "full" mode; UnindexObject
 	// always removes the entry so the index equals the live set after a
@@ -255,9 +272,11 @@ private:
 	std::unordered_map<const OBJECT_REF *, OBJECT_REF> ref_index;
 	bool ref_index_incremental;
 	bool ref_index_shrink_pending;
+	bool lazy_sweep;
 	size_t ref_index_repairs;
 	size_t ref_index_shrinks;
 
+	std::vector<OBJECT_REF> pending_free;
 	std::vector<OBJECT_REF> free_indices;
 	std::vector<LPOBJECT_REF *> root_slots;
 	std::vector<LPOBJECT_REF> global_refs;

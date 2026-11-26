@@ -688,6 +688,14 @@ if(JAVAC)
                 -DEXPECT_RC=0
                 "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
 
+    # The same heap checks with dead objects freed inside the pause: the
+    # fallback must produce the identical survivor set and index.
+    add_test(NAME gc_heap_sweep_pause
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_SWEEP=pause;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
+
     add_test(NAME gc_stress_survivors
         COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
                 "-DARGS=-E;env;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
@@ -705,6 +713,13 @@ if(JAVAC)
     add_test(NAME gc_stress_refindex_full
         COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
                 "-DARGS=-E;env;DARKS_JVM_REFINDEX=full;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
+                "-DEXPECT_TEXT2=gc: static array survived"
+                "-DEXPECT_TEXT3=gc: local chain survived" -P "${CHECK}")
+
+    add_test(NAME gc_stress_sweep_pause
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_SWEEP=pause;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
                 -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
                 "-DEXPECT_TEXT2=gc: static array survived"
                 "-DEXPECT_TEXT3=gc: local chain survived" -P "${CHECK}")

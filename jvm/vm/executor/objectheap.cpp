@@ -37,6 +37,12 @@ bool GcStatsEnabled()
 
 typedef std::chrono::steady_clock GcClock;
 
+// Lazy sweep chunk sizes.  A dead object costs roughly a microsecond to tear
+// down (destructor, free, index erase), so these bound the extra latency of
+// one allocation and of the post-pause drain to a few microseconds each.
+const size_t kAllocSweepChunk = 32;
+const size_t kPostPauseSweepChunk = 2048;
+
 // Physical memory used for the -Xmx/-Xms ergonomics.  Matches what the JDK
 // reports through sysconf(_SC_PHYS_PAGES) (GlobalMemoryStatusEx on Windows).
 size_t DetectPhysicalMemory()
@@ -333,6 +339,17 @@ void ObjectHeap::ConfigureFromEnvironment()
 	     strcmp(ref_index_env, "0") == 0))
 	{
 		ref_index_incremental = false;
+	}
+
+	// Dead objects are destroyed outside the pause by default; "pause"
+	// restores the stop-the-world sweep (the M2b behaviour) as the fallback.
+	const char *sweep_env = getenv("DARKS_JVM_SWEEP");
+	lazy_sweep = true;
+	if (sweep_env && *sweep_env &&
+	    (strcmp(sweep_env, "pause") == 0 || strcmp(sweep_env, "inline") == 0 ||
+	     strcmp(sweep_env, "0") == 0))
+	{
+		lazy_sweep = false;
 	}
 }
 
@@ -944,6 +961,12 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 	// Taking the mutex afterwards would leave a window where such a worker
 	// resumes and runs Java while the heap is being traced.
 	VMLock heap_lock;
+	// Finish any lazy sweep before the trace starts.  Besides keeping the
+	// dead set disjoint between two collections (the same slot must never
+	// appear twice in pending_free) this restores the invariant that the
+	// live object table, the index and live_bytes describe the same set.  It
+	// runs before the world is stopped, so it is counted as pre-world work.
+	SweepPending(static_cast<size_t>(-1));
 	// Stop every interpreter worker at a safepoint before tracing.  Native
 	// code is treated as stopped: its Java frames are at the call boundary and
 	// its JNI local references are registered roots.
@@ -1053,6 +1076,11 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 	ProcessWeakReferences();
 	const GcClock::time_point weak_done = GcClock::now();
 
+	// Only record the dead slots here: destroying the object (destructor plus
+	// the free) and erasing its index entry is the expensive part of the
+	// sweep, and it does not have to happen inside the pause.  The survivor
+	// size still has to be measured exactly (an object can gain fields after
+	// it was allocated, so the allocation-time accounting drifts).
 	size_t freed_bytes = 0;
 	size_t freed_objects = 0;
 	size_t live = 0;
@@ -1066,25 +1094,27 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 		}
 		if (!marked[i])
 		{
-			size_t bytes = ObjectBytes(obj);
-			freed_bytes += bytes;
+			freed_bytes += ObjectBytes(obj);
 			freed_objects++;
-			// The index entry has to go with the object: the slot is recycled
-			// and a stale address->slot entry would keep a later occupant of
-			// the slot alive through a dangling reference.
-			UnindexObject(obj);
-			delete obj;
-			objs[i] = NULL;
-			// Reuse the index on the next allocation. An address-validated
-			// reference can never alias the recycled slot because the new
-			// object lives at a different address.
-			free_indices.push_back(static_cast<OBJECT_REF>(i));
+			pending_free.push_back(static_cast<OBJECT_REF>(i));
 		}
 		else
 		{
 			live += ObjectBytes(obj);
 			live_count++;
 		}
+	}
+	// Outside the pause only a small chunk is freed so the mutator resumes
+	// promptly; the rest is drained from the allocation path.  With
+	// DARKS_JVM_SWEEP=pause the whole list is freed here, restoring the
+	// stop-the-world sweep.
+	if (lazy_sweep)
+	{
+		SweepPending(kPostPauseSweepChunk);
+	}
+	else
+	{
+		SweepPending(static_cast<size_t>(-1));
 	}
 
 	const GcClock::time_point sweep_done = GcClock::now();
@@ -1153,6 +1183,7 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 		        "stw_ms=%.2f root_ms=%.2f mark_ms=%.2f weak_ms=%.2f "
 		        "sweep_ms=%.2f post_ms=%.2f setup_ms=%.2f roots_ms=%.2f "
 		        "ref_entries=%zu ref_repairs=%zu ref_shrinks=%zu refindex=%s "
+		        "pend_free=%zu sweep=%s "
 		        "rthread=%.2f rstatic=%.2f "
 		        "rcp=%.2f rtemp=%.2f rglobal=%.2f rjni=%.2f slots=%zu "
 		        "free_before=%zu live_before=%zu objs_before=%zu "
@@ -1165,6 +1196,7 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 		        mark_ms, weak_ms, sweep_ms, post_ms, setup_ms, roots_ms,
 		        ref_index.size(), ref_index_repairs, ref_index_shrinks,
 		        ref_index_incremental ? "incremental" : "full",
+		        pending_free.size(), lazy_sweep ? "lazy" : "pause",
 		        root_thread_ms,
 		        root_static_ms, root_cp_ms, root_temp_ms, root_global_ms,
 		        root_jni_ms, slots_before, free_before, live_bytes_before,
@@ -1177,12 +1209,51 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 	}
 }
 
+void ObjectHeap::SweepPending(size_t max_objects)
+{
+	size_t freed = 0;
+	while (!pending_free.empty() && freed < max_objects)
+	{
+		OBJECT_REF index = pending_free.back();
+		pending_free.pop_back();
+		lpObject obj = objs[static_cast<size_t>(index)];
+		if (!obj)
+		{
+			continue;
+		}
+		// The index entry has to go with the object: the slot is recycled and
+		// a stale address->slot entry would keep a later occupant of the slot
+		// alive through a dangling reference.
+		UnindexObject(obj);
+		delete obj;
+		objs[static_cast<size_t>(index)] = NULL;
+		// Reuse the slot on the next allocation.  An address-validated
+		// reference can never alias the recycled slot because the new object
+		// lives at a different address.
+		free_indices.push_back(index);
+		freed++;
+	}
+}
+
+void ObjectHeap::DrainPendingFreeAll()
+{
+	VMLock lk;
+	SweepPending(static_cast<size_t>(-1));
+}
+
 bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
 {
 	VMLock lk;
 	if (!obj)
 	{
 		return false;
+	}
+	// Spread the tear-down of the previous collection's dead objects over the
+	// allocations instead of paying for all of them in the pause.  A bounded
+	// chunk keeps every single allocation short.
+	if (!pending_free.empty())
+	{
+		SweepPending(kAllocSweepChunk);
 	}
 	OBJECT_REF index;
 	if (!free_indices.empty())

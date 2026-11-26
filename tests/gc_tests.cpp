@@ -421,6 +421,10 @@ int main(int argc, char **argv)
 			}
 
 			heap->gc();
+			// Lazy sweep records the dead slots and frees them in chunks
+			// afterwards; drain first so this check still compares the index
+			// against exactly the survivor set.
+			heap->DrainPendingFreeAll();
 			for (int i = 0; i < count; i++)
 			{
 				if (!refs[i])
@@ -454,9 +458,106 @@ int main(int argc, char **argv)
 		            index_consistent ? 1 : 0);
 	}
 
+	// ---------------------------------------------------------------- (e)
+	// Lazy sweep: a collection only records the dead slots, and the objects
+	// are torn down in bounded chunks after the world resumes and from the
+	// allocation path.  Resolving a live reference must keep working while
+	// dead slots are still pending, and once the drain finishes the survivor
+	// count, the byte accounting and the index must be exactly what the
+	// in-pause sweep would have produced.
+	{
+		const int kHeartbeat = 16;
+		const int kGarbage = 3000;
+		LPOBJECT_REF live[kHeartbeat];
+		lpObject expected[kHeartbeat];
+		GCRootSet roots(heap);
+		for (int i = 0; i < kHeartbeat; i++)
+		{
+			live[i] = NULL;
+			expected[i] = NULL;
+			roots.Add(&live[i]);
+		}
+
+		unsigned state = 0x1a2b3c4du;
+		bool refs_stable = true;
+		bool drained_ok = true;
+		bool pending_seen = false;
+		size_t pending_peak = 0;
+		for (int round = 0; round < 16; round++)
+		{
+			for (int i = 0; i < kHeartbeat; i++)
+			{
+				if (live[i])
+				{
+					continue;
+				}
+				LPOBJECT_REF ref = NULL;
+				if (!heap->NewObject(plain_class, ref))
+				{
+					continue;
+				}
+				live[i] = ref;
+				expected[i] = NULL;
+				heap->GetObject(ref, expected[i]);
+			}
+			for (int k = 0; k < kGarbage; k++)
+			{
+				LPOBJECT_REF garbage = NULL;
+				heap->NewArrayObject(32, int_array_class, garbage);
+			}
+			heap->gc();
+			size_t live_before = heap->LiveObjectCount();
+			size_t bytes_before = heap->LiveBytes();
+			size_t pending_before = heap->PendingFreeCount();
+			if (pending_before > 0)
+			{
+				pending_seen = true;
+				if (pending_before > pending_peak)
+				{
+					pending_peak = pending_before;
+				}
+			}
+			for (int i = 0; i < kHeartbeat; i++)
+			{
+				lpObject now = NULL;
+				if (live[i] &&
+				    (!heap->GetObject(live[i], now) || now != expected[i]))
+				{
+					refs_stable = false;
+				}
+			}
+			heap->DrainPendingFreeAll();
+			if (heap->PendingFreeCount() != 0 ||
+			    heap->LiveObjectCount() != live_before ||
+			    heap->LiveBytes() != bytes_before ||
+			    !heap->RefIndexMatchesHeap() ||
+			    heap->RefIndexEntries() != heap->LiveObjectCount())
+			{
+				drained_ok = false;
+			}
+			for (int i = 0; i < kHeartbeat; i++)
+			{
+				if ((next_random(state) & 1u) != 0)
+				{
+					live[i] = NULL;
+					expected[i] = NULL;
+				}
+			}
+		}
+		CHECK(refs_stable);
+		CHECK(drained_ok);
+		// The pause-time sweep leaves nothing pending; the lazy one must show
+		// the chunked hand-over at least once.
+		CHECK(!heap->LazySweepEnabled() || pending_seen);
+		std::printf("gc-test: lazy sweep mode=%s pending_peak=%zu drained=%d\n",
+		            heap->LazySweepEnabled() ? "lazy" : "pause", pending_peak,
+		            drained_ok ? 1 : 0);
+	}
+
 	// Release the last roots and collect everything.
 	MethodArea::ClearStaticFields();
 	heap->gc();
+	heap->DrainPendingFreeAll();
 	CHECK(heap->LiveObjectCount() == permanent_live);
 	// The index must be exactly the set of live objects after the final
 	// collection, in either maintenance mode.
