@@ -2,6 +2,7 @@
 //
 // Supported options:
 //   -cp <path> / -classpath <path>   class search path (platform separator)
+//   -Xms<size> / -Xmx<size>          initial / maximum heap size
 //   -Dkey=value                      set a system property (System.getProperty)
 //   --dump <class>                   parse a class file and print its metadata
 //   --version                        print the version
@@ -28,6 +29,7 @@
 #include <csignal>
 #include <cwchar>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 using namespace std;
@@ -61,11 +63,73 @@ static void print_usage()
 	cout << "Usage: darks-jvm [options] <main-class> [args...]" << endl;
 	cout << "Options:" << endl;
 	cout << "  -cp <path>, -classpath <path>  class search path" << endl;
+	cout << "  -Xms<size>, -Xmx<size>         initial / maximum heap size" << endl;
+	cout << "                                 (size: bytes or k/m/g suffix)" << endl;
 	cout << "  -Dkey=value                    set a system property" << endl;
 	cout << "  -ea / -da                      enable / disable assertions" << endl;
 	cout << "  --dump <class>                 print class file metadata" << endl;
 	cout << "  --version                      print version information" << endl;
 	cout << "  -h, --help                     print this help" << endl;
+}
+
+// Parses a JDK-style heap size: decimal bytes or a k/m/g suffix.
+static bool parse_heap_size(const string &text, size_t &bytes)
+{
+	if (text.empty())
+	{
+		return false;
+	}
+	const size_t max_size = numeric_limits<size_t>::max();
+	size_t i = 0;
+	unsigned long long value = 0;
+	while (i < text.size() && text[i] >= '0' && text[i] <= '9')
+	{
+		value = value * 10 + static_cast<unsigned long long>(text[i] - '0');
+		if (value > static_cast<unsigned long long>(max_size))
+		{
+			return false;
+		}
+		i++;
+	}
+	if (i == 0)
+	{
+		return false;
+	}
+	unsigned long long scale = 1;
+	if (i < text.size())
+	{
+		if (i + 1 != text.size())
+		{
+			return false;
+		}
+		switch (text[i])
+		{
+		case 'k':
+		case 'K':
+			scale = 1024ULL;
+			break;
+		case 'm':
+		case 'M':
+			scale = 1024ULL * 1024;
+			break;
+		case 'g':
+		case 'G':
+			scale = 1024ULL * 1024 * 1024;
+			break;
+		default:
+			return false;
+		}
+	}
+	if (value == 0)
+	{
+		return false;
+	}
+	if (value > static_cast<unsigned long long>(max_size) / scale)
+	{
+		return false;
+	}
+	bytes = static_cast<size_t>(value * scale);
+	return true;
 }
 
 static vector<string> split_classpath(const string &value)
@@ -333,12 +397,37 @@ static int RunMain(int argc, char **argv)
 	bool jar_mode = false;
 	string jar_main_class;
 	vector<string> jar_entries;
+	size_t requested_initial_heap = 0;
+	size_t requested_max_heap = 0;
 	for (int i = 1; i < argc; i++)
 	{
 		string arg(argv[i]);
 		if (options_done)
 		{
 			args.push_back(arg);
+			continue;
+		}
+		// Heap sizing: -Xms<size> / -Xmx<size>, JDK spelling only (the value
+		// is part of the option, no separate argument).
+		if (arg.compare(0, 4, "-Xms") == 0 || arg.compare(0, 4, "-Xmx") == 0)
+		{
+			const bool is_max = arg[3] == 'x';
+			const string text = arg.substr(4);
+			size_t bytes = 0;
+			if (!parse_heap_size(text, bytes))
+			{
+				cerr << "Error: invalid " << arg.substr(0, 4) << " value '"
+				     << text << "' (expected <size>[k|m|g])" << endl;
+				return 2;
+			}
+			if (is_max)
+			{
+				requested_max_heap = bytes;
+			}
+			else
+			{
+				requested_initial_heap = bytes;
+			}
 			continue;
 		}
 		// Generic system property option: -Dkey=value.  Accepted before or
@@ -443,6 +532,16 @@ static int RunMain(int argc, char **argv)
 		args.push_back(arg);
 		options_done = true;
 	}
+
+	if (requested_initial_heap != 0 && requested_max_heap != 0 &&
+	    requested_initial_heap > requested_max_heap)
+	{
+		cerr << "Error: -Xms (" << requested_initial_heap
+		     << " bytes) must not be greater than -Xmx ("
+		     << requested_max_heap << " bytes)" << endl;
+		return 2;
+	}
+	VMContext::SetHeapLimits(requested_initial_heap, requested_max_heap);
 
 	if (jar_mode)
 	{

@@ -2840,8 +2840,11 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Array_newInstance0(JNIEnv *env,
 	LPOBJECT_REF ref = NULL;
 	if (!VMContext::object_heap->NewObjectArrayObject(length, array_class, ref))
 	{
-		VMContext::SetPendingException(CreateJavaException(
-			"java/lang/OutOfMemoryError", "cannot allocate array"));
+		if (!VMContext::PendingException())
+		{
+			VMContext::SetPendingException(CreateJavaException(
+				"java/lang/OutOfMemoryError", "cannot allocate array"));
+		}
 		return NULL;
 	}
 	jobject result = JniObject(ref);

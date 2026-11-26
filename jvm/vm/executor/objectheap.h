@@ -36,6 +36,11 @@ public:
 	{
 		sequence = 1;
 		collector = NULL;
+		requested_initial_heap = 0;
+		requested_max_heap = 0;
+		initial_heap_bytes = 0;
+		max_heap_bytes = 0;
+		oom_in_progress = false;
 		gc_enabled = true;
 		gc_log = false;
 		in_gc = false;
@@ -66,6 +71,10 @@ public:
 	~ObjectHeap();
 
 	bool initialize(int init_size);
+
+	// -Xms/-Xmx in bytes before initialize(); 0 means ergonomics.  The
+	// launcher resolves the command line, gc_tests leaves both at 0.
+	void SetHeapLimits(size_t initial_bytes, size_t max_bytes);
 
 	// Stop-the-world mark-sweep over the registered thread stacks, static
 	// fields, constant-pool strings and temporary (native/C++) roots.
@@ -160,6 +169,18 @@ private:
 
 	void ConfigureFromEnvironment();
 
+	// Resolves the heap limits from the requested -Xms/-Xmx values, falling
+	// back to JDK ergonomics (25% / 1.5625% of physical memory).
+	void ResolveHeapLimits();
+
+	// True when allocating extra bytes would cross -Xmx.
+	bool WouldExceedMax(size_t extra) const;
+
+	// Installs java.lang.OutOfMemoryError("Java heap space") as the pending
+	// exception.  Allocations made while the error is being built bypass the
+	// limit so the error object itself can always be created.
+	void ThrowHeapOOM();
+
 	void MarkRoots();
 
 	// Clears unreachable referents and enqueues the affected
@@ -192,6 +213,11 @@ private:
 	bool in_gc;
 	int no_gc_depth;
 	GCCollector *collector;
+	size_t requested_initial_heap;
+	size_t requested_max_heap;
+	size_t initial_heap_bytes;
+	size_t max_heap_bytes;
+	bool oom_in_progress;
 	size_t base_threshold;
 	size_t threshold;
 	size_t live_bytes;

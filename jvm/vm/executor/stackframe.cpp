@@ -3019,8 +3019,11 @@ bool StackFrame::ExecuteNewObject(U2 index)
 	LPOBJECT_REF obj_ref = NULL;
 	if (!VMContext::object_heap->NewObject(target, obj_ref))
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/OutOfMemoryError", "cannot allocate object");
+		if (!VMContext::pending_exception)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/OutOfMemoryError", "cannot allocate object");
+		}
 		return false;
 	}
 	op_stack->pushObject(obj_ref);
@@ -5525,8 +5528,11 @@ bool StackFrame::ExecuteNewArray(U1 index)
 	LPOBJECT_REF obj_ref = NULL;
 	if (!VMContext::object_heap->NewArrayObject(slot.iValue, array_class, obj_ref))
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/OutOfMemoryError", "cannot allocate array");
+		if (!VMContext::pending_exception)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/OutOfMemoryError", "cannot allocate array");
+		}
 		return false;
 	}
 	op_stack->pushObject(obj_ref);
@@ -5574,8 +5580,11 @@ bool StackFrame::ExecuteNewObjectArray(U2 index)
 	LPOBJECT_REF obj_ref = NULL;
 	if (!VMContext::object_heap->NewObjectArrayObject(slot.iValue, array_class, obj_ref))
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/OutOfMemoryError", "cannot allocate array");
+		if (!VMContext::pending_exception)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/OutOfMemoryError", "cannot allocate array");
+		}
 		return false;
 	}
 	op_stack->pushObject(obj_ref);
@@ -5625,8 +5634,11 @@ bool StackFrame::ExecuteNewMultiArray(U2 index, int count)
 	delete[] nums;
 	if (!ok)
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/OutOfMemoryError", "cannot allocate multi-dimensional array");
+		if (!VMContext::pending_exception)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/OutOfMemoryError", "cannot allocate multi-dimensional array");
+		}
 		return false;
 	}
 	op_stack->pushObject(obj_ref);

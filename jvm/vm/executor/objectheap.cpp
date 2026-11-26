@@ -15,10 +15,17 @@
 #include "vmmutex.h"
 #include "vm/executor/gc/gccollector.h"
 #include "vm/executor/gc/gcbarrier.h"
+#include "javaexception.h"
 
 #include <string>
 #include <chrono>
 #include <cstdlib>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -29,6 +36,35 @@ bool GcStatsEnabled()
 }
 
 typedef std::chrono::steady_clock GcClock;
+
+// Physical memory used for the -Xmx/-Xms ergonomics.  Matches what the JDK
+// reports through sysconf(_SC_PHYS_PAGES) (GlobalMemoryStatusEx on Windows).
+size_t DetectPhysicalMemory()
+{
+#if defined(_WIN32)
+	MEMORYSTATUSEX status;
+	status.dwLength = sizeof(status);
+	if (GlobalMemoryStatusEx(&status))
+	{
+		return static_cast<size_t>(status.ullTotalPhys);
+	}
+	return 0;
+#else
+	long pages = sysconf(_SC_PHYS_PAGES);
+	long page_size = sysconf(_SC_PAGESIZE);
+	if (pages > 0 && page_size > 0)
+	{
+		return static_cast<size_t>(pages) * static_cast<size_t>(page_size);
+	}
+	return 0;
+#endif
+}
+
+// Round down to a whole MiB, like the JDK's heap sizing.
+size_t AlignToMiB(size_t bytes)
+{
+	return bytes & ~static_cast<size_t>(1024 * 1024 - 1);
+}
 
 double MillisecondsSince(const GcClock::time_point &start)
 {
@@ -127,13 +163,96 @@ ObjectHeap::~ObjectHeap()
 	sequence = 0;
 }
 
+void ObjectHeap::SetHeapLimits(size_t initial_bytes, size_t max_bytes)
+{
+	requested_initial_heap = initial_bytes;
+	requested_max_heap = max_bytes;
+}
+
+void ObjectHeap::ResolveHeapLimits()
+{
+	const size_t physical = DetectPhysicalMemory();
+	size_t max_bytes = requested_max_heap;
+	if (max_bytes == 0)
+	{
+		// JDK default: MaxRAMPercentage=25 of physical memory.
+		max_bytes = physical / 4;
+		// -Xms alone raises the default maximum so the request stays valid.
+		if (requested_initial_heap > max_bytes)
+		{
+			max_bytes = requested_initial_heap;
+		}
+	}
+	if (max_bytes == 0)
+	{
+		// Physical memory could not be detected; fall back to 1 GiB rather
+		// than clamping the heap to the 1 MiB minimum below.
+		max_bytes = 1024ULL * 1024 * 1024;
+	}
+	max_bytes = AlignToMiB(max_bytes);
+	if (max_bytes < 1024 * 1024)
+	{
+		max_bytes = 1024 * 1024;
+	}
+
+	size_t initial_bytes = requested_initial_heap;
+	if (initial_bytes == 0)
+	{
+		// JDK default: InitialRAMPercentage=1.5625, i.e. -Xmx/16.
+		initial_bytes = AlignToMiB(max_bytes / 16);
+	}
+	initial_bytes = AlignToMiB(initial_bytes);
+	if (initial_bytes < 1024 * 1024)
+	{
+		initial_bytes = 1024 * 1024;
+	}
+	if (initial_bytes > max_bytes)
+	{
+		initial_bytes = max_bytes;
+	}
+
+	max_heap_bytes = max_bytes;
+	initial_heap_bytes = initial_bytes;
+}
+
+bool ObjectHeap::WouldExceedMax(size_t extra) const
+{
+	if (max_heap_bytes == 0 || oom_in_progress ||
+	    VMContext::pending_exception)
+	{
+		return false;
+	}
+	return live_bytes + extra > max_heap_bytes;
+}
+
+void ObjectHeap::ThrowHeapOOM()
+{
+	if (VMContext::pending_exception)
+	{
+		return;
+	}
+	oom_in_progress = true;
+	VMContext::pending_exception = CreateJavaException(
+		"java/lang/OutOfMemoryError", "Java heap space");
+	oom_in_progress = false;
+}
+
 bool ObjectHeap::initialize(int init_size)
 {
 	if (init_size < 1)
 	{
 		init_size = 1;
 	}
-	objs.assign(static_cast<size_t>(init_size), NULL);
+	ResolveHeapLimits();
+	// -Xms reserves object slots up front; 64 bytes is the average footprint
+	// seen on the Spring Boot workload, so the slot vector is not the limit.
+	size_t slots = static_cast<size_t>(init_size);
+	const size_t slots_for_initial = initial_heap_bytes / 64;
+	if (slots_for_initial > slots)
+	{
+		slots = slots_for_initial;
+	}
+	objs.assign(slots, NULL);
 	sequence = 1;
 	ConfigureFromEnvironment();
 	const char *impl_env = getenv("DARKS_JVM_GC_IMPL");
@@ -151,6 +270,14 @@ bool ObjectHeap::initialize(int init_size)
 	if (getenv("DARKS_GC_SATB_TEST"))
 	{
 		GCBarrier::Enable();
+	}
+	if (GcStatsEnabled())
+	{
+		fprintf(stderr,
+		        "[gcinit] heap_min=%zu heap_max=%zu slots=%zu "
+		        "base_threshold=%zu\n",
+		        initial_heap_bytes, max_heap_bytes, objs.size(),
+		        base_threshold);
 	}
 	return true;
 }
@@ -171,13 +298,21 @@ void ObjectHeap::ConfigureFromEnvironment()
 	gc_log = (log_env && *log_env && strcmp(log_env, "0") != 0);
 
 	const char *threshold_env = getenv("DARKS_JVM_GC_THRESHOLD");
+	bool threshold_overridden = false;
 	if (threshold_env && *threshold_env)
 	{
 		unsigned long long value = strtoull(threshold_env, NULL, 10);
 		if (value >= 1024)
 		{
 			base_threshold = static_cast<size_t>(value);
+			threshold_overridden = true;
 		}
+	}
+	// -Xms raises the initial collection threshold so startup does not collect
+	// every few megabytes; DARKS_JVM_GC_THRESHOLD still wins when set.
+	if (!threshold_overridden && initial_heap_bytes > base_threshold)
+	{
+		base_threshold = initial_heap_bytes;
 	}
 	threshold = base_threshold;
 }
@@ -217,7 +352,10 @@ void ObjectHeap::MaybeGC()
 	bool needed = false;
 	{
 		VMLock lk;
-		if (!gc_enabled || in_gc || no_gc_depth > 0)
+		// The OutOfMemoryError itself is allocated while the heap is over
+		// budget: collecting there would either collect the partially built
+		// exception or re-enter the failing allocation.
+		if (!gc_enabled || in_gc || no_gc_depth > 0 || oom_in_progress)
 		{
 			return;
 		}
@@ -820,6 +958,10 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 	{
 		next_threshold = live_bytes * 2;
 	}
+	if (max_heap_bytes != 0 && next_threshold > max_heap_bytes)
+	{
+		next_threshold = max_heap_bytes;
+	}
 	threshold = next_threshold;
 
 	if (gc_log)
@@ -862,7 +1004,8 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 		        "ref_entries=%zu rthread=%.2f rstatic=%.2f "
 		        "rcp=%.2f rtemp=%.2f rglobal=%.2f rjni=%.2f slots=%zu "
 		        "free_before=%zu live_before=%zu objs_before=%zu "
-		        "thresh_before=%zu freed_objs=%zu freed_bytes=%zu "
+		        "thresh_before=%zu heap_max=%zu heap_used=%zu "
+		        "freed_objs=%zu freed_bytes=%zu "
 		        "live_after=%zu objs_after=%zu stacks=%zu static_fields=%zu "
 		        "classes=%zu cp_entries=%zu cp_strings=%zu temp_slots=%zu "
 		        "globals=%zu jni_envs=%zu frame=%s\n",
@@ -871,7 +1014,8 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 		        ref_index.size(), root_thread_ms,
 		        root_static_ms, root_cp_ms, root_temp_ms, root_global_ms,
 		        root_jni_ms, slots_before, free_before, live_bytes_before,
-		        live_objects_before, threshold_before, freed_objects,
+		        live_objects_before, threshold_before, max_heap_bytes,
+		        live_bytes_before, freed_objects,
 		        freed_bytes, live_bytes, live_objects, root_stacks,
 		        root_static_fields, root_classes, root_cp_entries,
 		        root_cp_strings, root_temp_slots, root_global_count,
@@ -922,6 +1066,12 @@ bool ObjectHeap::NewObject(lpClass clazz, LPOBJECT_REF &object_ref)
 		delete obj;
 		return false;
 	}
+	if (WouldExceedMax(ObjectBytes(obj)))
+	{
+		delete obj;
+		ThrowHeapOOM();
+		return false;
+	}
 	if (!Register(obj, object_ref))
 	{
 		delete obj;
@@ -940,14 +1090,24 @@ bool ObjectHeap::NewArrayObject(int size, lpClass clazz, LPOBJECT_REF &object_re
 		return false;
 	}
 	lpObject obj = new JObject(clazz);
-	LPOBJECT_REF ref = NULL;
-	if (!Register(obj, ref) || !obj->newArrayInstance(size))
+	if (!obj)
 	{
-		if (obj->index > 0 && static_cast<size_t>(obj->index) < objs.size())
-		{
-			objs[static_cast<size_t>(obj->index)] = NULL;
-			free_indices.push_back(obj->index);
-		}
+		return false;
+	}
+	if (!obj->newArrayInstance(size))
+	{
+		delete obj;
+		return false;
+	}
+	if (WouldExceedMax(ObjectBytes(obj)))
+	{
+		delete obj;
+		ThrowHeapOOM();
+		return false;
+	}
+	LPOBJECT_REF ref = NULL;
+	if (!Register(obj, ref))
+	{
 		delete obj;
 		return false;
 	}
@@ -965,7 +1125,10 @@ bool ObjectHeap::NewObjectArrayObject(int size, lpClass clazz, LPOBJECT_REF &obj
 		return false;
 	}
 	lpObject obj = new JObject(clazz);
-	LPOBJECT_REF ref = NULL;
+	if (!obj)
+	{
+		return false;
+	}
 	// An array whose component is itself an array stores references, so the
 	// element representation follows the descriptor depth: only a
 	// one-dimensional array has primitive slots.
@@ -981,13 +1144,20 @@ bool ObjectHeap::NewObjectArrayObject(int size, lpClass clazz, LPOBJECT_REF &obj
 			element_type = type_desc.data_type;
 		}
 	}
-	if (!Register(obj, ref) || !obj->newArrayInstance(element_type, size))
+	if (!obj->newArrayInstance(element_type, size))
 	{
-		if (obj->index > 0 && static_cast<size_t>(obj->index) < objs.size())
-		{
-			objs[static_cast<size_t>(obj->index)] = NULL;
-			free_indices.push_back(obj->index);
-		}
+		delete obj;
+		return false;
+	}
+	if (WouldExceedMax(ObjectBytes(obj)))
+	{
+		delete obj;
+		ThrowHeapOOM();
+		return false;
+	}
+	LPOBJECT_REF ref = NULL;
+	if (!Register(obj, ref))
+	{
 		delete obj;
 		return false;
 	}
@@ -1029,6 +1199,15 @@ bool ObjectHeap::CreateArrayDimension(lpClass array_class, LPINT32 nums, int lev
 			delete obj;
 			return false;
 		}
+		if (WouldExceedMax(ObjectBytes(obj)))
+		{
+			objs[static_cast<size_t>(obj->index)] = NULL;
+			free_indices.push_back(obj->index);
+			object_ref = NULL;
+			delete obj;
+			ThrowHeapOOM();
+			return false;
+		}
 		AccountAllocation(obj);
 		return true;
 	}
@@ -1039,6 +1218,15 @@ bool ObjectHeap::CreateArrayDimension(lpClass array_class, LPINT32 nums, int lev
 		free_indices.push_back(obj->index);
 		object_ref = NULL;
 		delete obj;
+		return false;
+	}
+	if (WouldExceedMax(ObjectBytes(obj)))
+	{
+		objs[static_cast<size_t>(obj->index)] = NULL;
+		free_indices.push_back(obj->index);
+		object_ref = NULL;
+		delete obj;
+		ThrowHeapOOM();
 		return false;
 	}
 	AccountAllocation(obj);
@@ -1104,6 +1292,16 @@ bool ObjectHeap::NewStringObject(LPSTR data, int length, LPOBJECT_REF &object_re
 bool ObjectHeap::NewStringObject(unsigned short *data, int length, LPOBJECT_REF &object_ref)
 {
 	VMLock lk;
+	// A String is a char[] plus the String object; reject before touching the
+	// caller's buffer so the failure is a Java OOME, not a C++ exception.
+	const size_t estimated = length > 0
+		? static_cast<size_t>(length) * 2 + 256 : 256;
+	if (WouldExceedMax(estimated))
+	{
+		delete[] data;
+		ThrowHeapOOM();
+		return false;
+	}
 	bool transferred = false;
 	{
 		// The char[] and the freshly allocated String are only held by C++

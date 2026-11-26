@@ -294,6 +294,10 @@ int main(int argc, char **argv)
 		}
 
 		bool rounds_ok = true;
+		// -Xms reserves object slots up front, so the vector starts at its
+		// steady-state size; the rounds below must reuse freed indices rather
+		// than grow it any further.
+		const size_t slots_before_rounds = heap->objs.size();
 		for (int round = 0; round < 20; round++)
 		{
 			for (int i = 0; i < 300; i++)
@@ -319,7 +323,7 @@ int main(int argc, char **argv)
 		CHECK(rounds_ok);
 		CHECK(heap->LiveObjectCount() >= 3);
 		// Freed indices are reused instead of growing the slot vector forever.
-		CHECK(heap->objs.size() <= 2048);
+		CHECK(heap->objs.size() == slots_before_rounds);
 		std::printf("gc-test: %d collection rounds, live_objects=%zu, heap_slots=%zu\n",
 			20, heap->LiveObjectCount(), heap->objs.size());
 	}

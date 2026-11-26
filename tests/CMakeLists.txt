@@ -106,6 +106,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/Hello.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/Clock.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/GcStress.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/HeapLimit.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/SatbStress.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/dev/darks/jni/NativeLib.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/ThreadBasics.java"
@@ -689,6 +690,44 @@ if(JAVAC)
         COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
                 "-DARGS=-E;env;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
                 -DEXPECT_RC=0 "-DEXPECT_TEXT=gc-collect" -P "${CHECK}")
+
+    # -Xmx is a hard budget: the allocation that would cross it fails with a
+    # Java OutOfMemoryError carrying the JDK message, and the heap keeps
+    # working once the surviving arrays are released.
+    add_test(NAME heap_xmx_oom
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_LOG=1;${JVM};-Xms8m;-Xmx48m;-cp;${CLASSES_DIR};HeapLimit;1;64"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=heap limit: oom after=[0-9]+ message=Java heap space"
+                "-DEXPECT_TEXT2=heap limit: ok" -P "${CHECK}")
+
+    # Malformed sizes and an inverted range are rejected before the VM starts.
+    add_test(NAME heap_invalid_xmx
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-Xmxabc;-cp;${CLASSES_DIR};Hello" -DEXPECT_RC=2
+                "-DEXPECT_TEXT=invalid -Xmx value 'abc'" -P "${CHECK}")
+
+    add_test(NAME heap_negative_xmx
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-Xmx-1;-cp;${CLASSES_DIR};Hello" -DEXPECT_RC=2
+                "-DEXPECT_TEXT=invalid -Xmx value '-1'" -P "${CHECK}")
+
+    add_test(NAME heap_xms_above_xmx
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-Xms64m;-Xmx32m;-cp;${CLASSES_DIR};Hello" -DEXPECT_RC=2
+                "-DEXPECT_TEXT=-Xms .* must not be greater than -Xmx" -P "${CHECK}")
+
+    # -Xms reserves slots and raises the initial collection threshold, so a
+    # workload well below -Xms runs without a threshold-triggered collection;
+    # the only gcstat lines come from HeapLimit's explicit System.gc().
+    add_test(NAME heap_xms_prealloc
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_GCSTATS=1;DARKS_JVM_GC_LOG=1;${JVM};-Xms64m;-Xmx128m;-cp;${CLASSES_DIR};HeapLimit;1;8"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=heap limit: no oom allocated=8"
+                "-DEXPECT_TEXT2=\\[gcinit\\] heap_min=67108864 heap_max=134217728"
+                "-DEXPECT_TEXT3=heap limit: ok"
+                "-DEXPECT_NO_TEXT=reason=threshold" -P "${CHECK}")
 
     add_test(NAME dump_hello
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
@@ -1366,12 +1405,14 @@ if(JAVAC)
     set_tests_properties(producer_consumer_repeat PROPERTIES TIMEOUT 300)
 
     # Continuous allocation with a low GC threshold: the collector must stop
-    # every interpreter worker at a safepoint without deadlocking.
+    # every interpreter worker at a safepoint without deadlocking.  A 1 MiB
+    # threshold keeps the first collection inside the workload instead of the
+    # very first startup allocations (which only amount to a few KiB).
     foreach(mp 1 4)
         add_test(NAME thread_GcThreads_mp${mp}
             COMMAND "${CMAKE_COMMAND}"
                 "-DPROG=${CMAKE_COMMAND}"
-                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_JVM_GC_THRESHOLD=512;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcThreads"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_JVM_GC_THRESHOLD=1048576;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcThreads"
                 -DEXPECT_RC=0 -DTIMEOUT=180
                 "-DEXPECT_TEXT=gc-threads ok" "-DEXPECT_TEXT2=gc-collect" -P "${CHECK}")
     endforeach()
