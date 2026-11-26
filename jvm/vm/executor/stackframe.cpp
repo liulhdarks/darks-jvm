@@ -5432,7 +5432,7 @@ bool StackFrame::StackToLocal(lpStackFrame frame, vector<TypeDesc> &type_desc, b
 	lpOperStack tmp_stack = new OperStack(count * 2);
 	for (int i = count - 1; i >= 0; i--)
 	{
-		TypeDesc desc = type_desc[i];
+		const TypeDesc &desc = type_desc[i];
 		DATA_TYPE data_type = desc.data_type;
 		if (desc.check_array)
 		{
@@ -5476,7 +5476,7 @@ bool StackFrame::StackToLocal(lpStackFrame frame, vector<TypeDesc> &type_desc, b
 
 	for (int i = 0; i < count; i++)
 	{
-		TypeDesc desc = type_desc[i];
+		const TypeDesc &desc = type_desc[i];
 		DATA_TYPE data_type = desc.data_type;
 		if (desc.check_array)
 		{

@@ -4,6 +4,20 @@
 #include "exec_common.h"
 #include "vm/exceptions.h"
 
+// The hot operand-stack operations are a bounds test and an 8-byte copy; the
+// diagnostics (snprintf plus a thrown exception) are what kept the compiler
+// from inlining them at ~500 interpreter sites.  Keep the failure paths out of
+// line so the fast paths can be inlined.
+#if defined(__GNUC__)
+#define DARKS_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define DARKS_NOINLINE __attribute__((noinline))
+#define DARKS_ALWAYS_INLINE __attribute__((always_inline))
+#else
+#define DARKS_UNLIKELY(x) (x)
+#define DARKS_NOINLINE __declspec(noinline)
+#define DARKS_ALWAYS_INLINE
+#endif
+
 class OperStack
 {
 
@@ -11,6 +25,13 @@ private:
 	int init_size;
 	Slot *slots;
 	int index;
+
+	DARKS_NOINLINE void Overflow() const;
+	DARKS_NOINLINE void UnderflowPop() const;
+	DARKS_NOINLINE void UnderflowTop() const;
+	DARKS_NOINLINE void UnderflowTop(int offset) const;
+	DARKS_NOINLINE void UnderflowGet(int i) const;
+
 public:
 	const char *debug_method;
 	int debug_pc;
@@ -31,28 +52,28 @@ public:
 		slots = NULL;
 	}
 
-	void push(short v)
+	DARKS_ALWAYS_INLINE void push(short v)
 	{
 		Slot slot;
 		slot.iValue = v;
 		push(slot);
 	}
 
-	void push(int v)
+	DARKS_ALWAYS_INLINE void push(int v)
 	{
 		Slot slot;
 		slot.iValue = v;
 		push(slot);
 	}
 
-	void push(float v)
+	DARKS_ALWAYS_INLINE void push(float v)
 	{
 		Slot slot;
 		slot.fValue = v;
 		push(slot);
 	}
 
-	void push(LONG64 v)
+	DARKS_ALWAYS_INLINE void push(LONG64 v)
 	{
 		WByteValue bv;
 		bv.lValue = v;
@@ -66,7 +87,7 @@ public:
 		push(slot2);
 	}
 
-	void push(double v)
+	DARKS_ALWAYS_INLINE void push(double v)
 	{
 		WByteValue bv;
 		bv.dValue = v;
@@ -80,68 +101,57 @@ public:
 		push(slot2);
 	}
 
-	void pushObject(LPOBJECT_REF &v)
+	DARKS_ALWAYS_INLINE void pushObject(LPOBJECT_REF &v)
 	{
 		Slot slot;
 		slot.heapPtr = v;
 		push(slot);
 	}
 
-	void push(Slot &slot)
+	DARKS_ALWAYS_INLINE void push(Slot &slot)
 	{
-		if (index >= init_size)
+		if (DARKS_UNLIKELY(index >= init_size))
 		{
-			char msg[256];
-			snprintf(msg, sizeof(msg), "Operation stack overflow (index=%d, capacity=%d) at %s pc=%d.", index, init_size, debug_method ? debug_method : "?", debug_pc);
-			throw new VMExecutorException(msg);
+			Overflow();
 		}
 		slots[index++] = slot;
 	}
 
-	bool pop(Slot &slot)
+	DARKS_ALWAYS_INLINE bool pop(Slot &slot)
 	{
-		if (index <= 0)
+		if (DARKS_UNLIKELY(index <= 0))
 		{
-			char msg[256];
-			snprintf(msg, sizeof(msg), "Operation stack underflow (pop) at %s pc=%d.", debug_method ? debug_method : "?", debug_pc);
-			throw new VMExecutorException(msg);
+			UnderflowPop();
 		}
 		slot = slots[--index];
 		return true;
 	}
 
-	Slot top()
+	DARKS_ALWAYS_INLINE Slot top()
 	{
-		if (index <= 0)
+		if (DARKS_UNLIKELY(index <= 0))
 		{
-			char msg[256];
-			snprintf(msg, sizeof(msg), "Operation stack underflow (top) at %s pc=%d.", debug_method ? debug_method : "?", debug_pc);
-			throw new VMExecutorException(msg);
+			UnderflowTop();
 		}
 		return slots[index - 1];
 	}
 
-	bool top(int offset, Slot &slot)
+	DARKS_ALWAYS_INLINE bool top(int offset, Slot &slot)
 	{
-		int tmp = index - 1;
-		tmp -= offset;
-		if (tmp < 0 || tmp >= index)
+		int tmp = index - 1 - offset;
+		if (DARKS_UNLIKELY(tmp < 0 || tmp >= index))
 		{
-			char msg[128];
-			snprintf(msg, sizeof(msg), "Operation stack top(offset) out of range (offset=%d, index=%d).", offset, index);
-			throw new VMExecutorException(msg);
+			UnderflowTop(offset);
 		}
 		slot = slots[tmp];
 		return true;
 	}
 
-	bool get(int i, Slot &slot)
+	DARKS_ALWAYS_INLINE bool get(int i, Slot &slot)
 	{
-		if (i < 0 || i >= index)
+		if (DARKS_UNLIKELY(i < 0 || i >= index))
 		{
-			char msg[128];
-			snprintf(msg, sizeof(msg), "Operation stack get(%d) out of range (index=%d).", i, index);
-			throw new VMExecutorException(msg);
+			UnderflowGet(i);
 		}
 		slot = slots[i];
 		return true;
