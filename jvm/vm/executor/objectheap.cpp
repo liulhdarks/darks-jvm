@@ -15,8 +15,24 @@
 #include "vmmutex.h"
 
 #include <string>
+#include <chrono>
+#include <cstdlib>
 
 namespace {
+
+bool GcStatsEnabled()
+{
+	static const bool enabled = getenv("DARKS_GCSTATS") != NULL;
+	return enabled;
+}
+
+typedef std::chrono::steady_clock GcClock;
+
+double MillisecondsSince(const GcClock::time_point &start)
+{
+	return std::chrono::duration<double, std::milli>(GcClock::now() - start)
+		.count();
+}
 
 size_t ElementBytes(DATA_TYPE data_type)
 {
@@ -189,7 +205,7 @@ void ObjectHeap::MaybeGC()
 	}
 	if (needed)
 	{
-		gc();
+		gc("threshold");
 	}
 }
 
@@ -297,28 +313,39 @@ void ObjectHeap::MarkObjectRef(LPOBJECT_REF ref)
 
 void ObjectHeap::MarkThreadStackRoots()
 {
+	const GcClock::time_point start = GcClock::now();
 	VMLock lk;
+	root_stacks = thread_stacks.size();
 	for (size_t i = 0; i < thread_stacks.size(); i++)
 	{
 		thread_stacks[i]->MarkRoots(this);
 	}
+	root_thread_ms = MillisecondsSince(start);
 }
 
 void ObjectHeap::MarkStaticRoots()
 {
+	const GcClock::time_point start = GcClock::now();
+	root_static_fields = 0;
 	std::map<string, lpFieldValue>::iterator it = MethodArea::static_field_map.begin();
 	for (; it != MethodArea::static_field_map.end(); ++it)
 	{
 		lpFieldValue fv = it->second;
 		if (fv)
 		{
+			root_static_fields++;
 			MarkObjectRef(fv->field_value.heapPtr);
 		}
 	}
+	root_static_ms = MillisecondsSince(start);
 }
 
 void ObjectHeap::MarkConstantPoolRoots()
 {
+	const GcClock::time_point start = GcClock::now();
+	root_classes = 0;
+	root_cp_entries = 0;
+	root_cp_strings = 0;
 	const std::vector<ClassLoader *> &loaders = DarksVM_AllClassLoaders();
 	for (size_t li = 0; li < loaders.size(); li++)
 	{
@@ -336,22 +363,31 @@ void ObjectHeap::MarkConstantPoolRoots()
 			{
 				continue;
 			}
+			root_classes++;
 			int size = clazz->const_pool->size();
+			root_cp_entries += static_cast<size_t>(size);
 			for (int i = 1; i <= size; i++)
 			{
 				lpConstant constant = clazz->const_pool->GetConstant(i);
 				if (constant && constant->tag == STRING_CONSTANT)
 				{
 					StringConstant *string_constant = static_cast<StringConstant *>(constant);
+					if (string_constant->string_ref)
+					{
+						root_cp_strings++;
+					}
 					MarkObjectRef(string_constant->string_ref);
 				}
 			}
 		}
 	}
+	root_cp_ms = MillisecondsSince(start);
 }
 
 void ObjectHeap::MarkTemporaryRoots()
 {
+	const GcClock::time_point start = GcClock::now();
+	root_temp_slots = root_slots.size();
 	for (size_t i = 0; i < root_slots.size(); i++)
 	{
 		LPOBJECT_REF *slot = root_slots[i];
@@ -360,6 +396,7 @@ void ObjectHeap::MarkTemporaryRoots()
 			MarkObjectRef(*slot);
 		}
 	}
+	root_temp_ms = MillisecondsSince(start);
 }
 
 void ObjectHeap::AddGlobalRef(LPOBJECT_REF ref)
@@ -436,21 +473,27 @@ bool ObjectHeap::IsWeakGlobalRef(LPOBJECT_REF ref) const
 
 void ObjectHeap::MarkGlobalRefs()
 {
+	const GcClock::time_point start = GcClock::now();
+	root_global_count = global_refs.size();
 	for (size_t i = 0; i < global_refs.size(); i++)
 	{
 		MarkObjectRef(global_refs[i]);
 	}
+	root_global_ms = MillisecondsSince(start);
 }
 
 void ObjectHeap::MarkJniLocalRoots()
 {
 	// The JNI environment list is mutated when a coroutine finishes, possibly
 	// while this collection runs on another worker.
+	const GcClock::time_point start = GcClock::now();
 	VMLock lk;
+	root_jni_envs = VMContext::jni_envs.size();
 	for (size_t i = 0; i < VMContext::jni_envs.size(); i++)
 	{
 		DarksVM_MarkJniEnvRoots(VMContext::jni_envs[i], this);
 	}
+	root_jni_ms = MillisecondsSince(start);
 }
 
 void ObjectHeap::MarkRoots()
@@ -573,11 +616,16 @@ void ObjectHeap::ProcessWeakReferences()
 	}
 }
 
-void ObjectHeap::gc()
+void ObjectHeap::gc(const char *reason)
 {
 	// Only one collection at a time.  A native call may reach allocation from
 	// another thread; in that case the collection is skipped rather than
 	// waiting while holding the heap lock.
+	const GcClock::time_point gc_start = GcClock::now();
+	if (!reason)
+	{
+		reason = "unknown";
+	}
 	std::unique_lock<std::mutex> gc_lock(gc_mutex, std::try_to_lock);
 	if (!gc_lock.owns_lock())
 	{
@@ -597,8 +645,23 @@ void ObjectHeap::gc()
 	// code is treated as stopped: its Java frames are at the call boundary and
 	// its JNI local references are registered roots.
 	Scheduler::Instance().SafepointBegin();
+	const GcClock::time_point world_stopped = GcClock::now();
+	const size_t slots_before = objs.size();
+	const size_t free_before = free_indices.size();
+	const size_t live_bytes_before = live_bytes;
+	const size_t live_objects_before = live_objects;
+	const size_t threshold_before = threshold;
+	std::string trigger_frame;
+	{
+		ThreadStack *trigger_stack = Scheduler::CurrentStack();
+		if (!trigger_stack || !trigger_stack->DescribeTopFrame(trigger_frame))
+		{
+			trigger_frame.assign("native");
+		}
+	}
 	in_gc = true;
 
+	const GcClock::time_point setup_start = GcClock::now();
 	ref_index.clear();
 	for (size_t i = 1; i < objs.size(); i++)
 	{
@@ -611,8 +674,10 @@ void ObjectHeap::gc()
 	marked.assign(objs.size(), false);
 	mark_stack.clear();
 	weak_reference_objects.clear();
+	const GcClock::time_point setup_done = GcClock::now();
 
 	MarkRoots();
+	const GcClock::time_point roots_done = GcClock::now();
 
 	// Iterative trace: scan every marked object for outgoing references.
 	while (!mark_stack.empty())
@@ -677,7 +742,9 @@ void ObjectHeap::gc()
 		}
 	}
 
+	const GcClock::time_point trace_done = GcClock::now();
 	ProcessWeakReferences();
+	const GcClock::time_point weak_done = GcClock::now();
 
 	size_t freed_bytes = 0;
 	size_t freed_objects = 0;
@@ -709,6 +776,7 @@ void ObjectHeap::gc()
 		}
 	}
 
+	const GcClock::time_point sweep_done = GcClock::now();
 	live_bytes = live;
 	live_objects = live_count;
 	gc_runs++;
@@ -733,6 +801,52 @@ void ObjectHeap::gc()
 
 	in_gc = false;
 	Scheduler::Instance().SafepointEnd();
+	const GcClock::time_point world_resumed = GcClock::now();
+
+	if (GcStatsEnabled())
+	{
+		const double preworld_ms =
+			std::chrono::duration<double, std::milli>(world_stopped - gc_start).count();
+		const double total_ms =
+			std::chrono::duration<double, std::milli>(world_resumed - gc_start).count();
+		const double stw_ms =
+			std::chrono::duration<double, std::milli>(world_resumed - world_stopped).count();
+		const double root_ms =
+			std::chrono::duration<double, std::milli>(roots_done - world_stopped).count();
+		const double mark_ms =
+			std::chrono::duration<double, std::milli>(trace_done - roots_done).count();
+		const double weak_ms =
+			std::chrono::duration<double, std::milli>(weak_done - trace_done).count();
+		const double sweep_ms =
+			std::chrono::duration<double, std::milli>(sweep_done - weak_done).count();
+		const double post_ms =
+			std::chrono::duration<double, std::milli>(world_resumed - sweep_done).count();
+		const double setup_ms =
+			std::chrono::duration<double, std::milli>(setup_done - setup_start).count();
+		const double roots_ms =
+			std::chrono::duration<double, std::milli>(roots_done - setup_done).count();
+		fprintf(stderr,
+		        "[gcstat] run=%d reason=%s total_ms=%.2f preworld_ms=%.2f "
+		        "stw_ms=%.2f root_ms=%.2f mark_ms=%.2f weak_ms=%.2f "
+		        "sweep_ms=%.2f post_ms=%.2f setup_ms=%.2f roots_ms=%.2f "
+		        "ref_entries=%zu rthread=%.2f rstatic=%.2f "
+		        "rcp=%.2f rtemp=%.2f rglobal=%.2f rjni=%.2f slots=%zu "
+		        "free_before=%zu live_before=%zu objs_before=%zu "
+		        "thresh_before=%zu freed_objs=%zu freed_bytes=%zu "
+		        "live_after=%zu objs_after=%zu stacks=%zu static_fields=%zu "
+		        "classes=%zu cp_entries=%zu cp_strings=%zu temp_slots=%zu "
+		        "globals=%zu jni_envs=%zu frame=%s\n",
+		        gc_runs, reason, total_ms, preworld_ms, stw_ms, root_ms,
+		        mark_ms, weak_ms, sweep_ms, post_ms, setup_ms, roots_ms,
+		        ref_index.size(), root_thread_ms,
+		        root_static_ms, root_cp_ms, root_temp_ms, root_global_ms,
+		        root_jni_ms, slots_before, free_before, live_bytes_before,
+		        live_objects_before, threshold_before, freed_objects,
+		        freed_bytes, live_bytes, live_objects, root_stacks,
+		        root_static_fields, root_classes, root_cp_entries,
+		        root_cp_strings, root_temp_slots, root_global_count,
+		        root_jni_envs, trigger_frame.c_str());
+	}
 }
 
 bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)

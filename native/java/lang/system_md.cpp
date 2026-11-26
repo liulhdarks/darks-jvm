@@ -350,7 +350,7 @@ JNIEXPORT void JNICALL Java_java_lang_System_gc0
 {
 	if (VMContext::object_heap)
 	{
-		VMContext::object_heap->gc();
+		VMContext::object_heap->gc("system.gc");
 	}
 }
 
@@ -641,7 +641,7 @@ JNIEXPORT void JNICALL Java_java_lang_Runtime_gc(JNIEnv *env, jobject thiz)
 	(void)thiz;
 	if (VMContext::object_heap)
 	{
-		VMContext::object_heap->gc();
+		VMContext::object_heap->gc("runtime.gc");
 	}
 }
 

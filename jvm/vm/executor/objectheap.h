@@ -43,6 +43,20 @@ public:
 		gc_freed_total = 0;
 		gc_freed_last = 0;
 		live_objects = 0;
+		root_thread_ms = 0;
+		root_static_ms = 0;
+		root_cp_ms = 0;
+		root_temp_ms = 0;
+		root_global_ms = 0;
+		root_jni_ms = 0;
+		root_stacks = 0;
+		root_static_fields = 0;
+		root_classes = 0;
+		root_cp_entries = 0;
+		root_cp_strings = 0;
+		root_temp_slots = 0;
+		root_global_count = 0;
+		root_jni_envs = 0;
 	}
 
 	~ObjectHeap();
@@ -51,7 +65,8 @@ public:
 
 	// Stop-the-world mark-sweep over the registered thread stacks, static
 	// fields, constant-pool strings and temporary (native/C++) roots.
-	void gc();
+	// reason is diagnostic only: it labels the trigger in DARKS_GCSTATS output.
+	void gc(const char *reason = "explicit");
 
 	bool NewObject(lpClass clazz, LPOBJECT_REF &object_ref);
 
@@ -173,6 +188,22 @@ private:
 	size_t gc_freed_total;
 	size_t gc_freed_last;
 	size_t live_objects;
+
+	// Diagnostic breakdown of the last root scan (printed under DARKS_GCSTATS).
+	double root_thread_ms;
+	double root_static_ms;
+	double root_cp_ms;
+	double root_temp_ms;
+	double root_global_ms;
+	double root_jni_ms;
+	size_t root_stacks;
+	size_t root_static_fields;
+	size_t root_classes;
+	size_t root_cp_entries;
+	size_t root_cp_strings;
+	size_t root_temp_slots;
+	size_t root_global_count;
+	size_t root_jni_envs;
 };
 
 typedef ObjectHeap *lpObjectHeap;
