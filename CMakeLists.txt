@@ -88,6 +88,7 @@ set(DARKS_JVM_CORE_SOURCES
     jvm/vm/executor/nativelibs.cpp
     jvm/vm/executor/objectheap.cpp
     jvm/vm/executor/operstack.cpp
+    jvm/vm/executor/vmpool.cpp
     jvm/vm/executor/gc/cms_collector.cpp
     jvm/vm/executor/gc/gcbarrier.cpp
     jvm/vm/executor/gc/gccollector.cpp

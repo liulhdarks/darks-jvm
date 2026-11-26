@@ -15,9 +15,11 @@
 #include "vmmutex.h"
 #include "proxy.h"
 #include "gc/gcbarrier.h"
+#include "vmpool.h"
 
 #include <ffi.h>
 
+#include <new>
 #include <string>
 #include <atomic>
 #include <vector>
@@ -479,12 +481,14 @@ StackFrame::~StackFrame()
 {
 	if (op_stack)
 	{
-		delete op_stack;
+		op_stack->~OperStack();
+		VmPoolFree(op_stack);
 		op_stack = NULL;
 	}
 	if (local_var_table)
 	{
-		delete local_var_table;
+		local_var_table->~LocalVarTable();
+		VmPoolFree(local_var_table);
 		local_var_table = NULL;
 	}
 }
@@ -506,8 +510,18 @@ void StackFrame::init(lpVariant vars, int count)
 	code_length = method->code_attr->code_length;
 	int max_local = method->code_attr->max_local;
 	int max_stack = method->code_attr->max_stack;
-	op_stack = new OperStack(max_stack);
-	local_var_table = new LocalVarTable(max_local);
+	// Frames take these two objects and their slot arrays from the
+	// size-class pool, which is where the per-call malloc traffic came from.
+	void *op_mem = VmPoolAlloc(sizeof(OperStack));
+	void *lv_mem = VmPoolAlloc(sizeof(LocalVarTable));
+	if (!op_mem || !lv_mem)
+	{
+		VmPoolFree(op_mem);
+		VmPoolFree(lv_mem);
+		throw new VMExecutorException("Frame storage is unavailable.");
+	}
+	op_stack = new (op_mem) OperStack(max_stack);
+	local_var_table = new (lv_mem) LocalVarTable(max_local);
 	for (int i = 0; i < count; i++)
 	{
 		local_var_table->set(i, vars[i]);
@@ -5429,7 +5443,12 @@ bool StackFrame::StackToLocal(lpStackFrame frame, vector<TypeDesc> &type_desc, b
 {
 	Slot s1, s2;
 	int count = type_desc.size();
-	lpOperStack tmp_stack = new OperStack(count * 2);
+	void *tmp_mem = VmPoolAlloc(sizeof(OperStack));
+	if (!tmp_mem)
+	{
+		throw new VMExecutorException("Frame storage is unavailable.");
+	}
+	lpOperStack tmp_stack = new (tmp_mem) OperStack(count * 2);
 	for (int i = count - 1; i >= 0; i--)
 	{
 		const TypeDesc &desc = type_desc[i];
@@ -5511,7 +5530,8 @@ bool StackFrame::StackToLocal(lpStackFrame frame, vector<TypeDesc> &type_desc, b
 
 	if (tmp_stack)
 	{
-		delete tmp_stack;
+		tmp_stack->~OperStack();
+		VmPoolFree(tmp_stack);
 		tmp_stack = NULL;
 	}
 	return true;

@@ -3,6 +3,9 @@
 #include "vm/types.h"
 #include "exec_common.h"
 #include "vm/exceptions.h"
+#include "vm/executor/vmpool.h"
+
+#include <cstring>
 
 // The hot operand-stack operations are a bounds test and an 8-byte copy; the
 // diagnostics (snprintf plus a thrown exception) are what kept the compiler
@@ -24,6 +27,7 @@ class OperStack
 private:
 	int init_size;
 	Slot *slots;
+	bool slots_pooled;
 	int index;
 
 	DARKS_NOINLINE void Overflow() const;
@@ -40,7 +44,19 @@ public:
 	OperStack(int init_size)
 	{
 		this->init_size = init_size;
-		slots = new Slot[init_size];
+		size_t bytes = sizeof(Slot) * (init_size > 0 ? init_size : 1);
+		slots = (Slot *)VmPoolAlloc(bytes);
+		slots_pooled = (slots != NULL);
+		if (slots_pooled)
+		{
+			// The conservative root scan reads live slots only, but reusing a
+			// block must not leave stale references in it.
+			memset(slots, 0, bytes);
+		}
+		else
+		{
+			slots = new Slot[init_size > 0 ? init_size : 1];
+		}
 		index = 0;
 		debug_method = NULL;
 		debug_pc = -1;
@@ -48,7 +64,14 @@ public:
 
 	~OperStack()
 	{
-		delete[] slots;
+		if (slots_pooled)
+		{
+			VmPoolFree(slots);
+		}
+		else
+		{
+			delete[] slots;
+		}
 		slots = NULL;
 	}
 

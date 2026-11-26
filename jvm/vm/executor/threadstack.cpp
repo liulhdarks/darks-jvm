@@ -5,8 +5,34 @@
 #include "exec_common.h"
 #include "objectheap.h"
 #include "scheduler.h"
+#include "vmpool.h"
+
+#include <new>
 
 #define LOOP_TRUE 1
+
+// Frames are created and destroyed on every Java call; they and their operand
+// stack/local table come from the size-class pool instead of malloc.
+static lpStackFrame AllocStackFrame(ThreadStack *thread_stack, lpClass clazz,
+                                    lpMethod method, lpClassLoader loader)
+{
+	void *mem = VmPoolAlloc(sizeof(StackFrame));
+	if (!mem)
+	{
+		throw std::bad_alloc();
+	}
+	return new (mem) StackFrame(thread_stack, clazz, method, loader);
+}
+
+static void FreeStackFrame(lpStackFrame frame)
+{
+	if (!frame)
+	{
+		return;
+	}
+	frame->~StackFrame();
+	VmPoolFree(frame);
+}
 
 ThreadStack::~ThreadStack()
 {
@@ -19,7 +45,7 @@ ThreadStack::~ThreadStack()
 	while (!frames.empty())
 	{
 		top_frame = frames.top();
-		delete top_frame;
+		FreeStackFrame(top_frame);
 		top_frame = NULL;
 		frames.pop();
 	}
@@ -258,7 +284,7 @@ void ThreadStack::AddFrame(lpClass clazz, lpMethod method, lpStackFrame &frame)
 	// find the class itself when its own bytecode refers to it.
 	lpClassLoader loader = (clazz && clazz->classloader)
 		? clazz->classloader : class_loader;
-	frame = new StackFrame(this, clazz, method, loader);
+	frame = AllocStackFrame(this, clazz, method, loader);
 	frames.push(frame);
 	frame->jni_env = jni_env;
 }
@@ -287,7 +313,7 @@ EventNotify ThreadStack::execute(lpClass clazz, lpMethod method, lpVariant vars,
 	catch (...)
 	{
 		frames.pop();
-		delete frame;
+		FreeStackFrame(frame);
 		throw;
 	}
 	size_t saved_depth = unwind_stop_depth;
@@ -310,7 +336,7 @@ EventNotify ThreadStack::executeNested(lpClass clazz, lpMethod method, lpVariant
 	catch (...)
 	{
 		frames.pop();
-		delete frame;
+		FreeStackFrame(frame);
 		throw;
 	}
 	size_t saved_depth = unwind_stop_depth;
@@ -394,7 +420,7 @@ EventNotify ThreadStack::start()
 		if (ev == EN_POP)
 		{
 			Scheduler::Instance().ReleaseFrameMonitors(top_frame);
-			delete top_frame;
+			FreeStackFrame(top_frame);
 			frames.pop();
 		}
 		else if (ev == EN_KEEP)
@@ -410,14 +436,14 @@ EventNotify ThreadStack::start()
 		else if (ev == EN_RETURN)
 		{
 			Scheduler::Instance().ReleaseFrameMonitors(top_frame);
-			delete top_frame;
+			FreeStackFrame(top_frame);
 			frames.pop();
 			return EN_RETURN;
 		}
 		else if (ev == EN_EXCEPTION)
 		{
 			Scheduler::Instance().ReleaseFrameMonitors(top_frame);
-			delete top_frame;
+			FreeStackFrame(top_frame);
 			frames.pop();
 			// Unwind the Java stack looking for an exception-table handler.
 			// Frames at or below unwind_stop_depth belong to an outer
@@ -433,7 +459,7 @@ EventNotify ThreadStack::start()
 					break;
 				}
 				Scheduler::Instance().ReleaseFrameMonitors(caller);
-				delete caller;
+				FreeStackFrame(caller);
 				frames.pop();
 			}
 			if (!handled)
