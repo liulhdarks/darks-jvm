@@ -3,6 +3,7 @@
 #include "jni/jni_impl.h"
 #include "vm/executor/objectheap.h"
 #include "vm/executor/javaexception.h"
+#include "vm/executor/gc/gcbarrier.h"
 
 #include <cstring>
 #include <string>
@@ -234,6 +235,7 @@ bool DarksVM_StoreProxyHandler(lpObject object, LPOBJECT_REF handler)
 	}
 	lpFieldValue fv = new FieldValue();
 	fv->field_value.heapPtr = handler;
+	GCBarrierWrite(NULL, handler, GCBarrier::FIELD);
 	object->AdoptFieldValue("$proxy:handler", fv);
 	return true;
 }

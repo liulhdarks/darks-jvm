@@ -14,6 +14,7 @@
 #include "scheduler.h"
 #include "vmmutex.h"
 #include "vm/executor/gc/gccollector.h"
+#include "vm/executor/gc/gcbarrier.h"
 
 #include <string>
 #include <chrono>
@@ -146,6 +147,10 @@ bool ObjectHeap::initialize(int init_size)
 	if (collector)
 	{
 		collector->Initialize(this);
+	}
+	if (getenv("DARKS_GC_SATB_TEST"))
+	{
+		GCBarrier::Enable();
 	}
 	return true;
 }

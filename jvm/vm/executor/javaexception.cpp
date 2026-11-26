@@ -8,6 +8,7 @@
 #include "vm/executor/methodarea.h"
 #include "vm/classfiles/classloader.h"
 #include "platform/platform.h"
+#include "vm/executor/gc/gcbarrier.h"
 #include "vm/exceptions.h"
 
 #include <cstdio>
@@ -287,7 +288,9 @@ LPOBJECT_REF CreateJavaException(const char *class_name, const char *message)
 						obj->varants.find(std::string("detailMessage:Ljava/lang/String;"));
 					if (it != obj->varants.end() && it->second)
 					{
+						LPOBJECT_REF old_ref = it->second->field_value.heapPtr;
 						it->second->field_value.heapPtr = msg_ref;
+						GCBarrierWrite(old_ref, msg_ref, GCBarrier::FIELD);
 					}
 				}
 			}
@@ -320,7 +323,9 @@ LPOBJECT_REF CreateJavaExceptionWithCause(const char *class_name,
 		obj->varants.find(std::string("cause:Ljava/lang/Throwable;"));
 	if (it != obj->varants.end() && it->second)
 	{
+		LPOBJECT_REF old_ref = it->second->field_value.heapPtr;
 		it->second->field_value.heapPtr = cause;
+		GCBarrierWrite(old_ref, cause, GCBarrier::FIELD);
 	}
 	it = obj->varants.find(std::string("causeInitialized:Z"));
 	if (it != obj->varants.end() && it->second)

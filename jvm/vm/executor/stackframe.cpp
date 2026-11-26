@@ -14,6 +14,7 @@
 #include "scheduler.h"
 #include "vmmutex.h"
 #include "proxy.h"
+#include "gc/gcbarrier.h"
 
 #include <ffi.h>
 
@@ -112,10 +113,15 @@ lpClass FindSyntheticLambdaClass(const std::string &iface_name,
 	return synth;
 }
 
-void StoreSlotField(lpObject obj, const std::string &name, const Slot &slot)
+void StoreSlotField(lpObject obj, const std::string &name, const Slot &slot,
+                    bool is_reference)
 {
 	lpFieldValue fv = new FieldValue();
 	fv->field_value = slot;
+	if (is_reference)
+	{
+		GCBarrierWrite(NULL, slot.heapPtr, GCBarrier::FIELD);
+	}
 	obj->AdoptFieldValue(name, fv);
 }
 
@@ -149,7 +155,9 @@ void SetStringField(lpObject obj, const char *key, const std::string &value)
 	{
 		return;
 	}
+	LPOBJECT_REF old_ref = it->second->field_value.heapPtr;
 	it->second->field_value.heapPtr = text_ref;
+	GCBarrierWrite(old_ref, text_ref, GCBarrier::FIELD);
 }
 
 // Bounded inlining: only tiny, side-effect-free methods are recognised.
@@ -2779,7 +2787,9 @@ void StackFrame::AttachStackTrace(LPOBJECT_REF exception_ref)
 		refreshed->varants.find("stackTrace:[Ljava/lang/StackTraceElement;");
 	if (target != refreshed->varants.end() && target->second)
 	{
+		LPOBJECT_REF old_ref = target->second->field_value.heapPtr;
 		target->second->field_value.heapPtr = array_ref;
+		GCBarrierWrite(old_ref, array_ref, GCBarrier::FIELD);
 	}
 }
 
@@ -3356,7 +3366,8 @@ bool StackFrame::ExecuteInvokeDynamic(U2 index)
 			}
 			char name[32];
 			snprintf(name, sizeof(name), "$cap%d", cap_index);
-			StoreSlotField(lambda_obj, name, cap.low);
+			StoreSlotField(lambda_obj, name, cap.low,
+				cap.type == DT_REF || cap.type == DT_ARRAY);
 			if (cap.wide)
 			{
 				if (!op_stack->get(slot_index + 1, cap.high))
@@ -3364,7 +3375,7 @@ bool StackFrame::ExecuteInvokeDynamic(U2 index)
 					return false;
 				}
 				snprintf(name, sizeof(name), "$caph%d", cap_index);
-				StoreSlotField(lambda_obj, name, cap.high);
+				StoreSlotField(lambda_obj, name, cap.high, false);
 				slot_index += 2;
 			}
 			else
@@ -3377,7 +3388,7 @@ bool StackFrame::ExecuteInvokeDynamic(U2 index)
 		int lambda_id = g_next_lambda_id++;
 		Slot id_slot;
 		id_slot.iValue = lambda_id;
-		StoreSlotField(lambda_obj, "$lambda:id", id_slot);
+		StoreSlotField(lambda_obj, "$lambda:id", id_slot, false);
 		g_lambdas[lambda_id] = info;
 		for (int i = 0; i < cap_slots; i++)
 		{
@@ -3599,6 +3610,21 @@ bool StackFrame::CloneArrayReceiver()
 	}
 	if (source->array_var && copy->array_var && source->array_length > 0)
 	{
+		// A freshly allocated reference array starts out NULL; the copied
+		// slots still have to reach the barrier so a concurrent marker sees
+		// the edges that the snapshot never contained.
+		if ((source->array_data_type == DT_REF ||
+		     source->array_data_type == DT_ARRAY) &&
+		    g_gc_barrier_active)
+		{
+			jobject *src_refs = static_cast<jobject *>(source->array_var);
+			for (int i = 0; i < source->array_length; i++)
+			{
+				GCBarrierWrite(NULL,
+					reinterpret_cast<LPOBJECT_REF>(src_refs[i]),
+					GCBarrier::ARRAY);
+			}
+		}
 		memcpy(copy->array_var, source->array_var,
 			static_cast<size_t>(source->array_length) * element_size);
 	}
@@ -4158,7 +4184,16 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 				"java/lang/NoSuchFieldError", "field storage is missing");
 			return false;
 		}
-		fv->field_value = value;
+		if (field_type.data_type == DT_REF || field_type.data_type == DT_ARRAY)
+		{
+			LPOBJECT_REF old_ref = fv->field_value.heapPtr;
+			fv->field_value = value;
+			GCBarrierWrite(old_ref, value.heapPtr, GCBarrier::FIELD);
+		}
+		else
+		{
+			fv->field_value = value;
+		}
 		return true;
 	}
 
@@ -5950,7 +5985,21 @@ bool StackFrame::PutStatic(U2 index)
 		fv->field_value.dValue = popDouble();
 		break;
 	default:
-		op_stack->pop(fv->field_value);
+		{
+			Slot value;
+			op_stack->pop(value);
+			if (type_desc.data_type == DT_REF ||
+			    type_desc.data_type == DT_ARRAY)
+			{
+				LPOBJECT_REF old_ref = fv->field_value.heapPtr;
+				fv->field_value = value;
+				GCBarrierWrite(old_ref, value.heapPtr, GCBarrier::STATIC);
+			}
+			else
+			{
+				fv->field_value = value;
+			}
+		}
 		break;
 	}
 	return true;
@@ -6147,7 +6196,16 @@ bool StackFrame::PutField(U2 index)
 			"java/lang/NoSuchFieldError", "field storage is missing");
 		return false;
 	}
-	fv->field_value = slot_val;
+	if (type_desc.data_type == DT_REF || type_desc.data_type == DT_ARRAY)
+	{
+		LPOBJECT_REF old_ref = fv->field_value.heapPtr;
+		fv->field_value = slot_val;
+		GCBarrierWrite(old_ref, slot_val.heapPtr, GCBarrier::FIELD);
+	}
+	else
+	{
+		fv->field_value = slot_val;
+	}
 	return true;
 }
 

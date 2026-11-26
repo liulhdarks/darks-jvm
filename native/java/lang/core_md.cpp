@@ -8,6 +8,7 @@
 #include "vm/executor/javaexception.h"
 #include "vm/executor/threadstack.h"
 #include "vm/executor/vmmutex.h"
+#include "vm/executor/gc/gcbarrier.h"
 #include "vm/exceptions.h"
 
 #include <cmath>
@@ -288,8 +289,19 @@ JNIEXPORT jobject JNICALL Java_java_lang_Object_clone(JNIEnv *env, jobject thiz)
 	{
 		if (source->instance_slots[i] && copy->instance_slots[i])
 		{
-			copy->instance_slots[i]->field_value =
-				source->instance_slots[i]->field_value;
+			lpFieldValue src = source->instance_slots[i];
+			lpFieldValue dst = copy->instance_slots[i];
+			if (FieldHoldsReference(src->field))
+			{
+				LPOBJECT_REF old_ref = dst->field_value.heapPtr;
+				dst->field_value = src->field_value;
+				GCBarrierWrite(old_ref, src->field_value.heapPtr,
+					GCBarrier::FIELD);
+			}
+			else
+			{
+				dst->field_value = src->field_value;
+			}
 		}
 	}
 	jobject result = JniObject(ref);

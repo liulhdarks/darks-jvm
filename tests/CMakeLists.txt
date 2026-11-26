@@ -106,6 +106,7 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/Hello.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/Clock.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/GcStress.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SatbStress.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/dev/darks/jni/NativeLib.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/ThreadBasics.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/CoroutineScale.java"
@@ -583,6 +584,22 @@ if(JAVAC)
         if(NOT WIN32)
             set_target_properties(thirdparty_native PROPERTIES PREFIX "lib")
         endif()
+
+        add_library(satb_native SHARED native/satb.cpp)
+        target_include_directories(satb_native PRIVATE
+            "${JDK_HOME}/include" "${JDK_JNI_PLATFORM_INCLUDE}")
+        if(NOT WIN32)
+            set_target_properties(satb_native PROPERTIES PREFIX "lib")
+        endif()
+        add_dependencies(satb_native java_classes)
+
+        add_test(NAME gc_satb_stress
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                    "-DARGS=-E;env;DARKS_GC_SATB_TEST=1;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};SatbStress;$<TARGET_FILE:satb_native>"
+                    -DEXPECT_RC=0 "-DEXPECT_TEXT=satb stress: ok"
+                    "-DEXPECT_TEXT2=field=[1-9][0-9]*.*static=[1-9][0-9]*.*array=[1-9][0-9]*"
+                    "-DEXPECT_TEXT3=jni=[1-9][0-9]*.*reflect=[1-9][0-9]*"
+                    -P "${CHECK}")
 
         add_test(NAME thirdparty_jni
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}

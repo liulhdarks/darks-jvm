@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "jobject.h"
 #include "jni/jni.h"
+#include "gc/gcbarrier.h"
 
 void JObject::DeleteArray()
 {
@@ -226,7 +227,12 @@ void JObject::SetArrayIndex(int index, Slot &slot)
 		break;
 	case DT_ARRAY:
 	case DT_REF:
-		((jobject*)array_var)[index] = (jobject)slot.heapPtr;
+		{
+			jobject *elements = static_cast<jobject *>(array_var);
+			LPOBJECT_REF old_ref = reinterpret_cast<LPOBJECT_REF>(elements[index]);
+			elements[index] = reinterpret_cast<jobject>(slot.heapPtr);
+			GCBarrierWrite(old_ref, slot.heapPtr, GCBarrier::ARRAY);
+		}
 		break;
 	default:
 		break;
