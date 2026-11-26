@@ -255,6 +255,13 @@ bool ObjectHeap::initialize(int init_size)
 	objs.assign(slots, NULL);
 	sequence = 1;
 	ConfigureFromEnvironment();
+	if (ref_index_incremental)
+	{
+		// One entry per live object.  Reserving up front keeps the hash table
+		// from rehashing while objects are registered one by one; the slot
+		// vector was already sized for -Xms just above.
+		ref_index.reserve(objs.size());
+	}
 	const char *impl_env = getenv("DARKS_JVM_GC_IMPL");
 	if (collector)
 	{
@@ -315,6 +322,18 @@ void ObjectHeap::ConfigureFromEnvironment()
 		base_threshold = initial_heap_bytes;
 	}
 	threshold = base_threshold;
+
+	// The reference index is maintained incrementally by default; "full"
+	// restores the M2a rebuild at the start of every collection, which is the
+	// fallback if the incremental bookkeeping ever misbehaves.
+	const char *ref_index_env = getenv("DARKS_JVM_REFINDEX");
+	ref_index_incremental = true;
+	if (ref_index_env && *ref_index_env &&
+	    (strcmp(ref_index_env, "full") == 0 || strcmp(ref_index_env, "rebuild") == 0 ||
+	     strcmp(ref_index_env, "0") == 0))
+	{
+		ref_index_incremental = false;
+	}
 }
 
 size_t ObjectHeap::ObjectBytes(lpObject obj) const
@@ -451,12 +470,11 @@ void ObjectHeap::MarkObjectRef(LPOBJECT_REF ref)
 	// The candidate pointer is never dereferenced: random integer/float slot
 	// contents must not fault. Only pointers that are exactly the address of a
 	// live object's index field are accepted, so the scan is conservative.
-	std::map<const OBJECT_REF *, OBJECT_REF>::iterator it = ref_index.find(ref);
-	if (it == ref_index.end())
+	OBJECT_REF idx = 0;
+	if (!LookupRefIndex(ref, idx))
 	{
 		return;
 	}
-	OBJECT_REF idx = it->second;
 	if (idx <= 0 || static_cast<size_t>(idx) >= objs.size())
 	{
 		return;
@@ -467,6 +485,125 @@ void ObjectHeap::MarkObjectRef(LPOBJECT_REF ref)
 	}
 	marked[static_cast<size_t>(idx)] = true;
 	mark_stack.push_back(idx);
+}
+
+bool ObjectHeap::LookupRefIndex(const OBJECT_REF *candidate, OBJECT_REF &index) const
+{
+	if (!candidate)
+	{
+		return false;
+	}
+	std::unordered_map<const OBJECT_REF *, OBJECT_REF>::const_iterator it =
+		ref_index.find(candidate);
+	if (it == ref_index.end())
+	{
+		return false;
+	}
+	index = it->second;
+	return true;
+}
+
+void ObjectHeap::IndexObject(lpObject obj)
+{
+	if (!ref_index_incremental || !obj)
+	{
+		return;
+	}
+	if (ref_index_shrink_pending)
+	{
+		MaybeShrinkRefIndex();
+	}
+	ref_index[&obj->index] = obj->index;
+}
+
+void ObjectHeap::UnindexObject(lpObject obj)
+{
+	if (!obj)
+	{
+		return;
+	}
+	// Erasing happens in both modes: "full" rebuilds the index at the start
+	// of a collection, so removing the swept entries keeps the post-collection
+	// index equal to the live set there as well.
+	ref_index.erase(&obj->index);
+}
+
+void ObjectHeap::ReleaseSlot(lpObject obj)
+{
+	if (!obj)
+	{
+		return;
+	}
+	OBJECT_REF index = obj->index;
+	if (index > 0 && static_cast<size_t>(index) < objs.size() &&
+	    objs[static_cast<size_t>(index)] == obj)
+	{
+		objs[static_cast<size_t>(index)] = NULL;
+	}
+	UnindexObject(obj);
+	free_indices.push_back(index);
+}
+
+void ObjectHeap::RebuildRefIndex()
+{
+	ref_index.clear();
+	for (size_t i = 1; i < objs.size(); i++)
+	{
+		if (objs[i])
+		{
+			ref_index[&objs[i]->index] = static_cast<OBJECT_REF>(i);
+		}
+	}
+}
+
+void ObjectHeap::RepairRefIndexIfNeeded()
+{
+	// The incremental index holds exactly one entry per registered object, and
+	// live_objects is maintained independently (allocation increments, sweep
+	// recounts), so a size mismatch means the bookkeeping diverged from the
+	// heap.  Rebuild from the slot vector and let the next run proceed
+	// incrementally again; a healthy run never takes this path.
+	if (ref_index.size() == live_objects)
+	{
+		return;
+	}
+	ref_index_repairs++;
+	RebuildRefIndex();
+}
+
+void ObjectHeap::MaybeShrinkRefIndex()
+{
+	ref_index_shrink_pending = false;
+	const size_t buckets = ref_index.bucket_count();
+	if (buckets <= 4096 || ref_index.size() * 8 >= buckets)
+	{
+		return;
+	}
+	// Most entries were freed; the sweep only set the flag, the rehash itself
+	// happens here on the mutator thread instead of inside the pause.
+	ref_index.rehash(ref_index.size() * 2 + 1);
+	ref_index_shrinks++;
+}
+
+bool ObjectHeap::RefIndexMatchesHeap() const
+{
+	size_t live = 0;
+	for (size_t i = 1; i < objs.size(); i++)
+	{
+		lpObject obj = objs[i];
+		if (!obj)
+		{
+			continue;
+		}
+		live++;
+		std::unordered_map<const OBJECT_REF *, OBJECT_REF>::const_iterator it =
+			ref_index.find(&obj->index);
+		if (it == ref_index.end() || it->second != static_cast<OBJECT_REF>(i))
+		{
+			return false;
+		}
+	}
+	return live == ref_index.size();
 }
 
 void ObjectHeap::MarkThreadStackRoots()
@@ -685,11 +822,9 @@ void ObjectHeap::ProcessWeakReferences()
 		}
 		LPOBJECT_REF target = referent->field_value.heapPtr;
 		bool reachable = false;
-		std::map<const OBJECT_REF *, OBJECT_REF>::iterator target_it =
-			ref_index.find(target);
-		if (target_it != ref_index.end())
+		OBJECT_REF target_index = 0;
+		if (LookupRefIndex(target, target_index))
 		{
-			OBJECT_REF target_index = target_it->second;
 			reachable = target_index > 0 &&
 				static_cast<size_t>(target_index) < marked.size() &&
 				marked[static_cast<size_t>(target_index)];
@@ -830,13 +965,17 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 	in_gc = true;
 
 	const GcClock::time_point setup_start = GcClock::now();
-	ref_index.clear();
-	for (size_t i = 1; i < objs.size(); i++)
+	if (ref_index_incremental)
 	{
-		if (objs[i])
-		{
-			ref_index[&objs[i]->index] = static_cast<OBJECT_REF>(i);
-		}
+		// The index was maintained by Register/ReleaseSlot/sweep, so the
+		// pause no longer rebuilds it.  The size check is O(1) and only
+		// detects a diverged bookkeeping; a healthy run never repairs.
+		RepairRefIndexIfNeeded();
+	}
+	else
+	{
+		// DARKS_JVM_REFINDEX=full: M2a behaviour, rebuild the whole index.
+		RebuildRefIndex();
 	}
 
 	marked.assign(objs.size(), false);
@@ -930,6 +1069,10 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 			size_t bytes = ObjectBytes(obj);
 			freed_bytes += bytes;
 			freed_objects++;
+			// The index entry has to go with the object: the slot is recycled
+			// and a stale address->slot entry would keep a later occupant of
+			// the slot alive through a dangling reference.
+			UnindexObject(obj);
 			delete obj;
 			objs[i] = NULL;
 			// Reuse the index on the next allocation. An address-validated
@@ -947,6 +1090,14 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 	const GcClock::time_point sweep_done = GcClock::now();
 	live_bytes = live;
 	live_objects = live_count;
+	// A large drop in live objects leaves the hash table oversized.  Only
+	// record the intent here; the rehash runs on the next allocation so the
+	// pause keeps its length.
+	if (ref_index_incremental && ref_index.bucket_count() > 4096 &&
+	    ref_index.size() * 8 < ref_index.bucket_count())
+	{
+		ref_index_shrink_pending = true;
+	}
 	gc_runs++;
 	gc_freed_last = freed_bytes;
 	gc_freed_total += freed_bytes;
@@ -1001,7 +1152,8 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 		        "[gcstat] run=%d reason=%s total_ms=%.2f preworld_ms=%.2f "
 		        "stw_ms=%.2f root_ms=%.2f mark_ms=%.2f weak_ms=%.2f "
 		        "sweep_ms=%.2f post_ms=%.2f setup_ms=%.2f roots_ms=%.2f "
-		        "ref_entries=%zu rthread=%.2f rstatic=%.2f "
+		        "ref_entries=%zu ref_repairs=%zu ref_shrinks=%zu refindex=%s "
+		        "rthread=%.2f rstatic=%.2f "
 		        "rcp=%.2f rtemp=%.2f rglobal=%.2f rjni=%.2f slots=%zu "
 		        "free_before=%zu live_before=%zu objs_before=%zu "
 		        "thresh_before=%zu heap_max=%zu heap_used=%zu "
@@ -1011,7 +1163,9 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 		        "globals=%zu jni_envs=%zu frame=%s\n",
 		        gc_runs, reason, total_ms, preworld_ms, stw_ms, root_ms,
 		        mark_ms, weak_ms, sweep_ms, post_ms, setup_ms, roots_ms,
-		        ref_index.size(), root_thread_ms,
+		        ref_index.size(), ref_index_repairs, ref_index_shrinks,
+		        ref_index_incremental ? "incremental" : "full",
+		        root_thread_ms,
 		        root_static_ms, root_cp_ms, root_temp_ms, root_global_ms,
 		        root_jni_ms, slots_before, free_before, live_bytes_before,
 		        live_objects_before, threshold_before, max_heap_bytes,
@@ -1046,6 +1200,7 @@ bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
 		objs.resize(static_cast<size_t>(index) + 1, NULL);
 	}
 	objs[static_cast<size_t>(index)] = obj;
+	IndexObject(obj);
 	object_ref = &obj->index;
 	return true;
 }
@@ -1193,16 +1348,14 @@ bool ObjectHeap::CreateArrayDimension(lpClass array_class, LPINT32 nums, int lev
 		// descriptor such as "[I"; JObject infers the element type from it.
 		if (!obj->newArrayInstance(length))
 		{
-			objs[static_cast<size_t>(obj->index)] = NULL;
-			free_indices.push_back(obj->index);
+			ReleaseSlot(obj);
 			object_ref = NULL;
 			delete obj;
 			return false;
 		}
 		if (WouldExceedMax(ObjectBytes(obj)))
 		{
-			objs[static_cast<size_t>(obj->index)] = NULL;
-			free_indices.push_back(obj->index);
+			ReleaseSlot(obj);
 			object_ref = NULL;
 			delete obj;
 			ThrowHeapOOM();
@@ -1214,16 +1367,14 @@ bool ObjectHeap::CreateArrayDimension(lpClass array_class, LPINT32 nums, int lev
 
 	if (!obj->newArrayInstance(DT_REF, length))
 	{
-		objs[static_cast<size_t>(obj->index)] = NULL;
-		free_indices.push_back(obj->index);
+		ReleaseSlot(obj);
 		object_ref = NULL;
 		delete obj;
 		return false;
 	}
 	if (WouldExceedMax(ObjectBytes(obj)))
 	{
-		objs[static_cast<size_t>(obj->index)] = NULL;
-		free_indices.push_back(obj->index);
+		ReleaseSlot(obj);
 		object_ref = NULL;
 		delete obj;
 		ThrowHeapOOM();

@@ -5,6 +5,7 @@
 #include "jclass.h"
 #include "vmmutex.h"
 #include <map>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -19,6 +20,8 @@ class GCCollector;
 //   DARKS_JVM_GC=0               disable automatic (allocation-triggered) GC
 //   DARKS_JVM_GC_IMPL=NAME       collector: marksweep (default) or cms
 //   DARKS_JVM_GC_THRESHOLD=N     collection threshold in heap bytes (default 4 MiB)
+//   DARKS_JVM_REFINDEX=MODE      reference index maintenance: incremental
+//                                (default) or full (rebuild on every collection)
 //   DARKS_JVM_GC_LOG=1           log every collection and a final summary to stderr
 //   DARKS_GCSTATS=1              log per-collection STW phase breakdown
 class ObjectHeap
@@ -48,6 +51,10 @@ public:
 		base_threshold = 4 * 1024 * 1024;
 		threshold = base_threshold;
 		live_bytes = 0;
+		ref_index_incremental = true;
+		ref_index_shrink_pending = false;
+		ref_index_repairs = 0;
+		ref_index_shrinks = 0;
 		gc_runs = 0;
 		gc_freed_total = 0;
 		gc_freed_last = 0;
@@ -137,6 +144,37 @@ public:
 	// field of a live object. Never dereferences unknown memory.
 	void MarkObjectRef(LPOBJECT_REF ref);
 
+	// ---- reference index --------------------------------------------------
+	// ref_index maps the address of an object's index field (LPOBJECT_REF) to
+	// the object's slot, so a candidate pointer can be validated without
+	// dereferencing it.  It is bookkeeping only: the entries are never roots
+	// and never keep an object alive.
+	//
+	// Since M2b the index is maintained incrementally when an object is
+	// registered and when the sweep frees it, instead of being rebuilt from
+	// the whole slot vector at every collection.  DARKS_JVM_REFINDEX=full
+	// restores the per-collection rebuild (the M2a behaviour) as a fallback.
+	//
+	// Concurrency: every mutation (Register/ReleaseSlot/sweep) and every read
+	// (MarkObjectRef, ProcessWeakReferences, the helpers below) happens under
+	// VMLock while the world is either running without a collection or stopped
+	// at a safepoint, so one lock serializes them.  M3's concurrent marker has
+	// to keep that rule or introduce its own read protocol; nothing here is
+	// safe to touch without VMLock.
+	//
+	// Returns the slot recorded for a candidate address, false when the
+	// address is not the index field of a live object.
+	bool LookupRefIndex(const OBJECT_REF *candidate, OBJECT_REF &index) const;
+
+	size_t RefIndexEntries() const { return ref_index.size(); }
+	bool RefIndexIncremental() const { return ref_index_incremental; }
+	// Number of times the incremental index had to be rebuilt because it
+	// disagreed with the live object table; zero in a healthy run.
+	size_t RefIndexRepairs() const { return ref_index_repairs; }
+	// Diagnostic/test hook: compares the index against a rebuild from the slot
+	// vector.  O(slots), so it is not used on the collection path.
+	bool RefIndexMatchesHeap() const;
+
 	// ---- statistics -------------------------------------------------------
 	size_t LiveBytes() const { return live_bytes; }
 	size_t LiveObjectCount() const { return live_objects; }
@@ -148,6 +186,21 @@ public:
 private:
 
 	bool Register(lpObject obj, LPOBJECT_REF &object_ref);
+
+	// Index maintenance.  IndexObject is a no-op in "full" mode; UnindexObject
+	// always removes the entry so the index equals the live set after a
+	// collection in both modes.  ReleaseSlot unregisters an object whose
+	// construction failed after Register (slot returned to free_indices,
+	// index entry removed).
+	void IndexObject(lpObject obj);
+	void UnindexObject(lpObject obj);
+	void ReleaseSlot(lpObject obj);
+	void RebuildRefIndex();
+	// Rebuilds the index if it disagrees with the live object table.
+	void RepairRefIndexIfNeeded();
+	// Rehashes the map after a collection freed most of its entries.  Runs on
+	// the next allocation, never inside a pause.
+	void MaybeShrinkRefIndex();
 
 	// Creates one array dimension. level is the index into nums; the array
 	// class name must contain (count - level) leading '[' characters.
@@ -199,7 +252,11 @@ private:
 	std::vector<bool> marked;
 	std::vector<OBJECT_REF> mark_stack;
 	std::vector<OBJECT_REF> weak_reference_objects;
-	std::map<const OBJECT_REF *, OBJECT_REF> ref_index;
+	std::unordered_map<const OBJECT_REF *, OBJECT_REF> ref_index;
+	bool ref_index_incremental;
+	bool ref_index_shrink_pending;
+	size_t ref_index_repairs;
+	size_t ref_index_shrinks;
 
 	std::vector<OBJECT_REF> free_indices;
 	std::vector<LPOBJECT_REF *> root_slots;

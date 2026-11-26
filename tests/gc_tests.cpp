@@ -51,6 +51,12 @@ static bool int_at(lpObjectHeap heap, LPOBJECT_REF ref, int index, int &value)
 	return true;
 }
 
+static unsigned next_random(unsigned &state)
+{
+	state = state * 1103515245u + 12345u;
+	return state >> 8;
+}
+
 static bool string_value_length(lpObjectHeap heap, LPOBJECT_REF ref, int &length)
 {
 	length = -1;
@@ -328,10 +334,134 @@ int main(int argc, char **argv)
 			20, heap->LiveObjectCount(), heap->objs.size());
 	}
 
+	// ---------------------------------------------------------------- (d)
+	// ref_index consistency under random mutation.  Objects, arrays and
+	// strings are allocated and linked randomly, and the heap is collected
+	// every round.  After each collection the index must match a rebuild from
+	// the live slot vector exactly, and no repair may have been needed.  This
+	// runs unchanged with DARKS_JVM_REFINDEX=full, so both maintenance modes
+	// have to reach the same index for the same live set.
+	{
+		const int kWidth = 32;
+		LPOBJECT_REF refs[kWidth];
+		lpObject expected[kWidth];
+		GCRootSet roots(heap);
+		for (int i = 0; i < kWidth; i++)
+		{
+			refs[i] = NULL;
+			expected[i] = NULL;
+			roots.Add(&refs[i]);
+		}
+
+		unsigned state = 0x5eed1234u;
+		bool objects_stable = true;
+		bool index_consistent = true;
+		for (int round = 0; round < 30; round++)
+		{
+			int count = 1 + static_cast<int>(next_random(state) % kWidth);
+			for (int i = 0; i < count; i++)
+			{
+				LPOBJECT_REF ref = NULL;
+				unsigned kind = next_random(state) % 4;
+				bool created = false;
+				if (kind == 0)
+				{
+					created = heap->NewObject(plain_class, ref);
+				}
+				else if (kind == 1)
+				{
+					created = heap->NewArrayObject(4, int_array_class, ref);
+				}
+				else if (kind == 2)
+				{
+					created = heap->NewObjectArrayObject(3, object_array_class, ref);
+				}
+				else
+				{
+					char text[] = "refindex";
+					created = heap->NewStringObject(text, 8, ref);
+				}
+				if (!created)
+				{
+					continue;
+				}
+				refs[i] = ref;
+				expected[i] = NULL;
+				heap->GetObject(ref, expected[i]);
+			}
+
+			// Random reference stores: a field on an object, an element of a
+			// reference array, whichever the chosen holder supports.
+			for (int k = 0; k < 24; k++)
+			{
+				int from = static_cast<int>(next_random(state) % count);
+				int to = static_cast<int>(next_random(state) % count);
+				if (!refs[from] || !refs[to] || from == to)
+				{
+					continue;
+				}
+				lpObject holder = NULL;
+				if (!heap->GetObject(refs[from], holder) || !holder)
+				{
+					continue;
+				}
+				if (holder->array_var &&
+				    (holder->array_data_type == DT_REF ||
+				     holder->array_data_type == DT_ARRAY) &&
+				    holder->array_length > 0)
+				{
+					int slot = static_cast<int>(next_random(state) % holder->array_length);
+					static_cast<jobject*>(holder->array_var)[slot] =
+						reinterpret_cast<jobject>(refs[to]);
+				}
+				else
+				{
+					set_ref_field(holder, "next:Ljava/lang/Object;", refs[to]);
+				}
+			}
+
+			heap->gc();
+			for (int i = 0; i < count; i++)
+			{
+				if (!refs[i])
+				{
+					continue;
+				}
+				lpObject now = NULL;
+				if (!heap->GetObject(refs[i], now) || now != expected[i])
+				{
+					objects_stable = false;
+				}
+			}
+			if (!heap->RefIndexMatchesHeap() ||
+			    heap->RefIndexEntries() != heap->LiveObjectCount())
+			{
+				index_consistent = false;
+			}
+			// Drop every root so the next round allocates into freed slots;
+			// the index must forget those addresses with the objects.
+			for (int i = 0; i < kWidth; i++)
+			{
+				refs[i] = NULL;
+				expected[i] = NULL;
+			}
+		}
+		CHECK(objects_stable);
+		CHECK(index_consistent);
+		CHECK(heap->RefIndexRepairs() == 0);
+		std::printf("gc-test: ref_index mode=%s rounds=30 consistent=%d\n",
+		            heap->RefIndexIncremental() ? "incremental" : "full",
+		            index_consistent ? 1 : 0);
+	}
+
 	// Release the last roots and collect everything.
 	MethodArea::ClearStaticFields();
 	heap->gc();
 	CHECK(heap->LiveObjectCount() == permanent_live);
+	// The index must be exactly the set of live objects after the final
+	// collection, in either maintenance mode.
+	CHECK(heap->RefIndexMatchesHeap());
+	CHECK(heap->RefIndexEntries() == heap->LiveObjectCount());
 
 	delete plain_class;
 

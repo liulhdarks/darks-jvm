@@ -679,6 +679,15 @@ if(JAVAC)
                 "-DARGS=${CLASSES_DIR}" -DEXPECT_RC=0
                 "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
 
+    # Same heap checks with the ref_index fallback: every collection rebuilds
+    # the index from the slot vector, so these assertions prove that the
+    # incremental maintenance kept the same set of live objects.
+    add_test(NAME gc_heap_refindex_full
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_REFINDEX=full;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
+
     add_test(NAME gc_stress_survivors
         COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
                 "-DARGS=-E;env;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
@@ -690,6 +699,15 @@ if(JAVAC)
         COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
                 "-DARGS=-E;env;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
                 -DEXPECT_RC=0 "-DEXPECT_TEXT=gc-collect" -P "${CHECK}")
+
+    # End-to-end retention with the full-rebuild fallback: the random graph
+    # workload must survive collections exactly as with the incremental index.
+    add_test(NAME gc_stress_refindex_full
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_REFINDEX=full;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
+                "-DEXPECT_TEXT2=gc: static array survived"
+                "-DEXPECT_TEXT3=gc: local chain survived" -P "${CHECK}")
 
     # -Xmx is a hard budget: the allocation that would cross it fails with a
     # Java OutOfMemoryError carrying the JDK message, and the heap keeps
