@@ -2080,9 +2080,13 @@ bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
 	}
 	// Spread the tear-down of the previous collection's dead objects over the
 	// allocations instead of paying for all of them in the pause.  A bounded
-	// chunk keeps every single allocation short.  The concurrent collector
-	// keeps its dead set for its own sweeper thread instead.
-	if (!cms_mode && !pending_free.empty())
+	// chunk keeps every single allocation short.  An open concurrent cycle is
+	// the exception: its dead set belongs to the collector's sweeper, and
+	// draining it here would race the sweeper for no benefit.  Collections
+	// that fall back to the sliced mark-sweep (class initialisers holding
+	// VMLock) leave their dead set behind after the cycle, so they need this
+	// path.
+	if (!(cms_mode && mark_cycle_active.load()) && !pending_free.empty())
 	{
 		SweepPending(kAllocSweepChunk);
 	}

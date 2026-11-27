@@ -128,17 +128,14 @@ void CmsCollector::Collect(const char *reason)
 		return;
 	}
 	const char *why = reason ? reason : "unknown";
-	// Serialise whole collections.  A collection already in progress (from
-	// another allocating thread) makes this request a no-op, like the
-	// mark-sweep collector.
-	if (!heap->CmsCycleEnter())
-	{
-		return;
-	}
 
 	if (!heap->IncrementalMarkEnabled())
 	{
 		// DARKS_JVM_MARK=stw: keep the single-stop-the-world diagnostic mode.
+		if (!heap->CmsCycleEnter())
+		{
+			return;
+		}
 		heap->CollectMarkSweepSTW(why);
 		heap->CmsCycleLeave();
 		return;
@@ -148,11 +145,20 @@ void CmsCollector::Collect(const char *reason)
 	{
 		// Collection was requested from code that already owns VMLock, for
 		// example a nested class initializer running inside a GetStatic.  The
-		// marker would block on that lock while this thread waits for it, so
-		// the cycle degenerates to one stop-the-world mark-sweep (the caller
-		// already excludes every other mutator anyway).
-		heap->CollectMarkSweepSTW(why);
-		heap->CmsCycleLeave();
+		// marker would block on that lock while this thread waits for it, so a
+		// concurrent cycle is impossible here.  Run the ordinary sliced
+		// mark-sweep instead: the caller already excludes every other mutator,
+		// and slicing keeps the pauses at the marksweep profile rather than
+		// paying for one unbounded stop-the-world pass.
+		heap->CollectMarkSweep(why);
+		return;
+	}
+
+	// Serialise whole collections.  A collection already in progress (from
+	// another allocating thread) makes this request a no-op, like the
+	// mark-sweep collector.
+	if (!heap->CmsCycleEnter())
+	{
 		return;
 	}
 
