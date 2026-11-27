@@ -21,7 +21,7 @@ class GCCollector;
 //
 // Configuration (environment, DARKS_JVM_* style):
 //   DARKS_JVM_GC=0               disable automatic (allocation-triggered) GC
-//   DARKS_JVM_GC_IMPL=NAME       collector: marksweep (default) or cms
+//   DARKS_JVM_GC_IMPL=NAME       collector: cms (default) or marksweep
 //   DARKS_JVM_GC_THRESHOLD=N     collection threshold in heap bytes (default 4 MiB)
 //   DARKS_JVM_REFINDEX=MODE      reference index maintenance: incremental
 //                                (default) or full (rebuild on every collection)
@@ -228,10 +228,11 @@ public:
 	size_t LastCycleRecords() const { return cycle_recorded; }
 
 	// ---- concurrent (CMS-lite) collector --------------------------------
-	// Selected with DARKS_JVM_GC_IMPL=cms.  CmsCollector drives the cycle on
-	// a dedicated marker thread: the initial and final marks are stop-the-
-	// world, the trace and the sweep of the dead set run while the mutator
-	// keeps executing.  The default collector stays marksweep.
+	// Selected with DARKS_JVM_GC_IMPL=cms, the default.  CmsCollector drives
+	// the cycle on a dedicated marker thread: the initial and final marks are
+	// stop-the-world, the trace and the sweep of the dead set run while the
+	// mutator keeps executing.  DARKS_JVM_GC_IMPL=marksweep selects the sliced
+	// stop-the-world collector instead.
 	const char *CollectorName() const;
 	bool CmsEnabled() const { return cms_mode; }
 	// Background trace steps the marker thread completed in the last cycle.

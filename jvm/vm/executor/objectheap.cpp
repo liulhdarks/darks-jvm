@@ -289,7 +289,7 @@ bool ObjectHeap::initialize(int init_size)
 		collector = NULL;
 	}
 	collector = CreateGCCollector(
-		(impl_env && *impl_env) ? impl_env : "marksweep", this);
+		(impl_env && *impl_env) ? impl_env : "cms", this);
 	if (collector)
 	{
 		collector->Initialize(this);

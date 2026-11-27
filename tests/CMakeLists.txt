@@ -677,6 +677,14 @@ if(JAVAC)
     add_test(NAME gc_heap
         COMMAND "${CMAKE_COMMAND}" -DPROG=$<TARGET_FILE:gc_tests>
                 "-DARGS=${CLASSES_DIR}" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed"
+                "-DEXPECT_TEXT2=cms concurrent mark steps=" -P "${CHECK}")
+
+    # The stop-the-world collector stays reachable as an explicit fallback.
+    add_test(NAME gc_heap_marksweep
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_IMPL=marksweep;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
                 "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
 
     # Same heap checks with the ref_index fallback: every collection rebuilds

@@ -19,6 +19,7 @@ public:
 	virtual void Collect(const char *reason) = 0;
 };
 
-// Maps DARKS_JVM_GC_IMPL to a collector; unknown names fall back to
-// mark-sweep.  The returned collector is owned by the caller.
+// Maps DARKS_JVM_GC_IMPL to a collector: "marksweep" selects the sliced
+// stop-the-world collector, any other name (including none, the default)
+// selects CMS.  The returned collector is owned by the caller.
 GCCollector *CreateGCCollector(const char *name, ObjectHeap *heap);

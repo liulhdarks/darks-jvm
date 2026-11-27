@@ -8,14 +8,13 @@
 
 GCCollector *CreateGCCollector(const char *name, ObjectHeap *heap)
 {
-	if (name && strcmp(name, "cms") == 0)
+	if (name && strcmp(name, "marksweep") == 0)
 	{
-		return new CmsCollector(heap);
+		return new MarkSweepCollector(heap);
 	}
-	if (name && *name && strcmp(name, "marksweep") != 0)
+	if (name && *name && strcmp(name, "cms") != 0)
 	{
-		fprintf(stderr, "gc: unknown DARKS_JVM_GC_IMPL=%s; using marksweep\n",
-		        name);
+		fprintf(stderr, "gc: unknown DARKS_JVM_GC_IMPL=%s; using cms\n", name);
 	}
-	return new MarkSweepCollector(heap);
+	return new CmsCollector(heap);
 }
