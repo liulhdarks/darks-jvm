@@ -6,7 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-bool g_gc_barrier_active = false;
+std::atomic<bool> g_gc_barrier_active(false);
 
 namespace {
 
@@ -46,17 +46,17 @@ void GCBarrier::Enable()
 			atexit(PrintStatsAtExit);
 		}
 	}
-	g_gc_barrier_active = true;
+	g_gc_barrier_active.store(true, std::memory_order_relaxed);
 }
 
 void GCBarrier::Disable()
 {
-	g_gc_barrier_active = false;
+	g_gc_barrier_active.store(false, std::memory_order_relaxed);
 }
 
 bool GCBarrier::Enabled()
 {
-	return g_gc_barrier_active;
+	return g_gc_barrier_active.load(std::memory_order_relaxed);
 }
 
 void GCBarrier::SetRecordNew(bool enable)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vm/types.h"
+#include <atomic>
 #include <vector>
 
 // SATB/incremental-update write barrier.  While a concurrent cycle is
@@ -54,12 +55,14 @@ public:
 	static void SetRecordLimit(size_t limit);
 };
 
-extern bool g_gc_barrier_active;
+// Read by every reference write, written when a cycle opens and closes, so
+// the flag itself is atomic; a relaxed load compiles to the same branch.
+extern std::atomic<bool> g_gc_barrier_active;
 
 inline void GCBarrierWrite(LPOBJECT_REF old_value, LPOBJECT_REF new_value,
                            GCBarrier::Site site)
 {
-	if (g_gc_barrier_active)
+	if (g_gc_barrier_active.load(std::memory_order_relaxed))
 	{
 		GCBarrier::Record(old_value, new_value, site);
 	}

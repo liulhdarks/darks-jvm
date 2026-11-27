@@ -215,7 +215,11 @@ public:
 	// it is unreachable, so no mutator can touch it, and the slot is not
 	// reused until the object has been destroyed.
 	void DrainPendingFreeAll();
-	size_t PendingFreeCount() const { return pending_free.size(); }
+	size_t PendingFreeCount() const
+	{
+		VMLock lk;
+		return pending_free.size();
+	}
 	bool LazySweepEnabled() const { return lazy_sweep; }
 	bool IncrementalMarkEnabled() const { return incremental_mark; }
 	// True while a sliced marking cycle has not reached its final pause.
