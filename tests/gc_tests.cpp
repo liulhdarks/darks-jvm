@@ -1056,6 +1056,103 @@ int main(int argc, char **argv)
 		            heap->CmsMarkSteps(), heap->LiveBytes());
 	}
 
+
+	// ---------------------------------------------------------------- (k)
+	// Deferred dead set: the final pause only records the slot range, the
+	// sweeper classifies and destroys the garbage.  The accounting must still
+	// come out exact and the pauses must not measure objects at all.
+	if (heap->CmsEnabled() && heap->IncrementalMarkEnabled())
+	{
+		heap->gc();
+		const size_t live_before = heap->LiveBytes();
+		const size_t objects_before = heap->LiveObjectCount();
+		const size_t pause_bytes_before = heap->CmsObjectBytesInPause();
+		const size_t freed_before = heap->TotalFreedBytes();
+		heap->SetGcThresholdForTest(static_cast<size_t>(-1) / 2);
+		const int kGarbage = 20000;
+		int allocated = 0;
+		bool alloc_ok = true;
+		for (int i = 0; i < kGarbage; i++)
+		{
+			LPOBJECT_REF garbage = NULL;
+			if (!heap->NewArrayObject(16, int_array_class, garbage))
+			{
+				alloc_ok = false;
+				break;
+			}
+			allocated++;
+		}
+		CHECK(alloc_ok);
+		const size_t live_with_garbage = heap->LiveBytes();
+		const size_t freed_expected = live_with_garbage - live_before;
+		heap->gc();
+		const size_t freed = heap->TotalFreedBytes() - freed_before;
+		CHECK(heap->CmsObjectBytesInPause() == pause_bytes_before);
+		CHECK(heap->CmsLastSweptObjects() >= (size_t)allocated);
+		CHECK(heap->CmsLastSweptSlots() >= (size_t)allocated);
+		CHECK(heap->CmsLastSweepMs() > 0.0);
+		CHECK(!heap->CmsSweepPending());
+		CHECK(freed == heap->LastFreedBytes());
+		CHECK(freed == freed_expected);
+		CHECK(heap->LiveBytes() == live_before);
+		CHECK(heap->LiveObjectCount() == objects_before);
+		CHECK(heap->RefIndexEntries() == heap->LiveObjectCount());
+		CHECK(heap->RefIndexMatchesHeap());
+		std::printf("gc-test: deferred sweep freed=%zu objs=%zu slots=%zu "
+		            "sweep_ms=%.2f live=%zu\n",
+		            freed, heap->CmsLastSweptObjects(),
+		            heap->CmsLastSweptSlots(), heap->CmsLastSweepMs(),
+		            heap->LiveBytes());
+	}
+
+
+	// ---------------------------------------------------------------- (l)
+	// A reference written into a registered root slot after the initial
+	// snapshot produces no heap store, so the journal cannot see it: only the
+	// final root re-read keeps the payload alive.  The test gate holds the
+	// final mark so the write lands deterministically between the two scans
+	// instead of depending on thread scheduling.
+	if (heap->CmsEnabled() && heap->IncrementalMarkEnabled())
+	{
+		LPOBJECT_REF late_slot = NULL;
+		GCRootScope late_root(heap, &late_slot);
+		LPOBJECT_REF payload = NULL;
+		CHECK(heap->NewArrayObject(8, int_array_class, payload));
+		lpObject payload_obj = NULL;
+		CHECK(heap->GetObject(payload, payload_obj));
+		const size_t runs_before = (size_t)heap->GcRuns();
+		heap->SetCmsFinalGateForTest(true);
+		std::thread collector([&]() { heap->gc(); });
+		bool reached = false;
+		for (int spin = 0; spin < 400000 && !reached; spin++)
+		{
+			reached = heap->CmsFinalGateReached();
+			if (!reached)
+			{
+				std::this_thread::yield();
+			}
+		}
+		if (reached)
+		{
+			// Only the stack slot refers to the payload right now.
+			late_slot = payload;
+		}
+		heap->OpenCmsFinalGateForTest();
+		collector.join();
+		heap->SetCmsFinalGateForTest(false);
+
+		CHECK(reached);
+		CHECK((size_t)heap->GcRuns() == runs_before + 1);
+		CHECK(!heap->CmsCycleActive());
+		CHECK(!heap->CmsSweepPending());
+		lpObject now = NULL;
+		CHECK(heap->GetObject(payload, now));
+		CHECK(now == payload_obj);
+		CHECK(heap->RefIndexMatchesHeap());
+		std::printf("gc-test: late stack root reached=%d survived=%d\n",
+		            reached ? 1 : 0, now == payload_obj ? 1 : 0);
+	}
+
 	// Release the last roots and collect everything.
 	MethodArea::ClearStaticFields();
 	heap->gc();

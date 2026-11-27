@@ -85,6 +85,17 @@ public:
 		cms_mark_steps.store(0);
 		cms_mark_allocs.store(0);
 		cms_failures.store(0);
+		cms_sweep_pending = false;
+		cms_sweep_hi = 0;
+		cms_sweep_cursor = 0;
+		cms_sweep_freed_bytes = 0;
+		cms_sweep_freed_objects = 0;
+		cms_swept_slots = 0;
+		cms_sweep_ms = 0.0;
+		cms_object_bytes_in_pause = 0;
+		cms_final_gate.store(false);
+		cms_final_gate_open.store(true);
+		cms_final_gate_waiting.store(false);
 		ref_index_repairs = 0;
 		ref_index_shrinks = 0;
 		gc_runs = 0;
@@ -257,6 +268,15 @@ public:
 	double CmsLastInitPauseMs() const { return cms_init_ms; }
 	double CmsLastFinalPauseMs() const { return cms_final_ms; }
 	double CmsLastMarkWallMs() const { return cms_mark_wall_ms; }
+	// Dead set of the last cycle: the final pause only records the scan range,
+	// the sweeper thread classifies and destroys the slots.  These counters
+	// make that split observable (the final pause must not walk the heap).
+	size_t CmsLastSweptObjects() const { return cms_sweep_freed_objects; }
+	size_t CmsLastSweptSlots() const { return cms_swept_slots; }
+	double CmsLastSweepMs() const { return cms_sweep_ms; }
+	size_t CmsObjectBytesInPause() const { return cms_object_bytes_in_pause.load(); }
+	// True between a successful final mark and the end of its deferred sweep.
+	bool CmsSweepPending() const { return cms_sweep_pending.load(); }
 
 	// ---- test hooks -------------------------------------------------------
 	// Runs the allocation-triggered path once, so the suite can exercise the
@@ -269,6 +289,17 @@ public:
 	// Pins the allocation threshold so a test can cross it with a known
 	// amount of garbage; a collection recomputes it from the live heap.
 	void SetGcThresholdForTest(size_t bytes) { threshold = bytes; }
+	// Holds the final mark at its start until OpenCmsFinalGateForTest() runs.
+	// The world is still running there, so a test can add a stack root after
+	// the initial snapshot and prove the final re-read keeps it alive without
+	// depending on thread scheduling.
+	void SetCmsFinalGateForTest(bool hold)
+	{
+		cms_final_gate_open.store(!hold);
+		cms_final_gate.store(hold);
+	}
+	void OpenCmsFinalGateForTest() { cms_final_gate_open.store(true); }
+	bool CmsFinalGateReached() const { return cms_final_gate_waiting.load(); }
 
 	// ---- statistics -------------------------------------------------------
 	size_t LiveBytes() const { return live_bytes; }
@@ -338,13 +369,21 @@ private:
 	// One bounded background trace step.  Returns false when the marker has
 	// nothing left to do, the cycle was aborted, or a pause is in progress.
 	bool CmsMarkStep(size_t max_objects, double max_ms);
-	// Final mark: drain the journal, re-scan the roots, process weak
-	// references and move the dead set to pending_free, inside one pause.
+	// Final mark: drain the journal, re-scan the roots and process weak
+	// references inside one pause.  The dead set is not classified here: the
+	// pause only records the slot range and the sweeper does the walk.
 	// Returns false when the cycle has to be retried as a full STW
 	// mark-sweep (concurrent mode failure).
 	bool CmsFinalMark(const char *reason);
-	// Destroys up to max_objects pending dead objects under VMLock.
+	// Destroys up to max_objects pending dead objects under VMLock.  With a
+	// deferred CMS dead set max_objects bounds the slots it examines.
 	void CmsSweepStep(size_t max_objects);
+	// Classifies and frees up to max_slots slots of the deferred CMS dead set
+	// (unbounded when max_slots is (size_t)-1).  Holds VMLock.
+	void CmsSweepScanLocked(size_t max_slots);
+	// Ends the deferred sweep: publishes the exact live size, adapts the
+	// threshold and prints the per-cycle statistics.  Holds VMLock.
+	void CmsFinishSweepLocked();
 	// Records the thread that is about to run the background trace.
 	void CmsSetMarkerThread();
 	// Aborts the open cycle; the final mark turns it into a full STW pass.
@@ -388,8 +427,9 @@ private:
 	// back to JDK ergonomics (25% / 1.5625% of physical memory).
 	void ResolveHeapLimits();
 
-	// True when allocating extra bytes would cross -Xmx.
-	bool WouldExceedMax(size_t extra) const;
+	// True when allocating extra bytes would cross -Xmx.  May finish part of a
+	// deferred dead set first so the answer uses the real live size.
+	bool WouldExceedMax(size_t extra);
 
 	// Installs java.lang.OutOfMemoryError("Java heap space") as the pending
 	// exception.  Allocations made while the error is being built bypass the
@@ -510,6 +550,28 @@ private:
 	std::atomic<size_t> cms_mark_steps;
 	std::atomic<size_t> cms_mark_allocs;
 	std::atomic<size_t> cms_failures;
+	// Deferred dead set of the last successful cycle.  The final mark stores
+	// the slot range, the sweeper walks <cms_sweep_hi and frees the slots that
+	// marked[] still calls dead; live_bytes/live_objects shrink as it goes, so
+	// they are exact again once the sweep finishes.  The flag is atomic so the
+	// allocation path can probe it without the lock; the scan state below is
+	// only touched with VMLock held.
+	std::atomic<bool> cms_sweep_pending;
+	size_t cms_sweep_hi;
+	size_t cms_sweep_cursor;
+	size_t cms_sweep_freed_bytes;
+	size_t cms_sweep_freed_objects;
+	size_t cms_swept_slots;
+	double cms_sweep_ms;
+	std::chrono::steady_clock::time_point cms_sweep_start;
+	// ObjectBytes calls made while the world was stopped.  The split above
+	// keeps them out of the pauses; the counter lets tests assert that.
+	mutable std::atomic<size_t> cms_object_bytes_in_pause;
+	// Test-only final-mark gate (see SetCmsFinalGateForTest).  Both flags stay
+	// false in a normal run; the final mark then pays one atomic load.
+	std::atomic<bool> cms_final_gate;
+	std::atomic<bool> cms_final_gate_open;
+	std::atomic<bool> cms_final_gate_waiting;
 	double cms_init_ms;
 	double cms_final_ms;
 	double cms_mark_wall_ms;

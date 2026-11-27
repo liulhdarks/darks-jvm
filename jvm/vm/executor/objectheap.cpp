@@ -235,12 +235,28 @@ void ObjectHeap::ResolveHeapLimits()
 	initial_heap_bytes = initial_bytes;
 }
 
-bool ObjectHeap::WouldExceedMax(size_t extra) const
+bool ObjectHeap::WouldExceedMax(size_t extra)
 {
 	if (max_heap_bytes == 0 || oom_in_progress ||
 	    VMContext::pending_exception)
 	{
 		return false;
+	}
+	if (live_bytes + extra <= max_heap_bytes)
+	{
+		return false;
+	}
+	// The accounting still counts the dead set of the last cycle until the
+	// sweeper reaches it.  Under pressure free just enough of it to compare
+	// against the real live size instead of reporting an OOM that the pending
+	// reclaim would have avoided.
+	if (cms_sweep_pending)
+	{
+		VMLock lk;
+		while (cms_sweep_pending && live_bytes + extra > max_heap_bytes)
+		{
+			CmsSweepScanLocked(4096);
+		}
 	}
 	return live_bytes + extra > max_heap_bytes;
 }
@@ -392,6 +408,12 @@ size_t ObjectHeap::ObjectBytes(lpObject obj) const
 	if (!obj)
 	{
 		return 0;
+	}
+	if (cms_world_stopped.load())
+	{
+		// Bookkeeping for tests: the concurrent collector must not measure
+		// objects inside a pause.
+		cms_object_bytes_in_pause.fetch_add(1);
 	}
 	// Approximate footprint: the object header, the per-field value boxes and
 	// the array payload. Field map overhead is not counted exactly, which only
@@ -1765,6 +1787,10 @@ void ObjectHeap::DrainPendingFreeAll()
 {
 	VMLock lk;
 	SweepPending(static_cast<size_t>(-1));
+	while (cms_sweep_pending)
+	{
+		CmsSweepScanLocked(static_cast<size_t>(-1));
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1840,6 +1866,13 @@ void ObjectHeap::CmsInitMark(const char *reason)
 
 	VMLock heap_lock;
 	SweepPending(static_cast<size_t>(-1));
+	// The collector waits for its sweeper before it starts another cycle, so
+	// this is a safety net only: marked[] must not be recomputed while an old
+	// scan still reads it.
+	while (cms_sweep_pending)
+	{
+		CmsSweepScanLocked(static_cast<size_t>(-1));
+	}
 	cms_world_stopped.store(true);
 	Scheduler::Instance().SafepointBegin();
 	const GcClock::time_point pause_start = GcClock::now();
@@ -1942,11 +1975,23 @@ bool ObjectHeap::CmsMarkStep(size_t max_objects, double max_ms)
 bool ObjectHeap::CmsFinalMark(const char *reason)
 {
 	const char *why = reason ? reason : "unknown";
+	if (cms_final_gate.load())
+	{
+		// Test-only gate: the world still runs here, so a test can add a root
+		// after the initial snapshot before the roots are re-read below.
+		cms_final_gate_waiting.store(true);
+		while (!cms_final_gate_open.load())
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+		cms_final_gate_waiting.store(false);
+	}
 	const GcClock::time_point pause_start = GcClock::now();
 	VMLock heap_lock;
 	cms_world_stopped.store(true);
 	Scheduler::Instance().SafepointBegin();
 
+	const GcClock::time_point journal_start = GcClock::now();
 	if (GCBarrier::Enabled())
 	{
 		std::vector<LPOBJECT_REF> recorded;
@@ -1957,12 +2002,17 @@ bool ObjectHeap::CmsFinalMark(const char *reason)
 			MarkObjectRef(recorded[i]);
 		}
 	}
+	const double journal_ms = MillisecondsSince(journal_start);
+	const GcClock::time_point roots_start = GcClock::now();
 	MarkRoots();
+	const double roots_ms = MillisecondsSince(roots_start);
+	const GcClock::time_point scan_start = GcClock::now();
 	ScanMarkSlice(static_cast<size_t>(-1), 1.0e30);
 	if (marked.size() < objs.size())
 	{
 		marked.resize(objs.size(), 0);
 	}
+	const double scan_ms = MillisecondsSince(scan_start);
 
 	if (cms_abort_requested.load() ||
 	    GCBarrier::Dropped() != cycle_dropped_before)
@@ -1988,52 +2038,21 @@ bool ObjectHeap::CmsFinalMark(const char *reason)
 	ProcessWeakReferences();
 	const double weak_ms = MillisecondsSince(weak_start);
 
-	size_t freed_bytes = 0;
-	size_t freed_objects = 0;
-	size_t live = 0;
-	size_t live_count = 0;
-	for (size_t i = 1; i < objs.size(); i++)
-	{
-		lpObject obj = objs[i];
-		if (!obj)
-		{
-			continue;
-		}
-		if (!marked[i])
-		{
-			freed_bytes += ObjectBytes(obj);
-			freed_objects++;
-			pending_free.push_back(static_cast<OBJECT_REF>(i));
-		}
-		else
-		{
-			live += ObjectBytes(obj);
-			live_count++;
-		}
-	}
-	// The dead set is handed to the sweeper thread; nothing is destroyed in
-	// the pause.
-	live_bytes = live;
-	live_objects = live_count;
-	if (ref_index_incremental && ref_index.bucket_count() > 4096 &&
-	    ref_index.size() * 8 < ref_index.bucket_count())
-	{
-		ref_index_shrink_pending = true;
-	}
+	// The dead set is not classified here.  The pause only records the slot
+	// range: the sweeper walks it, measures the objects it destroys and
+	// shrinks live_bytes/live_objects as it goes.  Until that finishes the
+	// accounting still counts the new garbage, which is why the threshold is
+	// adapted in CmsFinishSweepLocked and not here; the collector waits for
+	// the sweep before it leaves the cycle, so nothing allocates against the
+	// stale numbers (WouldExceedMax drains on demand near -Xmx).
+	cms_sweep_hi = objs.size();
+	cms_sweep_cursor = 1;
+	cms_sweep_freed_bytes = 0;
+	cms_sweep_freed_objects = 0;
+	cms_swept_slots = 0;
+	cms_sweep_start = GcClock::now();
+	cms_sweep_pending = true;
 	gc_runs++;
-	gc_freed_last = freed_bytes;
-	gc_freed_total += freed_bytes;
-
-	size_t next_threshold = base_threshold;
-	if (live_bytes > next_threshold / 2)
-	{
-		next_threshold = live_bytes * 2;
-	}
-	if (max_heap_bytes != 0 && next_threshold > max_heap_bytes)
-	{
-		next_threshold = max_heap_bytes;
-	}
-	threshold = next_threshold;
 	cms_mark_wall_ms = std::chrono::duration<double, std::milli>(
 		GcClock::now() - cms_mark_start).count();
 
@@ -2049,12 +2068,6 @@ bool ObjectHeap::CmsFinalMark(const char *reason)
 	cms_world_stopped.store(false);
 	cms_final_ms = MillisecondsSince(pause_start);
 
-	if (gc_log)
-	{
-		fprintf(stderr,
-		        "gc-collect run=%d objects=%zu freed=%zu bytes live=%zu bytes\n",
-		        gc_runs, freed_objects, freed_bytes, live_bytes);
-	}
 	if (GcStatsEnabled())
 	{
 		const double mark_wall_ms = cms_mark_wall_ms;
@@ -2062,20 +2075,23 @@ bool ObjectHeap::CmsFinalMark(const char *reason)
 		        "[gcstat] run=%d reason=%s mode=cms init_stw_ms=%.2f "
 		        "final_stw_ms=%.2f stw_ms=%.2f mark_wall_ms=%.2f "
 		        "mark_steps=%zu allocs_during_mark=%zu weak_ms=%.2f "
-		        "satb_records=%zu satb_dropped=%llu pend_free=%zu "
+		        "final_journal_ms=%.2f final_roots_ms=%.2f final_scan_ms=%.2f "
+		        "rthread=%.2f rstatic=%.2f rcp=%.2f "
+		        "rtemp=%.2f rglobal=%.2f rjni=%.2f "
+		        "satb_records=%zu satb_dropped=%llu sweep=deferred "
 		        "ref_entries=%zu ref_repairs=%zu ref_shrinks=%zu "
-		        "refindex=%s freed_objs=%zu freed_bytes=%zu "
-		        "live_after=%zu objs_after=%zu threshold_after=%zu\n",
+		        "refindex=%s\n",
 		        gc_runs, why, cms_init_ms, cms_final_ms,
 		        cms_init_ms + cms_final_ms, mark_wall_ms,
 		        cms_mark_steps.load(), cms_mark_allocs.load(), weak_ms,
+		        journal_ms, roots_ms, scan_ms,
+		        root_thread_ms, root_static_ms, root_cp_ms, root_temp_ms,
+		        root_global_ms, root_jni_ms,
 		        cycle_recorded,
 		        static_cast<unsigned long long>(GCBarrier::Dropped()),
-		        pending_free.size(), ref_index.size(), ref_index_repairs,
+		        ref_index.size(), ref_index_repairs,
 		        ref_index_shrinks,
-		        ref_index_incremental ? "incremental" : "full",
-		        freed_objects, freed_bytes, live_bytes, live_objects,
-		        threshold);
+		        ref_index_incremental ? "incremental" : "full");
 	}
 	return true;
 }
@@ -2083,7 +2099,104 @@ bool ObjectHeap::CmsFinalMark(const char *reason)
 void ObjectHeap::CmsSweepStep(size_t max_objects)
 {
 	VMLock lk;
+	if (cms_sweep_pending)
+	{
+		CmsSweepScanLocked(max_objects);
+		return;
+	}
 	SweepPending(max_objects);
+}
+
+// Walks the slot range recorded by the final mark and destroys the slots that
+// marked[] still calls dead.  The sweep owns the whole dead set: it measures
+// each object before destroying it and keeps live_bytes/live_objects exact for
+// the slots that are left.  max_slots bounds one call, so a chunk full of
+// survivors still holds VMLock for a bounded time.  A slot recycled by an
+// allocation after the final mark was marked live by Register, so it is
+// skipped like any survivor.
+void ObjectHeap::CmsSweepScanLocked(size_t max_slots)
+{
+	if (!cms_sweep_pending)
+	{
+		return;
+	}
+	const bool unlimited = max_slots == static_cast<size_t>(-1);
+	size_t scanned = 0;
+	while (cms_sweep_cursor < cms_sweep_hi && (unlimited || scanned < max_slots))
+	{
+		const size_t index = cms_sweep_cursor++;
+		scanned++;
+		lpObject obj = objs[index];
+		if (!obj)
+		{
+			continue;
+		}
+		if (index < marked.size() && marked[index])
+		{
+			continue;
+		}
+		const size_t bytes = ObjectBytes(obj);
+		UnindexObject(obj);
+		delete obj;
+		objs[index] = NULL;
+		free_indices.push_back(static_cast<OBJECT_REF>(index));
+		live_bytes -= bytes;
+		live_objects--;
+		cms_sweep_freed_bytes += bytes;
+		cms_sweep_freed_objects++;
+	}
+	cms_swept_slots += scanned;
+	if (cms_sweep_cursor >= cms_sweep_hi)
+	{
+		CmsFinishSweepLocked();
+	}
+}
+
+// Publishes the exact live size of the cycle, adapts the threshold like the
+// stop-the-world path does and prints the per-cycle statistics that the final
+// pause could not know.  Runs once, under VMLock, at the end of the sweep.
+void ObjectHeap::CmsFinishSweepLocked()
+{
+	cms_sweep_pending = false;
+	cms_sweep_ms = MillisecondsSince(cms_sweep_start);
+
+	size_t next_threshold = base_threshold;
+	if (live_bytes > next_threshold / 2)
+	{
+		next_threshold = live_bytes * 2;
+	}
+	if (max_heap_bytes != 0 && next_threshold > max_heap_bytes)
+	{
+		next_threshold = max_heap_bytes;
+	}
+	threshold = next_threshold;
+
+	if (ref_index_incremental && ref_index.bucket_count() > 4096 &&
+	    ref_index.size() * 8 < ref_index.bucket_count())
+	{
+		ref_index_shrink_pending = true;
+	}
+	gc_freed_last = cms_sweep_freed_bytes;
+	gc_freed_total += cms_sweep_freed_bytes;
+
+	if (gc_log)
+	{
+		fprintf(stderr,
+		        "gc-collect run=%d objects=%zu freed=%zu bytes live=%zu bytes\n",
+		        gc_runs, cms_sweep_freed_objects, cms_sweep_freed_bytes,
+		        live_bytes);
+	}
+	if (GcStatsEnabled())
+	{
+		fprintf(stderr,
+		        "[gcstat] run=%d mode=cms phase=sweep-done sweep_ms=%.2f "
+		        "swept_slots=%zu freed_objs=%zu freed_bytes=%zu "
+		        "live_after=%zu objs_after=%zu threshold_after=%zu "
+		        "ref_entries=%zu ref_shrinks=%zu\n",
+		        gc_runs, cms_sweep_ms, cms_swept_slots,
+		        cms_sweep_freed_objects, cms_sweep_freed_bytes, live_bytes,
+		        live_objects, threshold, ref_index.size(), ref_index_shrinks);
+	}
 }
 
 bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
@@ -2126,6 +2239,14 @@ bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
 	{
 		cms_mark_allocs.fetch_add(1);
 		MarkNewObjectLocked(obj);
+	}
+	else if (cms_sweep_pending &&
+	         static_cast<size_t>(index) < marked.size())
+	{
+		// The deferred sweep is still walking the slots of the last cycle.  A
+		// recycled slot below its range must not be mistaken for dead garbage,
+		// so mark the new occupant live until the sweep finishes.
+		marked[static_cast<size_t>(index)] = static_cast<unsigned char>(1);
 	}
 	object_ref = &obj->index;
 	return true;

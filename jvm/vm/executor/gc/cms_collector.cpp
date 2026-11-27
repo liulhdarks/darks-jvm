@@ -109,7 +109,7 @@ void CmsCollector::SweeperMain()
 			return;
 		}
 		lk.unlock();
-		while (heap->PendingFreeCount() > 0)
+		while (heap->CmsSweepPending() || heap->PendingFreeCount() > 0)
 		{
 			heap->CmsSweepStep(256);
 			std::this_thread::yield();
@@ -182,10 +182,11 @@ void CmsCollector::Collect(const char *reason)
 		heap->CollectMarkSweepSTW(why);
 	}
 
-	// Both paths can leave part of the dead set pending (the fallback sweep
-	// stops after a bounded chunk).  An explicit gc() and every test must
-	// observe a settled heap, so the collector waits for its sweeper.
-	if (heap->PendingFreeCount() > 0)
+	// Both paths can leave part of the dead set pending (the CMS final mark
+	// defers the whole classification and the fallback sweep stops after a
+	// bounded chunk).  An explicit gc() and every test must observe a settled
+	// heap, so the collector waits for its sweeper.
+	if (heap->CmsSweepPending() || heap->PendingFreeCount() > 0)
 	{
 		{
 			std::lock_guard<std::mutex> lk(state_mutex);
