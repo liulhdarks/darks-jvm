@@ -19,6 +19,7 @@
 #include "vm/executor/methodarea.h"
 #include "vm/classfiles/classloader.h"
 #include "vm/executor/gc/gcbarrier.h"
+#include "vm/executor/vmmutex.h"
 
 #include <atomic>
 #include <cstdio>
@@ -1000,6 +1001,59 @@ int main(int argc, char **argv)
 		CHECK(still_there);
 		std::printf("gc-test: cms concurrent failures=%zu writes=%ld\n",
 		            heap->CmsConcurrentFailures(), writes.load());
+	}
+
+	// ---------------------------------------------------------------- (j)
+	// A threshold request that arrives while the thread already holds VMLock
+	// cannot start a concurrent cycle: the marker would block on that lock
+	// while this thread waits for the cycle.  The request must be recorded and
+	// run by the first allocation outside the lock.
+	if (heap->CmsEnabled() && heap->IncrementalMarkEnabled())
+	{
+		heap->gc();
+		heap->SetGcThresholdForTest(1024 * 1024);
+		const int runs_before = heap->GcRuns();
+		const size_t failures_before = heap->CmsConcurrentFailures();
+		{
+			VMLock lk;
+			int allocated = 0;
+			int failed = 0;
+			while (allocated < 16384 && heap->LiveBytes() < heap->GcThreshold())
+			{
+				LPOBJECT_REF garbage = NULL;
+				if (!heap->NewArrayObject(64, int_array_class, garbage))
+				{
+					failed++;
+				}
+				allocated++;
+			}
+			CHECK(failed == 0);
+			CHECK(heap->LiveBytes() >= heap->GcThreshold());
+			// Crossing the threshold under the lock records the request and
+			// leaves the collector alone ...
+			heap->MaybeGCForTest();
+			CHECK(heap->GcRuns() == runs_before);
+			CHECK(heap->GcRequestPending());
+			LPOBJECT_REF garbage = NULL;
+			CHECK(heap->NewArrayObject(8, int_array_class, garbage));
+			CHECK(heap->GcRuns() == runs_before);
+			CHECK(heap->GcRequestPending());
+		}
+		// ... and the first allocation outside the lock runs the cycle, which
+		// reclaims the garbage that crossed the threshold.
+		const size_t live_before_cycle = heap->LiveBytes();
+		LPOBJECT_REF probe = NULL;
+		CHECK(heap->NewArrayObject(8, int_array_class, probe));
+		CHECK(!heap->GcRequestPending());
+		CHECK(heap->GcRuns() == runs_before + 1);
+		CHECK(heap->CmsConcurrentFailures() == failures_before);
+		CHECK(heap->CmsMarkSteps() >= 1);
+		CHECK(heap->CmsMarkerThreadId() != 0);
+		CHECK(heap->LiveBytes() < live_before_cycle);
+		CHECK(heap->RefIndexMatchesHeap());
+		std::printf("gc-test: deferred cms request runs=%d->%d steps=%zu "
+		            "live=%zu\n", runs_before, heap->GcRuns(),
+		            heap->CmsMarkSteps(), heap->LiveBytes());
 	}
 
 	// Release the last roots and collect everything.

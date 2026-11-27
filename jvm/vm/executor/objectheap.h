@@ -80,6 +80,7 @@ public:
 		cms_abort_requested.store(false);
 		cms_cycle_running.store(false);
 		cms_mark_complete.store(true);
+		cms_gc_deferred.store(false);
 		cms_marker_thread.store(0);
 		cms_mark_steps.store(0);
 		cms_mark_allocs.store(0);
@@ -256,6 +257,18 @@ public:
 	double CmsLastInitPauseMs() const { return cms_init_ms; }
 	double CmsLastFinalPauseMs() const { return cms_final_ms; }
 	double CmsLastMarkWallMs() const { return cms_mark_wall_ms; }
+
+	// ---- test hooks -------------------------------------------------------
+	// Runs the allocation-triggered path once, so the suite can exercise the
+	// deferred request without depending on allocation sizes.
+	void MaybeGCForTest() { MaybeGC(); }
+	// True while a threshold request that arrived under VMLock waits for the
+	// next allocation outside the lock.
+	bool GcRequestPending() const { return cms_gc_deferred.load(); }
+	size_t GcThreshold() const { return threshold; }
+	// Pins the allocation threshold so a test can cross it with a known
+	// amount of garbage; a collection recomputes it from the live heap.
+	void SetGcThresholdForTest(size_t bytes) { threshold = bytes; }
 
 	// ---- statistics -------------------------------------------------------
 	size_t LiveBytes() const { return live_bytes; }
@@ -490,6 +503,9 @@ private:
 	std::atomic<bool> cms_abort_requested;
 	std::atomic<bool> cms_cycle_running;
 	std::atomic<bool> cms_mark_complete;
+	// A threshold request that arrived while this thread already held VMLock;
+	// the next allocation outside the lock starts the cycle.
+	std::atomic<bool> cms_gc_deferred;
 	std::atomic<unsigned long long> cms_marker_thread;
 	std::atomic<size_t> cms_mark_steps;
 	std::atomic<size_t> cms_mark_allocs;

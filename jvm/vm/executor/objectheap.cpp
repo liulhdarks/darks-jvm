@@ -294,6 +294,7 @@ bool ObjectHeap::initialize(int init_size)
 	{
 		collector->Initialize(this);
 		cms_mode = strcmp(collector->Name(), "cms") == 0;
+		cms_gc_deferred.store(false);
 	}
 	if (getenv("DARKS_GC_SATB_TEST"))
 	{
@@ -456,7 +457,21 @@ void ObjectHeap::MaybeGC()
 	{
 		// The collector owns the cycle and blocks until it completes; the
 		// stop-the-world parts are only the initial and final marks.
-		if (needed)
+		if (needed && incremental_mark && !near_max &&
+		    VMLockHeldByCurrentThread())
+		{
+			// Requested from code that already owns VMLock (a class
+			// initializer reached from GetStatic, or a native body holding the
+			// lock): the marker would block on this lock while the thread
+			// waits for the cycle, so it cannot start here.  Remember the
+			// request and start the cycle from the next allocation outside
+			// the lock; a heap close to -Xmx still takes the immediate
+			// stop-the-world fallback through the branch below.
+			cms_gc_deferred.store(true);
+			return;
+		}
+		const bool deferred = cms_gc_deferred.exchange(false);
+		if (needed || deferred)
 		{
 			gc("threshold");
 		}
