@@ -418,7 +418,7 @@ size_t ObjectHeap::ObjectBytes(lpObject obj) const
 	// Approximate footprint: the object header, the per-field value boxes and
 	// the array payload. Field map overhead is not counted exactly, which only
 	// makes the threshold slightly pessimistic.
-	size_t bytes = sizeof(JObject) + obj->varants.size() * (sizeof(FieldValue) + 32);
+	size_t bytes = sizeof(JObject) + obj->varants.size() * FieldEntryBytes();
 	if (obj->array_var && obj->array_length > 0)
 	{
 		bytes += static_cast<size_t>(obj->array_length) * ElementBytes(obj->array_data_type);
@@ -434,6 +434,16 @@ void ObjectHeap::AccountAllocation(lpObject obj)
 	}
 	live_bytes += ObjectBytes(obj);
 	live_objects++;
+}
+
+void ObjectHeap::AccountFieldGrowth(size_t bytes)
+{
+	if (bytes == 0)
+	{
+		return;
+	}
+	VMLock lk;
+	live_bytes += bytes;
 }
 
 void ObjectHeap::MaybeGC()
@@ -746,6 +756,19 @@ void ObjectHeap::MaybeShrinkRefIndex()
 	// happens here on the mutator thread instead of inside the pause.
 	ref_index.rehash(ref_index.size() * 2 + 1);
 	ref_index_shrinks++;
+}
+
+size_t ObjectHeap::MeasureLiveBytesForTest() const
+{
+	size_t bytes = 0;
+	for (size_t i = 0; i < objs.size(); i++)
+	{
+		if (objs[i])
+		{
+			bytes += ObjectBytes(objs[i]);
+		}
+	}
+	return bytes;
 }
 
 bool ObjectHeap::RefIndexMatchesHeap() const

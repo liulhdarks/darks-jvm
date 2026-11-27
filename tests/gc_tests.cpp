@@ -1064,6 +1064,7 @@ int main(int argc, char **argv)
 	if (heap->CmsEnabled() && heap->IncrementalMarkEnabled())
 	{
 		heap->gc();
+		CHECK(heap->MeasureLiveBytesForTest() == heap->LiveBytes());
 		const size_t live_before = heap->LiveBytes();
 		const size_t objects_before = heap->LiveObjectCount();
 		const size_t pause_bytes_before = heap->CmsObjectBytesInPause();
@@ -1095,6 +1096,7 @@ int main(int argc, char **argv)
 		CHECK(freed == heap->LastFreedBytes());
 		CHECK(freed == freed_expected);
 		CHECK(heap->LiveBytes() == live_before);
+		CHECK(heap->MeasureLiveBytesForTest() == heap->LiveBytes());
 		CHECK(heap->LiveObjectCount() == objects_before);
 		CHECK(heap->RefIndexEntries() == heap->LiveObjectCount());
 		CHECK(heap->RefIndexMatchesHeap());
@@ -1103,6 +1105,24 @@ int main(int argc, char **argv)
 		            freed, heap->CmsLastSweptObjects(),
 		            heap->CmsLastSweptSlots(), heap->CmsLastSweepMs(),
 		            heap->LiveBytes());
+
+		// A value adopted after registration grows ObjectBytes; the live
+		// size has to follow, or the deferred sweep would subtract more
+		// bytes than were ever added and drift below the real live size.
+		{
+			LPOBJECT_REF grow_payload = NULL;
+			LPOBJECT_REF grow_holder = NULL;
+			GCRootScope root_payload(heap, &grow_payload);
+			GCRootScope root_holder(heap, &grow_holder);
+			CHECK(heap->NewArrayObject(8, int_array_class, grow_payload));
+			CHECK(heap->NewArrayObject(8, int_array_class, grow_holder));
+			lpObject grow_obj = NULL;
+			CHECK(heap->GetObject(grow_holder, grow_obj));
+			set_ref_field(grow_obj, "$gc-test:adopted", grow_payload);
+			heap->gc();
+			CHECK(heap->GetObject(grow_holder, grow_obj));
+			CHECK(heap->MeasureLiveBytesForTest() == heap->LiveBytes());
+		}
 	}
 
 
@@ -1148,6 +1168,7 @@ int main(int argc, char **argv)
 		lpObject now = NULL;
 		CHECK(heap->GetObject(payload, now));
 		CHECK(now == payload_obj);
+		CHECK(heap->MeasureLiveBytesForTest() == heap->LiveBytes());
 		CHECK(heap->RefIndexMatchesHeap());
 		std::printf("gc-test: late stack root reached=%d survived=%d\n",
 		            reached ? 1 : 0, now == payload_obj ? 1 : 0);
@@ -1157,6 +1178,7 @@ int main(int argc, char **argv)
 	MethodArea::ClearStaticFields();
 	heap->gc();
 	heap->DrainPendingFreeAll();
+	CHECK(heap->MeasureLiveBytesForTest() == heap->LiveBytes());
 	CHECK(heap->LiveObjectCount() == permanent_live);
 	// The index must be exactly the set of live objects after the final
 	// collection, in either maintenance mode.

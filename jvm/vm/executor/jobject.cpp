@@ -2,6 +2,8 @@
 #include "jobject.h"
 #include "jni/jni.h"
 #include "gc/gcbarrier.h"
+#include "context.h"
+#include "objectheap.h"
 
 void JObject::DeleteArray()
 {
@@ -110,8 +112,15 @@ void JObject::AdoptFieldValue(const string &key, lpFieldValue value)
 	{
 		return;
 	}
+	const bool new_name = varants.find(key) == varants.end();
 	owned_values.push_back(value);
 	varants[key] = value;
+	if (new_name && VMContext::object_heap)
+	{
+		// ObjectBytes counts one entry per name, so an object that gains a
+		// name after registration grows; keep the live size in step.
+		VMContext::object_heap->AccountFieldGrowth(ObjectHeap::FieldEntryBytes());
+	}
 }
 
 bool JObject::newArrayInstance(DATA_TYPE data_type, int size)

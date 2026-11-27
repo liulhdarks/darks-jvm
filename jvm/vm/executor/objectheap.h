@@ -277,6 +277,14 @@ public:
 	size_t CmsObjectBytesInPause() const { return cms_object_bytes_in_pause.load(); }
 	// True between a successful final mark and the end of its deferred sweep.
 	bool CmsSweepPending() const { return cms_sweep_pending.load(); }
+	// An object adopted a new name-keyed value after it was registered, so its
+	// ObjectBytes grew.  The incremental live size has to grow with it, or the
+	// deferred sweep (which subtracts the current size) would drive it below
+	// the real live size.  Called by JObject::AdoptFieldValue.
+	void AccountFieldGrowth(size_t bytes);
+	// Bytes ObjectBytes() attributes to one name-keyed value; adopting a new
+	// name grows a registered object by exactly this much.
+	static size_t FieldEntryBytes() { return sizeof(FieldValue) + 32; }
 
 	// ---- test hooks -------------------------------------------------------
 	// Runs the allocation-triggered path once, so the suite can exercise the
@@ -300,6 +308,10 @@ public:
 	}
 	void OpenCmsFinalGateForTest() { cms_final_gate_open.store(true); }
 	bool CmsFinalGateReached() const { return cms_final_gate_waiting.load(); }
+	// Recomputes the live size by summing ObjectBytes over the object table so
+	// a test can compare it with the incrementally maintained live_bytes.  A
+	// settled heap must match exactly; do not call while a collection runs.
+	size_t MeasureLiveBytesForTest() const;
 
 	// ---- statistics -------------------------------------------------------
 	size_t LiveBytes() const { return live_bytes; }
