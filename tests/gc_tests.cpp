@@ -18,10 +18,14 @@
 #include "vm/executor/jfield.h"
 #include "vm/executor/methodarea.h"
 #include "vm/classfiles/classloader.h"
+#include "vm/executor/gc/gcbarrier.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <thread>
+#include <vector>
 
 static int g_passed = 0;
 static int g_failed = 0;
@@ -556,8 +560,9 @@ int main(int argc, char **argv)
 		CHECK(refs_stable);
 		CHECK(drained_ok);
 		// The pause-time sweep leaves nothing pending; the lazy one must show
-		// the chunked hand-over at least once.
-		CHECK(!heap->LazySweepEnabled() || pending_seen);
+		// the chunked hand-over at least once.  The concurrent collector owns
+		// its dead set differently and is covered by its own checks below.
+		CHECK(!heap->LazySweepEnabled() || pending_seen || heap->CmsEnabled());
 		std::printf("gc-test: lazy sweep mode=%s pending_peak=%zu drained=%d\n",
 		            heap->LazySweepEnabled() ? "lazy" : "pause", pending_peak,
 		            drained_ok ? 1 : 0);
@@ -568,7 +573,7 @@ int main(int argc, char **argv)
 	// automatic collection stays open while the loop keeps allocating.  The
 	// objects allocated inside that window are marked as they are registered
 	// (allocate black) and every reachable element must survive the cycle.
-	if (heap->IncrementalMarkEnabled())
+	if (heap->IncrementalMarkEnabled() && !heap->CmsEnabled())
 	{
 		const int kLive = 40000;
 		std::vector<LPOBJECT_REF> live(kLive);
@@ -643,7 +648,7 @@ int main(int argc, char **argv)
 	// container slot into an already traced container and the source slot
 	// is cleared.  The SATB journal has to keep the moved payload alive
 	// until the cycle closes, otherwise a destination slot dangles.
-	if (heap->IncrementalMarkEnabled())
+	if (heap->IncrementalMarkEnabled() && !heap->CmsEnabled())
 	{
 		const int kContainers = 256;
 		const int kSlots = 4;
@@ -810,6 +815,191 @@ int main(int argc, char **argv)
 		CHECK(heap->RefIndexMatchesHeap());
 		std::printf("gc-test: sliced mark refmove moved=%d records=%zu survived=%d\n",
 		            moved, max_records, survived ? 1 : 0);
+	}
+
+	// ---------------------------------------------------------------- (h)
+	// Concurrent collector: the trace must run on the marker thread while a
+	// mutator thread keeps allocating, and the swept heap must still hold
+	// every reachable element.  These checks only run in cms mode; the
+	// mark-sweep collector keeps its current behaviour.
+	if (heap->CmsEnabled() && heap->IncrementalMarkEnabled())
+	{
+		const int kLive = 60000;
+		std::vector<LPOBJECT_REF> live(kLive, NULL);
+		std::vector<lpObject> expected(kLive, NULL);
+		LPOBJECT_REF rooted = NULL;
+		GCRootScope root(heap, &rooted);
+		CHECK(heap->NewObjectArrayObject(kLive, object_array_class, rooted));
+		lpObject root_obj = NULL;
+		CHECK(heap->GetObject(rooted, root_obj));
+
+		bool built = root_obj != NULL;
+		for (int i = 0; i < kLive && built; i++)
+		{
+			LPOBJECT_REF element = NULL;
+			if (!heap->NewArrayObject(16, int_array_class, element))
+			{
+				built = false;
+				break;
+			}
+			lpObject element_obj = NULL;
+			if (!heap->GetObject(element, element_obj) || !element_obj)
+			{
+				built = false;
+				break;
+			}
+			static_cast<int*>(element_obj->array_var)[0] = i;
+			live[i] = element;
+			expected[i] = element_obj;
+			static_cast<jobject*>(root_obj->array_var)[i] =
+				reinterpret_cast<jobject>(element);
+		}
+		CHECK(built);
+
+		const size_t runs_before = (size_t)heap->GcRuns();
+		const unsigned long long caller_thread = static_cast<unsigned long long>(
+			std::hash<std::thread::id>()(std::this_thread::get_id()));
+		std::atomic<bool> stop(false);
+		std::atomic<long> mutator_allocs(0);
+		std::thread mutator(
+		[&]()
+		{
+			while (!stop.load())
+			{
+				LPOBJECT_REF garbage = NULL;
+				if (heap->NewArrayObject(8, int_array_class, garbage))
+				{
+					mutator_allocs.fetch_add(1);
+				}
+			}
+		});
+		// Let the mutator thread reach steady state before the cycle starts;
+		// under parallel ctest load it may otherwise not be scheduled during
+		// the short trace window.
+		for (int spin = 0; spin < 20000 && mutator_allocs.load() < 200; spin++)
+		{
+			std::this_thread::yield();
+		}
+		bool saw_allocs = false;
+		for (int attempt = 0; attempt < 5 && !saw_allocs; attempt++)
+		{
+			heap->gc();
+			saw_allocs = heap->CmsAllocationsDuringMark() > 0;
+		}
+		stop.store(true);
+		mutator.join();
+
+		CHECK((size_t)heap->GcRuns() >= runs_before + 1);
+		CHECK(heap->CmsMarkSteps() > 1);
+		CHECK(saw_allocs);
+		CHECK(heap->CmsMarkerThreadId() != 0);
+		CHECK(heap->CmsMarkerThreadId() != caller_thread);
+		CHECK(heap->CmsLastMarkWallMs() >= 0.0);
+		CHECK(heap->CmsLastInitPauseMs() + heap->CmsLastFinalPauseMs() <=
+		      heap->CmsLastMarkWallMs());
+		CHECK(heap->PendingFreeCount() == 0);
+		CHECK(heap->LiveObjectCount() >= (size_t)kLive);
+		CHECK(heap->RefIndexMatchesHeap());
+
+		bool survivors_ok = true;
+		for (int i = 0; i < kLive; i += 97)
+		{
+			lpObject now = NULL;
+			if (!heap->GetObject(live[i], now) || now != expected[i])
+			{
+				survivors_ok = false;
+				break;
+			}
+		}
+		CHECK(survivors_ok);
+		std::printf("gc-test: cms concurrent mark steps=%zu allocs=%zu "
+		            "marker=%llu caller=%llu mark_wall=%.2f init=%.2f final=%.2f\n",
+		            heap->CmsMarkSteps(), heap->CmsAllocationsDuringMark(),
+		            heap->CmsMarkerThreadId(), caller_thread,
+		            heap->CmsLastMarkWallMs(), heap->CmsLastInitPauseMs(),
+		            heap->CmsLastFinalPauseMs());
+	}
+
+	// ---------------------------------------------------------------- (i)
+	// Concurrent mode failure: a journal that overflows during the trace must
+	// abort the cycle and retry as one full stop-the-world mark-sweep, without
+	// freeing from the incomplete trace.
+	if (heap->CmsEnabled() && heap->IncrementalMarkEnabled())
+	{
+		LPOBJECT_REF holders = NULL;
+		GCRootScope root(heap, &holders);
+		CHECK(heap->NewObjectArrayObject(8, object_array_class, holders));
+		lpObject holder_obj = NULL;
+		CHECK(heap->GetObject(holders, holder_obj));
+		std::vector<LPOBJECT_REF> payloads;
+		bool built = holder_obj != NULL;
+		for (int i = 0; i < 8 && built; i++)
+		{
+			LPOBJECT_REF payload = NULL;
+			if (!heap->NewArrayObject(8, int_array_class, payload))
+			{
+				built = false;
+				break;
+			}
+			payloads.push_back(payload);
+			static_cast<jobject*>(holder_obj->array_var)[i] =
+				reinterpret_cast<jobject>(payload);
+		}
+		CHECK(built);
+
+		const size_t failures_before = heap->CmsConcurrentFailures();
+		// One journal entry is enough: the writer below keeps overwriting the
+		// slots while the cycle marks, so the second record overflows.
+		GCBarrier::SetRecordLimit(1);
+		std::atomic<bool> stop(false);
+		std::atomic<long> writes(0);
+		lpObject writer_obj = holder_obj;
+		std::thread writer(
+		[&]()
+		{
+			while (!stop.load())
+			{
+				for (int i = 0; i < 8; i++)
+				{
+					Slot slot;
+					slot.heapPtr = payloads[(size_t)i];
+					writer_obj->SetArrayIndex(i, slot);
+					writes.fetch_add(1);
+				}
+			}
+		});
+		for (int spin = 0; spin < 20000 && writes.load() < 200; spin++)
+		{
+			std::this_thread::yield();
+		}
+		for (int attempt = 0; attempt < 5 &&
+		                    heap->CmsConcurrentFailures() == failures_before;
+		     attempt++)
+		{
+			heap->gc();
+		}
+		stop.store(true);
+		writer.join();
+		GCBarrier::SetRecordLimit(0);
+
+		CHECK(writes.load() > 0);
+		CHECK(heap->CmsConcurrentFailures() > failures_before);
+		CHECK(heap->PendingFreeCount() == 0);
+		CHECK(heap->RefIndexMatchesHeap());
+		CHECK(!heap->CmsCycleActive());
+		bool still_there = true;
+		for (size_t i = 0; i < payloads.size(); i++)
+		{
+			lpObject now = NULL;
+			if (!heap->GetObject(payloads[i], now) || !now)
+			{
+				still_there = false;
+				break;
+			}
+		}
+		CHECK(still_there);
+		std::printf("gc-test: cms concurrent failures=%zu writes=%ld\n",
+		            heap->CmsConcurrentFailures(), writes.load());
 	}
 
 	// Release the last roots and collect everything.

@@ -20,6 +20,8 @@
 #include <string>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
+#include <thread>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -291,6 +293,7 @@ bool ObjectHeap::initialize(int init_size)
 	if (collector)
 	{
 		collector->Initialize(this);
+		cms_mode = strcmp(collector->Name(), "cms") == 0;
 	}
 	if (getenv("DARKS_GC_SATB_TEST"))
 	{
@@ -417,18 +420,47 @@ void ObjectHeap::MaybeGC()
 	// safepoint handshake must not run with the heap mutex already held.
 	bool needed = false;
 	bool near_max = false;
+	bool abort_cms = false;
 	{
 		VMLock lk;
 		// The OutOfMemoryError itself is allocated while the heap is over
 		// budget: collecting there would either collect the partially built
 		// exception or re-enter the failing allocation.
-		if (!gc_enabled || in_gc || no_gc_depth > 0 || oom_in_progress)
+		if (!gc_enabled || no_gc_depth > 0 || oom_in_progress)
 		{
 			return;
 		}
 		needed = (live_bytes >= threshold);
 		near_max = max_heap_bytes != 0 &&
 			live_bytes > max_heap_bytes - (max_heap_bytes >> 3);
+		if (in_gc)
+		{
+			// A concurrent cycle is open (it owns gc_mutex for its whole
+			// duration).  The trace cannot be paced by live_bytes, which still
+			// counts this cycle's garbage; close to -Xmx the cycle is aborted
+			// so the collector retries with one stop-the-world pass instead of
+			// risking an allocation failure mid-mark.
+			abort_cms = cms_mode && near_max && mark_cycle_active.load();
+		}
+	}
+	if (abort_cms)
+	{
+		CmsRequestAbort();
+		return;
+	}
+	if (in_gc)
+	{
+		return;
+	}
+	if (cms_mode)
+	{
+		// The collector owns the cycle and blocks until it completes; the
+		// stop-the-world parts are only the initial and final marks.
+		if (needed)
+		{
+			gc("threshold");
+		}
+		return;
 	}
 	if (incremental_mark && mark_cycle_active.load())
 	{
@@ -441,7 +473,7 @@ void ObjectHeap::MaybeGC()
 			ContinueMarkCycle();
 			return;
 		}
-		std::unique_lock<std::mutex> gc_lock(gc_mutex, std::try_to_lock);
+		std::unique_lock<std::recursive_mutex> gc_lock(gc_mutex, std::try_to_lock);
 		if (gc_lock.owns_lock() && !in_gc)
 		{
 			do
@@ -460,7 +492,7 @@ void ObjectHeap::MaybeGC()
 		gc("threshold");
 		return;
 	}
-	std::unique_lock<std::mutex> gc_lock(gc_mutex, std::try_to_lock);
+	std::unique_lock<std::recursive_mutex> gc_lock(gc_mutex, std::try_to_lock);
 	if (!gc_lock.owns_lock() || in_gc)
 	{
 		return;
@@ -1022,7 +1054,7 @@ void ObjectHeap::CollectMarkSweep(const char *reason)
 	// Only one collection at a time.  A native call may reach allocation from
 	// another thread; in that case the collection is skipped rather than
 	// waiting while holding the heap lock.
-	std::unique_lock<std::mutex> gc_lock(gc_mutex, std::try_to_lock);
+	std::unique_lock<std::recursive_mutex> gc_lock(gc_mutex, std::try_to_lock);
 	if (!gc_lock.owns_lock())
 	{
 		return;
@@ -1411,6 +1443,7 @@ void ObjectHeap::RunMarkPause(const char *reason)
 		if (gc_barrier_owned)
 		{
 			GCBarrier::Disable();
+			GCBarrier::SetRecordNew(true);
 			gc_barrier_owned = false;
 		}
 
@@ -1668,7 +1701,7 @@ void ObjectHeap::ContinueMarkCycle()
 		return;
 	}
 	mark_cycle_allocs.store(0, std::memory_order_relaxed);
-	std::unique_lock<std::mutex> gc_lock(gc_mutex, std::try_to_lock);
+	std::unique_lock<std::recursive_mutex> gc_lock(gc_mutex, std::try_to_lock);
 	if (!gc_lock.owns_lock() || in_gc || !mark_cycle_active.load())
 	{
 		return;
@@ -1719,6 +1752,325 @@ void ObjectHeap::DrainPendingFreeAll()
 	SweepPending(static_cast<size_t>(-1));
 }
 
+// ---------------------------------------------------------------------------
+// Concurrent (CMS-lite) collector
+// ---------------------------------------------------------------------------
+const char *ObjectHeap::CollectorName() const
+{
+	return collector ? collector->Name() : "none";
+}
+
+bool ObjectHeap::CmsCycleEnter()
+{
+	if (!gc_mutex.try_lock())
+	{
+		return false;
+	}
+	if (in_gc.load())
+	{
+		gc_mutex.unlock();
+		return false;
+	}
+	in_gc.store(true);
+	return true;
+}
+
+void ObjectHeap::CmsCycleLeave()
+{
+	in_gc.store(false);
+	gc_mutex.unlock();
+}
+
+void ObjectHeap::CmsRequestAbort()
+{
+	cms_abort_requested.store(true);
+}
+
+void ObjectHeap::CmsSetMarkerThread()
+{
+	unsigned long long id = static_cast<unsigned long long>(
+		std::hash<std::thread::id>()(std::this_thread::get_id()));
+	cms_marker_thread.store(id);
+}
+
+void ObjectHeap::CmsAbandonCycle()
+{
+	mark_cycle_active.store(false);
+	cms_cycle_running.store(false);
+	cms_mark_complete.store(true);
+	if (gc_barrier_owned)
+	{
+		GCBarrier::Disable();
+		GCBarrier::SetRecordNew(true);
+		gc_barrier_owned = false;
+	}
+	mark_stack.clear();
+	weak_reference_objects.clear();
+}
+
+// Initial mark.  The whole phase runs inside one stop-the-world pause: the
+// previous cycle's dead set is finished first so two cycles can never share a
+// slot, then the roots are snapshotted and the SATB barrier is switched on.
+// Everything reachable at this instant stays marked: later overwrites are
+// journaled by the barrier and new objects are allocate-black.
+void ObjectHeap::CmsInitMark(const char *reason)
+{
+	(void)reason;
+	cms_abort_requested.store(false);
+	cms_mark_complete.store(false);
+	cms_mark_steps.store(0);
+	cms_mark_allocs.store(0);
+	cms_cycle_running.store(true);
+	cms_mark_start = GcClock::now();
+
+	VMLock heap_lock;
+	SweepPending(static_cast<size_t>(-1));
+	cms_world_stopped.store(true);
+	Scheduler::Instance().SafepointBegin();
+	const GcClock::time_point pause_start = GcClock::now();
+
+	if (ref_index_incremental)
+	{
+		RepairRefIndexIfNeeded();
+	}
+	else
+	{
+		RebuildRefIndex();
+	}
+	marked.assign(objs.size(), 0);
+	mark_stack.clear();
+	weak_reference_objects.clear();
+	cycle_recorded = 0;
+	// Drop journal entries left by an earlier cycle that was abandoned: the
+	// root snapshot below reconstructs the whole reachable set, and a stale
+	// entry could name a slot that has since been recycled.
+	std::vector<LPOBJECT_REF> stale;
+	GCBarrier::Drain(stale);
+	cycle_dropped_before = GCBarrier::Dropped();
+	MarkRoots();
+	if (!GCBarrier::Enabled())
+	{
+		// Snapshot-at-the-beginning only needs the overwritten value: the
+		// snapshot already covers what was reachable, and allocations are
+		// marked as they are registered.
+		GCBarrier::SetRecordNew(false);
+		GCBarrier::Enable();
+		gc_barrier_owned = true;
+	}
+	mark_cycle_active.store(true);
+
+	Scheduler::Instance().SafepointEnd();
+	cms_world_stopped.store(false);
+	cms_init_ms = MillisecondsSince(pause_start);
+
+	if (GcStatsEnabled())
+	{
+		fprintf(stderr, "[gcpause] seq=%zu reason=%s phase=cms-init stw_ms=%.2f "
+		        "stack=%zu\n",
+		        cycle_pauses + 1, reason ? reason : "unknown", cms_init_ms,
+		        mark_stack.size());
+	}
+}
+
+// One bounded background trace step.  The marker holds VMLock only for this
+// step and drops it afterwards, so mutator threads keep running between steps.
+bool ObjectHeap::CmsMarkStep(size_t max_objects, double max_ms)
+{
+	if (!mark_cycle_active.load() || cms_mark_complete.load())
+	{
+		return false;
+	}
+	if (cms_abort_requested.load())
+	{
+		return false;
+	}
+	if (cms_world_stopped.load())
+	{
+		// A stop-the-world phase owns the heap; retry after it ends instead of
+		// extending the pause.
+		return true;
+	}
+	VMLock lk;
+	if (cms_world_stopped.load() || !mark_cycle_active.load())
+	{
+		return !cms_mark_complete.load();
+	}
+	if (GCBarrier::Dropped() != cycle_dropped_before)
+	{
+		// The journal overflowed: an overwritten edge may be missing.  Falling
+		// back to a full stop-the-world pass is the only safe option.
+		CmsRequestAbort();
+		return false;
+	}
+	std::vector<LPOBJECT_REF> recorded;
+	GCBarrier::Drain(recorded);
+	cycle_recorded += recorded.size();
+	for (size_t i = 0; i < recorded.size(); i++)
+	{
+		MarkObjectRef(recorded[i]);
+	}
+	ScanMarkSlice(max_objects, max_ms);
+	cms_mark_steps.fetch_add(1);
+	if (mark_stack.empty())
+	{
+		cms_mark_complete.store(true);
+		return false;
+	}
+	return true;
+}
+
+// Final mark.  Re-reads every root (a reference can move into a stack slot
+// without any heap store), drains the last journal entries, resolves weak
+// references and moves the dead set to pending_free.  On failure the cycle is
+// abandoned and the caller retries with a full stop-the-world mark-sweep;
+// nothing is freed from an incomplete trace.
+bool ObjectHeap::CmsFinalMark(const char *reason)
+{
+	const char *why = reason ? reason : "unknown";
+	const GcClock::time_point pause_start = GcClock::now();
+	VMLock heap_lock;
+	cms_world_stopped.store(true);
+	Scheduler::Instance().SafepointBegin();
+
+	if (GCBarrier::Enabled())
+	{
+		std::vector<LPOBJECT_REF> recorded;
+		GCBarrier::Drain(recorded);
+		cycle_recorded += recorded.size();
+		for (size_t i = 0; i < recorded.size(); i++)
+		{
+			MarkObjectRef(recorded[i]);
+		}
+	}
+	MarkRoots();
+	ScanMarkSlice(static_cast<size_t>(-1), 1.0e30);
+	if (marked.size() < objs.size())
+	{
+		marked.resize(objs.size(), 0);
+	}
+
+	if (cms_abort_requested.load() ||
+	    GCBarrier::Dropped() != cycle_dropped_before)
+	{
+		cms_failures.fetch_add(1);
+		CmsAbandonCycle();
+		Scheduler::Instance().SafepointEnd();
+		cms_world_stopped.store(false);
+		cms_final_ms = MillisecondsSince(pause_start);
+		if (GcStatsEnabled())
+		{
+			fprintf(stderr,
+			        "[gcstat] run=%d reason=%s mode=cms concurrent_mode_failure=1 "
+			        "init_stw_ms=%.2f final_stw_ms=%.2f satb_records=%zu "
+			        "satb_dropped=%llu\n",
+			        gc_runs, why, cms_init_ms, cms_final_ms, cycle_recorded,
+			        static_cast<unsigned long long>(GCBarrier::Dropped()));
+		}
+		return false;
+	}
+
+	const GcClock::time_point weak_start = GcClock::now();
+	ProcessWeakReferences();
+	const double weak_ms = MillisecondsSince(weak_start);
+
+	size_t freed_bytes = 0;
+	size_t freed_objects = 0;
+	size_t live = 0;
+	size_t live_count = 0;
+	for (size_t i = 1; i < objs.size(); i++)
+	{
+		lpObject obj = objs[i];
+		if (!obj)
+		{
+			continue;
+		}
+		if (!marked[i])
+		{
+			freed_bytes += ObjectBytes(obj);
+			freed_objects++;
+			pending_free.push_back(static_cast<OBJECT_REF>(i));
+		}
+		else
+		{
+			live += ObjectBytes(obj);
+			live_count++;
+		}
+	}
+	// The dead set is handed to the sweeper thread; nothing is destroyed in
+	// the pause.
+	live_bytes = live;
+	live_objects = live_count;
+	if (ref_index_incremental && ref_index.bucket_count() > 4096 &&
+	    ref_index.size() * 8 < ref_index.bucket_count())
+	{
+		ref_index_shrink_pending = true;
+	}
+	gc_runs++;
+	gc_freed_last = freed_bytes;
+	gc_freed_total += freed_bytes;
+
+	size_t next_threshold = base_threshold;
+	if (live_bytes > next_threshold / 2)
+	{
+		next_threshold = live_bytes * 2;
+	}
+	if (max_heap_bytes != 0 && next_threshold > max_heap_bytes)
+	{
+		next_threshold = max_heap_bytes;
+	}
+	threshold = next_threshold;
+	cms_mark_wall_ms = std::chrono::duration<double, std::milli>(
+		GcClock::now() - cms_mark_start).count();
+
+	mark_cycle_active.store(false);
+	cms_cycle_running.store(false);
+	if (gc_barrier_owned)
+	{
+		GCBarrier::Disable();
+		GCBarrier::SetRecordNew(true);
+		gc_barrier_owned = false;
+	}
+	Scheduler::Instance().SafepointEnd();
+	cms_world_stopped.store(false);
+	cms_final_ms = MillisecondsSince(pause_start);
+
+	if (gc_log)
+	{
+		fprintf(stderr,
+		        "gc-collect run=%d objects=%zu freed=%zu bytes live=%zu bytes\n",
+		        gc_runs, freed_objects, freed_bytes, live_bytes);
+	}
+	if (GcStatsEnabled())
+	{
+		const double mark_wall_ms = cms_mark_wall_ms;
+		fprintf(stderr,
+		        "[gcstat] run=%d reason=%s mode=cms init_stw_ms=%.2f "
+		        "final_stw_ms=%.2f stw_ms=%.2f mark_wall_ms=%.2f "
+		        "mark_steps=%zu allocs_during_mark=%zu weak_ms=%.2f "
+		        "satb_records=%zu satb_dropped=%llu pend_free=%zu "
+		        "ref_entries=%zu ref_repairs=%zu ref_shrinks=%zu "
+		        "refindex=%s freed_objs=%zu freed_bytes=%zu "
+		        "live_after=%zu objs_after=%zu threshold_after=%zu\n",
+		        gc_runs, why, cms_init_ms, cms_final_ms,
+		        cms_init_ms + cms_final_ms, mark_wall_ms,
+		        cms_mark_steps.load(), cms_mark_allocs.load(), weak_ms,
+		        cycle_recorded,
+		        static_cast<unsigned long long>(GCBarrier::Dropped()),
+		        pending_free.size(), ref_index.size(), ref_index_repairs,
+		        ref_index_shrinks,
+		        ref_index_incremental ? "incremental" : "full",
+		        freed_objects, freed_bytes, live_bytes, live_objects,
+		        threshold);
+	}
+	return true;
+}
+
+void ObjectHeap::CmsSweepStep(size_t max_objects)
+{
+	VMLock lk;
+	SweepPending(max_objects);
+}
+
 bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
 {
 	VMLock lk;
@@ -1728,8 +2080,9 @@ bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
 	}
 	// Spread the tear-down of the previous collection's dead objects over the
 	// allocations instead of paying for all of them in the pause.  A bounded
-	// chunk keeps every single allocation short.
-	if (!pending_free.empty())
+	// chunk keeps every single allocation short.  The concurrent collector
+	// keeps its dead set for its own sweeper thread instead.
+	if (!cms_mode && !pending_free.empty())
 	{
 		SweepPending(kAllocSweepChunk);
 	}
@@ -1752,6 +2105,7 @@ bool ObjectHeap::Register(lpObject obj, LPOBJECT_REF &object_ref)
 	IndexObject(obj);
 	if (mark_cycle_active.load())
 	{
+		cms_mark_allocs.fetch_add(1);
 		MarkNewObjectLocked(obj);
 	}
 	object_ref = &obj->index;

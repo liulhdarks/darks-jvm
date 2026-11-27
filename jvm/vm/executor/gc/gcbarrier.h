@@ -47,6 +47,11 @@ public:
 	static size_t Pending();
 
 	static void PrintStats();
+
+	// Test hook: caps the journal at "limit" entries (0 = the default 4 MiB
+	// cap).  The overflow path must turn the cycle into a full stop-the-world
+	// mark-sweep instead of freeing from an incomplete trace.
+	static void SetRecordLimit(size_t limit);
 };
 
 extern bool g_gc_barrier_active;

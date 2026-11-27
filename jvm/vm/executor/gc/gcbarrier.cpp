@@ -11,9 +11,11 @@ bool g_gc_barrier_active = false;
 namespace {
 
 // Cap the recorded set so a long marking cycle cannot grow without bound.
-// M3 turns an overflow into a full remark rescan instead of relying on this
-// buffer alone.
+// The concurrent collector turns an overflow into a full stop-the-world
+// mark-sweep instead of freeing from an incomplete trace.
 const size_t kMaxRecorded = 4 * 1024 * 1024;
+
+std::atomic<size_t> g_record_limit(kMaxRecorded);
 
 std::vector<LPOBJECT_REF> &Recorded()
 {
@@ -83,7 +85,12 @@ void GCBarrier::Record(LPOBJECT_REF old_value, LPOBJECT_REF new_value,
 	}
 	VMLock lk;
 	std::vector<LPOBJECT_REF> &recorded = Recorded();
-	if (recorded.size() >= kMaxRecorded)
+	size_t limit = g_record_limit.load(std::memory_order_relaxed);
+	if (limit == 0)
+	{
+		limit = kMaxRecorded;
+	}
+	if (recorded.size() >= limit)
 	{
 		g_dropped.fetch_add(1, std::memory_order_relaxed);
 		return;
@@ -104,6 +111,11 @@ void GCBarrier::Drain(std::vector<LPOBJECT_REF> &out)
 	VMLock lk;
 	out.swap(Recorded());
 	g_pending.store(0, std::memory_order_relaxed);
+}
+
+void GCBarrier::SetRecordLimit(size_t limit)
+{
+	g_record_limit.store(limit, std::memory_order_relaxed);
 }
 
 void GCBarrier::PrintStats()

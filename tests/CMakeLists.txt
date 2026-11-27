@@ -705,6 +705,35 @@ if(JAVAC)
                 -DEXPECT_RC=0
                 "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
 
+    # Concurrent collector: the same heap checks, with the trace and the
+    # sweep running on the collector's background threads.  The CMS-specific
+    # assertions (marker thread identity, allocations during the mark, CMF
+    # fallback) live in gc_tests section (h)/(i).
+    add_test(NAME gc_heap_cms
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_IMPL=cms;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=cms concurrent mark steps=" -P "${CHECK}")
+
+    add_test(NAME gc_heap_cms_stw
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_IMPL=cms;DARKS_JVM_MARK=stw;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
+
+    add_test(NAME gc_stress_cms
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_IMPL=cms;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
+                "-DEXPECT_TEXT2=gc: static array survived"
+                "-DEXPECT_TEXT3=gc: local chain survived" -P "${CHECK}")
+
+    add_test(NAME gc_stress_cms_stats
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_IMPL=cms;DARKS_GCSTATS=1;DARKS_JVM_GC_THRESHOLD=4096;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=mode=cms"
+                "-DEXPECT_TEXT2=phase=cms-init" -P "${CHECK}")
+
     add_test(NAME gc_stress_survivors
         COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
                 "-DARGS=-E;env;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"

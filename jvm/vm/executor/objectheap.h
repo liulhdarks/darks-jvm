@@ -72,6 +72,18 @@ public:
 		cycle_recorded = 0;
 		cycle_dropped_before = 0;
 		gc_barrier_owned = false;
+		cms_mode = false;
+		cms_init_ms = 0.0;
+		cms_final_ms = 0.0;
+		cms_mark_wall_ms = 0.0;
+		cms_world_stopped.store(false);
+		cms_abort_requested.store(false);
+		cms_cycle_running.store(false);
+		cms_mark_complete.store(true);
+		cms_marker_thread.store(0);
+		cms_mark_steps.store(0);
+		cms_mark_allocs.store(0);
+		cms_failures.store(0);
 		ref_index_repairs = 0;
 		ref_index_shrinks = 0;
 		gc_runs = 0;
@@ -211,6 +223,35 @@ public:
 	// Overwritten references the write barrier journaled in the last cycle.
 	size_t LastCycleRecords() const { return cycle_recorded; }
 
+	// ---- concurrent (CMS-lite) collector --------------------------------
+	// Selected with DARKS_JVM_GC_IMPL=cms.  CmsCollector drives the cycle on
+	// a dedicated marker thread: the initial and final marks are stop-the-
+	// world, the trace and the sweep of the dead set run while the mutator
+	// keeps executing.  The default collector stays marksweep.
+	const char *CollectorName() const;
+	bool CmsEnabled() const { return cms_mode; }
+	// Background trace steps the marker thread completed in the last cycle.
+	size_t CmsMarkSteps() const { return cms_mark_steps.load(); }
+	// Objects allocated and registered while a concurrent mark was open.
+	size_t CmsAllocationsDuringMark() const { return cms_mark_allocs.load(); }
+	// Cycles that fell back to a full stop-the-world mark-sweep because the
+	// SATB journal overflowed or the heap came within 1/8 of -Xmx.
+	size_t CmsConcurrentFailures() const { return cms_failures.load(); }
+	// Thread that ran the background trace (0 before the first cycle).  The
+	// test suite compares it against the collecting thread to prove the mark
+	// did not run on the caller.
+	unsigned long long CmsMarkerThreadId() const { return cms_marker_thread.load(); }
+	// Set while a concurrent cycle owns the collector.
+	bool CmsCycleActive() const { return cms_cycle_running.load(); }
+	// Set when the marker drained the trace graph (remark still pending).
+	bool CmsMarkComplete() const { return cms_mark_complete.load(); }
+	// Set when the open cycle has to end in a full stop-the-world pass.
+	bool CmsAbortRequested() const { return cms_abort_requested.load(); }
+	// Stop-the-world portions of the last concurrent cycle, in milliseconds.
+	double CmsLastInitPauseMs() const { return cms_init_ms; }
+	double CmsLastFinalPauseMs() const { return cms_final_ms; }
+	double CmsLastMarkWallMs() const { return cms_mark_wall_ms; }
+
 	// ---- statistics -------------------------------------------------------
 	size_t LiveBytes() const { return live_bytes; }
 	size_t LiveObjectCount() const { return live_objects; }
@@ -256,6 +297,41 @@ private:
 	void CollectMarkSweep(const char *reason);
 	// One stop-the-world collection (DARKS_JVM_MARK=stw).
 	void CollectMarkSweepSTW(const char *reason);
+
+	// ---- concurrent (CMS-lite) cycle --------------------------------------
+	// CmsCollector owns the driver; these helpers split one collection into
+	// its four phases.  The initial and final marks stop the world, the mark
+	// steps and the sweep of the dead set run on the collector's background
+	// threads while the mutator keeps executing.
+	//
+	// Lock protocol (documented in gc_cms_lite.md):
+	//   * gc_mutex serialises whole collections.  CmsCycleEnter holds it from
+	//     the initial mark to the end of the sweep.
+	//   * VMLock protects every heap structure.  The marker takes it for one
+	//     bounded step at a time and drops it between steps, so mutator
+	//     threads interleave with the trace.
+	//   * The marker thread is not a scheduler worker: SafepointBegin never
+	//     waits for it, and it parks while a pause is in progress.
+	bool CmsCycleEnter();
+	void CmsCycleLeave();
+	// Initial mark: pre-collection sweep of the previous dead set, root
+	// snapshot and SATB enable, inside one stop-the-world pause.
+	void CmsInitMark(const char *reason);
+	// One bounded background trace step.  Returns false when the marker has
+	// nothing left to do, the cycle was aborted, or a pause is in progress.
+	bool CmsMarkStep(size_t max_objects, double max_ms);
+	// Final mark: drain the journal, re-scan the roots, process weak
+	// references and move the dead set to pending_free, inside one pause.
+	// Returns false when the cycle has to be retried as a full STW
+	// mark-sweep (concurrent mode failure).
+	bool CmsFinalMark(const char *reason);
+	// Destroys up to max_objects pending dead objects under VMLock.
+	void CmsSweepStep(size_t max_objects);
+	// Records the thread that is about to run the background trace.
+	void CmsSetMarkerThread();
+	// Aborts the open cycle; the final mark turns it into a full STW pass.
+	void CmsRequestAbort();
+	void CmsAbandonCycle();
 
 	// ---- incremental (sliced) marking -------------------------------------
 	// A cycle runs as a sequence of bounded pauses: the first one snapshots
@@ -317,7 +393,10 @@ private:
 
 	size_t ObjectBytes(lpObject obj) const;
 
-	std::vector<bool> marked;
+	// Byte per slot: the marker thread sets bits while the mutator allocates
+	// (allocate-black).  Both sides hold VMLock for every access, and a byte
+	// per object avoids the packed-word read-modify-write of vector<bool>.
+	std::vector<unsigned char> marked;
 	std::vector<OBJECT_REF> mark_stack;
 	std::vector<OBJECT_REF> weak_reference_objects;
 	std::unordered_map<const OBJECT_REF *, OBJECT_REF> ref_index;
@@ -363,10 +442,10 @@ private:
 	std::vector<LPOBJECT_REF> weak_global_refs;
 	std::vector<ThreadStack *> thread_stacks;
 
-	std::mutex gc_mutex;
+	std::recursive_mutex gc_mutex;
 	bool gc_enabled;
 	bool gc_log;
-	bool in_gc;
+	std::atomic<bool> in_gc;
 	int no_gc_depth;
 	GCCollector *collector;
 	size_t requested_initial_heap;
@@ -397,6 +476,23 @@ private:
 	size_t root_temp_slots;
 	size_t root_global_count;
 	size_t root_jni_envs;
+
+	// ---- concurrent (CMS-lite) state --------------------------------------
+	bool cms_mode;
+	// Set while one of the two stop-the-world phases is in progress, so the
+	// marker thread stops touching the heap instead of extending the pause.
+	std::atomic<bool> cms_world_stopped;
+	std::atomic<bool> cms_abort_requested;
+	std::atomic<bool> cms_cycle_running;
+	std::atomic<bool> cms_mark_complete;
+	std::atomic<unsigned long long> cms_marker_thread;
+	std::atomic<size_t> cms_mark_steps;
+	std::atomic<size_t> cms_mark_allocs;
+	std::atomic<size_t> cms_failures;
+	double cms_init_ms;
+	double cms_final_ms;
+	double cms_mark_wall_ms;
+	std::chrono::steady_clock::time_point cms_mark_start;
 };
 
 typedef ObjectHeap *lpObjectHeap;
