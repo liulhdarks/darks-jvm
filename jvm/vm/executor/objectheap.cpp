@@ -622,20 +622,8 @@ void ObjectHeap::PopNoGc()
 	}
 }
 
-void ObjectHeap::MarkObjectRef(LPOBJECT_REF ref)
+void ObjectHeap::MarkRefIndex(OBJECT_REF idx)
 {
-	if (!ref)
-	{
-		return;
-	}
-	// The candidate pointer is never dereferenced: random integer/float slot
-	// contents must not fault. Only pointers that are exactly the address of a
-	// live object's index field are accepted, so the scan is conservative.
-	OBJECT_REF idx = 0;
-	if (!LookupRefIndex(ref, idx))
-	{
-		return;
-	}
 	if (idx <= 0 || static_cast<size_t>(idx) >= objs.size())
 	{
 		return;
@@ -652,6 +640,50 @@ void ObjectHeap::MarkObjectRef(LPOBJECT_REF ref)
 	}
 	marked[static_cast<size_t>(idx)] = true;
 	mark_stack.push_back(idx);
+}
+
+void ObjectHeap::MarkObjectRef(LPOBJECT_REF ref)
+{
+	if (!ref)
+	{
+		return;
+	}
+	// The candidate pointer is never dereferenced: random integer/float slot
+	// contents must not fault. Only pointers that are exactly the address of a
+	// live object's index field are accepted, so the scan is conservative.
+	OBJECT_REF idx = 0;
+	if (!LookupRefIndex(ref, idx))
+	{
+		return;
+	}
+	MarkRefIndex(idx);
+}
+
+void ObjectHeap::MarkObjectRefHinted(LPOBJECT_REF ref, OBJECT_REF &hint)
+{
+	if (!ref)
+	{
+		return;
+	}
+	// A remembered index is only trusted once the slot's object proves it is
+	// still the same address: the sweep recycles slots, so the index alone
+	// says nothing.
+	const size_t limit = objs.size();
+	if (hint > 0 && static_cast<size_t>(hint) < limit &&
+	    objs[static_cast<size_t>(hint)] &&
+	    &objs[static_cast<size_t>(hint)]->index == ref)
+	{
+		MarkRefIndex(hint);
+		return;
+	}
+	OBJECT_REF idx = 0;
+	if (!LookupRefIndex(ref, idx))
+	{
+		hint = 0;
+		return;
+	}
+	hint = idx;
+	MarkRefIndex(idx);
 }
 
 bool ObjectHeap::LookupRefIndex(const OBJECT_REF *candidate, OBJECT_REF &index) const
@@ -809,19 +841,45 @@ void ObjectHeap::MarkThreadStackRoots()
 	}
 }
 
+namespace {
+
+// A static field declared with a primitive descriptor can never hold an
+// object.  A value with no descriptor at all stays conservative, like the
+// untagged slots the other scans accept.
+bool StaticValueMayHoldObject(lpFieldValue fv)
+{
+	return fv && (!fv->field || FieldHoldsReference(fv->field));
+}
+
+} // namespace
+
 void ObjectHeap::MarkStaticRoots()
 {
 	const GcClock::time_point start = GcClock::now();
-	root_static_fields = 0;
-	std::map<string, lpFieldValue>::iterator it = MethodArea::static_field_map.begin();
-	for (; it != MethodArea::static_field_map.end(); ++it)
+	if (static_roots_dirty)
 	{
-		lpFieldValue fv = it->second;
-		if (fv)
+		// Rebuild from the static field table.  Only a reference-typed field
+		// can hold an object, so the primitive ones never enter the cache.
+		static_root_slots.clear();
+		std::map<string, lpFieldValue>::iterator it = MethodArea::static_field_map.begin();
+		for (; it != MethodArea::static_field_map.end(); ++it)
 		{
-			root_static_fields++;
-			MarkObjectRef(fv->field_value.heapPtr);
+			lpFieldValue fv = it->second;
+			if (!StaticValueMayHoldObject(fv))
+			{
+				continue;
+			}
+			StaticRootSlot entry;
+			entry.slot = &fv->field_value.heapPtr;
+			entry.index = 0;
+			static_root_slots.push_back(entry);
 		}
+		static_roots_dirty = false;
+	}
+	root_static_fields = static_root_slots.size();
+	for (size_t i = 0; i < static_root_slots.size(); i++)
+	{
+		MarkObjectRefHinted(*static_root_slots[i].slot, static_root_slots[i].index);
 	}
 	const double ms = MillisecondsSince(start);
 	root_static_ms = ms;
@@ -829,6 +887,25 @@ void ObjectHeap::MarkStaticRoots()
 	{
 		init_root_static_ms = ms;
 	}
+}
+
+void ObjectHeap::RegisterStaticRootSlot(lpFieldValue fv)
+{
+	if (!StaticValueMayHoldObject(fv))
+	{
+		return;
+	}
+	VMLock lk;
+	StaticRootSlot entry;
+	entry.slot = &fv->field_value.heapPtr;
+	entry.index = 0;
+	static_root_slots.push_back(entry);
+}
+
+void ObjectHeap::InvalidateStaticRootSlots()
+{
+	VMLock lk;
+	static_roots_dirty = true;
 }
 
 void ObjectHeap::RegisterClassPoolStringRoot(LPOBJECT_REF ref)
@@ -953,19 +1030,24 @@ void ObjectHeap::MarkTemporaryRoots()
 void ObjectHeap::AddGlobalRef(LPOBJECT_REF ref)
 {
 	VMLock lk;
-	if (ref)
+	if (!ref)
 	{
-		global_refs.push_back(ref);
+		return;
 	}
+	GlobalRootEntry entry;
+	entry.ref = ref;
+	entry.index = 0;
+	LookupRefIndex(ref, entry.index);
+	global_refs.push_back(entry);
 }
 
 void ObjectHeap::RemoveGlobalRef(LPOBJECT_REF ref)
 {
 	VMLock lk;
-	for (std::vector<LPOBJECT_REF>::iterator it = global_refs.begin();
+	for (std::vector<GlobalRootEntry>::iterator it = global_refs.begin();
 	     it != global_refs.end(); ++it)
 	{
-		if (*it == ref)
+		if (it->ref == ref)
 		{
 			global_refs.erase(it);
 			return;
@@ -1001,7 +1083,7 @@ bool ObjectHeap::IsGlobalRef(LPOBJECT_REF ref) const
 	VMLock lk;
 	for (size_t i = 0; i < global_refs.size(); i++)
 	{
-		if (global_refs[i] == ref)
+		if (global_refs[i].ref == ref)
 		{
 			return true;
 		}
@@ -1028,7 +1110,16 @@ void ObjectHeap::MarkGlobalRefs()
 	root_global_count = global_refs.size();
 	for (size_t i = 0; i < global_refs.size(); i++)
 	{
-		MarkObjectRef(global_refs[i]);
+		if (global_refs[i].index > 0)
+		{
+			// The entry keeps its object alive, so the slot resolved when the
+			// reference was added still names that object.
+			MarkRefIndex(global_refs[i].index);
+		}
+		else
+		{
+			MarkObjectRef(global_refs[i].ref);
+		}
 	}
 	const double ms = MillisecondsSince(start);
 	root_global_ms = ms;
@@ -2205,6 +2296,7 @@ bool ObjectHeap::CmsFinalMark(const char *reason)
 		        "jni_envs=%zu jni_frames=%zu jni_refs=%zu jni_max_env_refs=%zu "
 		        "init_jni_frames=%zu init_jni_refs=%zu "
 		        "classes=%zu cp_entries=%zu cp_strings=%zu "
+		        "static_slots=%zu global_refs=%zu "
 		        "satb_records=%zu satb_dropped=%llu sweep=deferred "
 		        "ref_entries=%zu ref_repairs=%zu ref_shrinks=%zu "
 		        "refindex=%s\n",
@@ -2221,6 +2313,7 @@ bool ObjectHeap::CmsFinalMark(const char *reason)
 		        root_jni_max_env_refs, init_root_jni_frames,
 		        init_root_jni_refs,
 		        root_classes, root_cp_entries, root_cp_strings,
+		        root_static_fields, root_global_count,
 		        cycle_recorded,
 		        static_cast<unsigned long long>(GCBarrier::Dropped()),
 		        ref_index.size(), ref_index_repairs,

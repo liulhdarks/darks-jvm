@@ -125,6 +125,7 @@ public:
 		// The first scan rebuilds from the pools so constants resolved
 		// before the cache existed are still found.
 		class_pool_roots_dirty = true;
+		static_roots_dirty = true;
 		root_stacks = 0;
 		root_static_fields = 0;
 		root_classes = 0;
@@ -188,6 +189,13 @@ public:
 	// implemented yet, but the hook keeps the cache correct for it.
 	void InvalidateClassPoolStringRoots();
 
+	// Static fields keep a permanent FieldValue per name, so a reference-typed
+	// one can register its value slot once.  The collector walks the slots
+	// instead of the string-keyed table and falls back to a rebuild when a
+	// slot is replaced or the table is cleared.
+	void RegisterStaticRootSlot(lpFieldValue fv);
+	void InvalidateStaticRootSlots();
+
 	// ---- JNI reference management ----------------------------------------
 	// Global references are strong roots; weak globals are tracked but do not
 	// keep their referent alive.
@@ -197,6 +205,26 @@ public:
 	void RemoveWeakGlobalRef(LPOBJECT_REF ref);
 	bool IsGlobalRef(LPOBJECT_REF ref) const;
 	bool IsWeakGlobalRef(LPOBJECT_REF ref) const;
+
+	// A registered root slot of a reference-typed static field.  The slot
+	// address stays valid while the FieldValue lives, so the scan can read the
+	// current value without walking the string-keyed static field table.  The
+	// remembered index lets an unchanged value skip the reference-index
+	// lookup; it is revalidated against the slot's object before it is used.
+	struct StaticRootSlot
+	{
+		LPOBJECT_REF *slot;
+		OBJECT_REF index;
+	};
+
+	// A strong JNI global reference.  The entry itself keeps the object alive,
+	// so the slot resolved when the reference was added stays valid until the
+	// reference is deleted.
+	struct GlobalRootEntry
+	{
+		LPOBJECT_REF ref;
+		OBJECT_REF index;
+	};
 
 	void RegisterThreadStack(ThreadStack *stack);
 	void UnregisterThreadStack(ThreadStack *stack);
@@ -213,6 +241,12 @@ public:
 	// Marks the object referenced by "ref" if it still points at the index
 	// field of a live object. Never dereferences unknown memory.
 	void MarkObjectRef(LPOBJECT_REF ref);
+
+	// Marks a slot whose index is already known and kept alive by a root.
+	void MarkRefIndex(OBJECT_REF idx);
+	// Marks "ref" through a remembered value/index pair, revalidating the pair
+	// against the slot's object before trusting it.
+	void MarkObjectRefHinted(LPOBJECT_REF ref, OBJECT_REF &hint);
 
 	// ---- reference index --------------------------------------------------
 	// ref_index maps the address of an object's index field (LPOBJECT_REF) to
@@ -535,10 +569,12 @@ private:
 	std::vector<OBJECT_REF> pending_free;
 	std::vector<OBJECT_REF> free_indices;
 	std::vector<LPOBJECT_REF *> root_slots;
-	std::vector<LPOBJECT_REF> global_refs;
+	std::vector<GlobalRootEntry> global_refs;
 	std::vector<LPOBJECT_REF> weak_global_refs;
 	std::vector<LPOBJECT_REF> class_pool_string_roots;
 	bool class_pool_roots_dirty;
+	std::vector<StaticRootSlot> static_root_slots;
+	bool static_roots_dirty;
 	std::vector<ThreadStack *> thread_stacks;
 
 	std::recursive_mutex gc_mutex;
