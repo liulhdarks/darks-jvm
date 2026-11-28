@@ -125,6 +125,8 @@ public:
 		// The first scan rebuilds from the pools so constants resolved
 		// before the cache existed are still found.
 		class_pool_roots_dirty = true;
+		class_pool_classes = 0;
+		class_pool_entries = 0;
 		static_roots_dirty = true;
 		root_stacks = 0;
 		root_static_fields = 0;
@@ -183,11 +185,15 @@ public:
 	// constant is first resolved.  The constant pool then holds a permanent
 	// strong reference, so the collector can mark this list instead of
 	// walking every class constant again on each pause.
-	void RegisterClassPoolStringRoot(LPOBJECT_REF ref);
+	void RegisterClassPoolStringRoot(LPOBJECT_REF *slot);
 	// A class or its loader went away: rebuild the list from the remaining
 	// constant pools on the next collection.  Class unloading is not
 	// implemented yet, but the hook keeps the cache correct for it.
 	void InvalidateClassPoolStringRoots();
+	// A class joined a loader: its pool now contributes entries to the
+	// inventory the stats report, so keep the totals exact without walking
+	// every pool on each pause.
+	void NoteClassPoolLoaded(size_t entries);
 
 	// Static fields keep a permanent FieldValue per name, so a reference-typed
 	// one can register its value slot once.  The collector walks the slots
@@ -206,12 +212,13 @@ public:
 	bool IsGlobalRef(LPOBJECT_REF ref) const;
 	bool IsWeakGlobalRef(LPOBJECT_REF ref) const;
 
-	// A registered root slot of a reference-typed static field.  The slot
-	// address stays valid while the FieldValue lives, so the scan can read the
-	// current value without walking the string-keyed static field table.  The
-	// remembered index lets an unchanged value skip the reference-index
-	// lookup; it is revalidated against the slot's object before it is used.
-	struct StaticRootSlot
+	// A root that lives in a heap slot the collector can address directly: the
+	// value of a reference-typed static field, or the String a constant pool
+	// resolved.  The slot address stays valid while its owner lives, so a scan
+	// reads the slot instead of walking the owner's table.  The remembered
+	// index lets an unchanged value skip the reference-index lookup; it is
+	// revalidated against the slot's object before it is used.
+	struct RootSlot
 	{
 		LPOBJECT_REF *slot;
 		OBJECT_REF index;
@@ -571,9 +578,11 @@ private:
 	std::vector<LPOBJECT_REF *> root_slots;
 	std::vector<GlobalRootEntry> global_refs;
 	std::vector<LPOBJECT_REF> weak_global_refs;
-	std::vector<LPOBJECT_REF> class_pool_string_roots;
+	std::vector<RootSlot> class_pool_string_roots;
 	bool class_pool_roots_dirty;
-	std::vector<StaticRootSlot> static_root_slots;
+	size_t class_pool_classes;
+	size_t class_pool_entries;
+	std::vector<RootSlot> static_root_slots;
 	bool static_roots_dirty;
 	std::vector<ThreadStack *> thread_stacks;
 

@@ -869,7 +869,7 @@ void ObjectHeap::MarkStaticRoots()
 			{
 				continue;
 			}
-			StaticRootSlot entry;
+			RootSlot entry;
 			entry.slot = &fv->field_value.heapPtr;
 			entry.index = 0;
 			static_root_slots.push_back(entry);
@@ -896,7 +896,7 @@ void ObjectHeap::RegisterStaticRootSlot(lpFieldValue fv)
 		return;
 	}
 	VMLock lk;
-	StaticRootSlot entry;
+	RootSlot entry;
 	entry.slot = &fv->field_value.heapPtr;
 	entry.index = 0;
 	static_root_slots.push_back(entry);
@@ -908,16 +908,19 @@ void ObjectHeap::InvalidateStaticRootSlots()
 	static_roots_dirty = true;
 }
 
-void ObjectHeap::RegisterClassPoolStringRoot(LPOBJECT_REF ref)
+void ObjectHeap::RegisterClassPoolStringRoot(LPOBJECT_REF *slot)
 {
-	if (!ref)
+	if (!slot || !*slot)
 	{
 		return;
 	}
 	// The mutator resolves a literal while the collector may be reading the
 	// list in a pause; the heap lock serialises the append with that scan.
 	VMLock lk;
-	class_pool_string_roots.push_back(ref);
+	RootSlot entry;
+	entry.slot = slot;
+	entry.index = 0;
+	class_pool_string_roots.push_back(entry);
 }
 
 void ObjectHeap::InvalidateClassPoolStringRoots()
@@ -926,39 +929,28 @@ void ObjectHeap::InvalidateClassPoolStringRoots()
 	class_pool_roots_dirty = true;
 }
 
+void ObjectHeap::NoteClassPoolLoaded(size_t entries)
+{
+	VMLock lk;
+	class_pool_classes++;
+	class_pool_entries += entries;
+}
+
 void ObjectHeap::MarkConstantPoolRoots()
 {
 	const GcClock::time_point start = GcClock::now();
 	root_classes = 0;
 	root_cp_entries = 0;
 	root_cp_strings = 0;
-	const std::vector<ClassLoader *> &loaders = DarksVM_AllClassLoaders();
-	for (size_t li = 0; li < loaders.size(); li++)
-	{
-		ClassLoader *loader = loaders[li];
-		if (!loader)
-		{
-			continue;
-		}
-		const std::map<string, lpClass> &classes = loader->GetClasses();
-		for (std::map<string, lpClass>::const_iterator it = classes.begin();
-		     it != classes.end(); ++it)
-		{
-			lpClass clazz = it->second;
-			if (!clazz || !clazz->const_pool)
-			{
-				continue;
-			}
-			root_classes++;
-			root_cp_entries += static_cast<size_t>(clazz->const_pool->size());
-		}
-	}
 	if (class_pool_roots_dirty)
 	{
 		// A class or loader disappeared: its cached strings must not stay
 		// roots.  Rebuild from the loaders that are left.  This is the only
 		// path that walks the constant pools, and only after a removal.
+		const std::vector<ClassLoader *> &loaders = DarksVM_AllClassLoaders();
 		class_pool_string_roots.clear();
+		class_pool_classes = 0;
+		class_pool_entries = 0;
 		for (size_t li = 0; li < loaders.size(); li++)
 		{
 			ClassLoader *loader = loaders[li];
@@ -975,7 +967,9 @@ void ObjectHeap::MarkConstantPoolRoots()
 				{
 					continue;
 				}
+				class_pool_classes++;
 				int size = clazz->const_pool->size();
+				class_pool_entries += static_cast<size_t>(size);
 				for (int i = 1; i <= size; i++)
 				{
 					lpConstant constant = clazz->const_pool->GetConstant(i);
@@ -985,8 +979,10 @@ void ObjectHeap::MarkConstantPoolRoots()
 							static_cast<StringConstant *>(constant);
 						if (string_constant->string_ref)
 						{
-							class_pool_string_roots.push_back(
-								string_constant->string_ref);
+							RootSlot entry;
+							entry.slot = &string_constant->string_ref;
+							entry.index = 0;
+							class_pool_string_roots.push_back(entry);
 						}
 					}
 				}
@@ -994,10 +990,13 @@ void ObjectHeap::MarkConstantPoolRoots()
 		}
 		class_pool_roots_dirty = false;
 	}
+	root_classes = class_pool_classes;
+	root_cp_entries = class_pool_entries;
 	root_cp_strings = class_pool_string_roots.size();
 	for (size_t i = 0; i < class_pool_string_roots.size(); i++)
 	{
-		MarkObjectRef(class_pool_string_roots[i]);
+		MarkObjectRefHinted(*class_pool_string_roots[i].slot,
+		                    class_pool_string_roots[i].index);
 	}
 	const double ms = MillisecondsSince(start);
 	root_cp_ms = ms;

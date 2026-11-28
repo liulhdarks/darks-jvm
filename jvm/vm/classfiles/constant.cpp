@@ -124,7 +124,7 @@ LPOBJECT_REF StringConstant::GetString()
 	if (!string_ref)
 	{
 		string_ref = created;
-		heap->RegisterClassPoolStringRoot(created);
+		heap->RegisterClassPoolStringRoot(&string_ref);
 	}
 	return string_ref;
 }

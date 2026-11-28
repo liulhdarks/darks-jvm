@@ -100,6 +100,11 @@ public:
 	// <clinit>.  Throws ClassLinkageException when a referenced type is missing.
 	void LinkClass(lpClass clazz);
 
+	// Adds a class to the name table and tells the heap how many constant
+	// pool entries the new class brings, so the collector's pool inventory
+	// stays exact without walking every pool on each pause.
+	void AddToClassMap(lpClass clazz);
+
 	// Removes a freshly defined class that failed linking: its method index
 	// entries are dropped and the Class object (with its methods and constant
 	// pool) is destroyed so a later load starts from clean bytes.
