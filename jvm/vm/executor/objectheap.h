@@ -122,6 +122,9 @@ public:
 		root_scan_initial = false;
 		cms_init_setup_ms = 0.0;
 		cms_init_roots_ms = 0.0;
+		// The first scan rebuilds from the pools so constants resolved
+		// before the cache existed are still found.
+		class_pool_roots_dirty = true;
 		root_stacks = 0;
 		root_static_fields = 0;
 		root_classes = 0;
@@ -174,6 +177,16 @@ public:
 	// before the variable goes out of scope.
 	void AddRootSlot(LPOBJECT_REF *slot);
 	void RemoveRootSlot(LPOBJECT_REF *slot);
+
+	// Every StringConstant registers its java/lang/String here when the
+	// constant is first resolved.  The constant pool then holds a permanent
+	// strong reference, so the collector can mark this list instead of
+	// walking every class constant again on each pause.
+	void RegisterClassPoolStringRoot(LPOBJECT_REF ref);
+	// A class or its loader went away: rebuild the list from the remaining
+	// constant pools on the next collection.  Class unloading is not
+	// implemented yet, but the hook keeps the cache correct for it.
+	void InvalidateClassPoolStringRoots();
 
 	// ---- JNI reference management ----------------------------------------
 	// Global references are strong roots; weak globals are tracked but do not
@@ -524,6 +537,8 @@ private:
 	std::vector<LPOBJECT_REF *> root_slots;
 	std::vector<LPOBJECT_REF> global_refs;
 	std::vector<LPOBJECT_REF> weak_global_refs;
+	std::vector<LPOBJECT_REF> class_pool_string_roots;
+	bool class_pool_roots_dirty;
 	std::vector<ThreadStack *> thread_stacks;
 
 	std::recursive_mutex gc_mutex;

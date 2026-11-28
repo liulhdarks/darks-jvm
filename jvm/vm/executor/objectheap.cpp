@@ -831,6 +831,24 @@ void ObjectHeap::MarkStaticRoots()
 	}
 }
 
+void ObjectHeap::RegisterClassPoolStringRoot(LPOBJECT_REF ref)
+{
+	if (!ref)
+	{
+		return;
+	}
+	// The mutator resolves a literal while the collector may be reading the
+	// list in a pause; the heap lock serialises the append with that scan.
+	VMLock lk;
+	class_pool_string_roots.push_back(ref);
+}
+
+void ObjectHeap::InvalidateClassPoolStringRoots()
+{
+	VMLock lk;
+	class_pool_roots_dirty = true;
+}
+
 void ObjectHeap::MarkConstantPoolRoots()
 {
 	const GcClock::time_point start = GcClock::now();
@@ -855,22 +873,54 @@ void ObjectHeap::MarkConstantPoolRoots()
 				continue;
 			}
 			root_classes++;
-			int size = clazz->const_pool->size();
-			root_cp_entries += static_cast<size_t>(size);
-			for (int i = 1; i <= size; i++)
+			root_cp_entries += static_cast<size_t>(clazz->const_pool->size());
+		}
+	}
+	if (class_pool_roots_dirty)
+	{
+		// A class or loader disappeared: its cached strings must not stay
+		// roots.  Rebuild from the loaders that are left.  This is the only
+		// path that walks the constant pools, and only after a removal.
+		class_pool_string_roots.clear();
+		for (size_t li = 0; li < loaders.size(); li++)
+		{
+			ClassLoader *loader = loaders[li];
+			if (!loader)
 			{
-				lpConstant constant = clazz->const_pool->GetConstant(i);
-				if (constant && constant->tag == STRING_CONSTANT)
+				continue;
+			}
+			const std::map<string, lpClass> &classes = loader->GetClasses();
+			for (std::map<string, lpClass>::const_iterator it = classes.begin();
+			     it != classes.end(); ++it)
+			{
+				lpClass clazz = it->second;
+				if (!clazz || !clazz->const_pool)
 				{
-					StringConstant *string_constant = static_cast<StringConstant *>(constant);
-					if (string_constant->string_ref)
+					continue;
+				}
+				int size = clazz->const_pool->size();
+				for (int i = 1; i <= size; i++)
+				{
+					lpConstant constant = clazz->const_pool->GetConstant(i);
+					if (constant && constant->tag == STRING_CONSTANT)
 					{
-						root_cp_strings++;
+						StringConstant *string_constant =
+							static_cast<StringConstant *>(constant);
+						if (string_constant->string_ref)
+						{
+							class_pool_string_roots.push_back(
+								string_constant->string_ref);
+						}
 					}
-					MarkObjectRef(string_constant->string_ref);
 				}
 			}
 		}
+		class_pool_roots_dirty = false;
+	}
+	root_cp_strings = class_pool_string_roots.size();
+	for (size_t i = 0; i < class_pool_string_roots.size(); i++)
+	{
+		MarkObjectRef(class_pool_string_roots[i]);
 	}
 	const double ms = MillisecondsSince(start);
 	root_cp_ms = ms;

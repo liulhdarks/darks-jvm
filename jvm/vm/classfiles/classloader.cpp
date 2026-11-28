@@ -356,6 +356,10 @@ ClassLoader::~ClassLoader()
 		}
 	}
 	classMap.clear();
+	if (VMContext::object_heap)
+	{
+		VMContext::object_heap->InvalidateClassPoolStringRoots();
+	}
 }
 
 bool ClassLoader::GetClass(LPCSTR classname, lpClass &jclass)
@@ -650,6 +654,11 @@ void ClassLoader::DiscardClass(lpClass clazz)
 		}
 	}
 	delete clazz;
+	if (VMContext::object_heap)
+	{
+		// The pool's cached String roots must not outlive the class.
+		VMContext::object_heap->InvalidateClassPoolStringRoots();
+	}
 }
 
 bool ClassLoader::FindBootClass(LPCSTR classname, lpClass &jclass)
