@@ -2154,6 +2154,7 @@ bool ObjectHeap::CmsFinalMark(const char *reason)
 		        "rtemp=%.2f rglobal=%.2f rjni=%.2f "
 		        "jni_envs=%zu jni_frames=%zu jni_refs=%zu jni_max_env_refs=%zu "
 		        "init_jni_frames=%zu init_jni_refs=%zu "
+		        "classes=%zu cp_entries=%zu cp_strings=%zu "
 		        "satb_records=%zu satb_dropped=%llu sweep=deferred "
 		        "ref_entries=%zu ref_repairs=%zu ref_shrinks=%zu "
 		        "refindex=%s\n",
@@ -2169,6 +2170,7 @@ bool ObjectHeap::CmsFinalMark(const char *reason)
 		        root_jni_envs, root_jni_frames, root_jni_refs,
 		        root_jni_max_env_refs, init_root_jni_frames,
 		        init_root_jni_refs,
+		        root_classes, root_cp_entries, root_cp_strings,
 		        cycle_recorded,
 		        static_cast<unsigned long long>(GCBarrier::Dropped()),
 		        ref_index.size(), ref_index_repairs,
