@@ -10,6 +10,7 @@
 #include "vm/executor/jobject.h"
 #include "vm/executor/javaexception.h"
 #include "vm/executor/deterministic.h"
+#include "vm/executor/gc/gcbarrier.h"
 #include "platform/platform.h"
 
 #include <cstdint>
@@ -350,7 +351,7 @@ JNIEXPORT void JNICALL Java_java_lang_System_gc0
 {
 	if (VMContext::object_heap)
 	{
-		VMContext::object_heap->gc();
+		VMContext::object_heap->gc("system.gc");
 	}
 }
 
@@ -519,6 +520,25 @@ void JNICALL Java_java_lang_System_arraycopy
 		return;
 	}
 	// memmove is overlap-safe, which also covers arraycopy(a, 1, a, 0, n).
+	// Reference arrays bypass every per-element store, so feed the barrier
+	// once per moved slot before the bulk copy.
+	if (g_gc_barrier_active && src_object && dest_object &&
+	    (dest_object->array_data_type == DT_REF ||
+	     dest_object->array_data_type == DT_ARRAY))
+	{
+		jobject *src_refs = static_cast<jobject *>(src_object->array_var);
+		jobject *dest_refs = static_cast<jobject *>(dest_object->array_var);
+		if (src_refs && dest_refs)
+		{
+			for (jint i = 0; i < length; i++)
+			{
+				GCBarrierWrite(
+					reinterpret_cast<LPOBJECT_REF>(dest_refs[dest_pos + i]),
+					reinterpret_cast<LPOBJECT_REF>(src_refs[src_pos + i]),
+					GCBarrier::ARRAY);
+			}
+		}
+	}
 	memmove(dest_data + (size_t)dest_pos * dest_type_size,
 	        src_data + (size_t)src_pos * src_type_size,
 	        (size_t)length * src_type_size);
@@ -641,7 +661,7 @@ JNIEXPORT void JNICALL Java_java_lang_Runtime_gc(JNIEnv *env, jobject thiz)
 	(void)thiz;
 	if (VMContext::object_heap)
 	{
-		VMContext::object_heap->gc();
+		VMContext::object_heap->gc("runtime.gc");
 	}
 }
 

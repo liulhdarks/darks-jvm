@@ -31,6 +31,7 @@ Class::Class()
 	classloader = NULL;
 	super_class = NULL;
 	component_class = NULL;
+	array_element_type.store(0);
 	initialized_state = false;
 	initialization_failed = false;
 	inner_classes = NULL;
@@ -61,6 +62,7 @@ Class::Class(ClassType class_type)
 	classloader = NULL;
 	super_class = NULL;
 	component_class = NULL;
+	array_element_type.store(0);
 	initialized_state = false;
 	initialization_failed = false;
 	inner_classes = NULL;
@@ -73,6 +75,36 @@ Class::Class(ClassType class_type)
 	instance_field_base = 0;
 	instance_field_total = 0;
 	instance_layout_ready = false;
+}
+
+// The class name of an array class is its descriptor ("[I", "[[J",
+// "[Ljava/lang/String;").  The answer never changes for a loaded class, and
+// classes are not unloaded, so the first caller computes it for everyone.
+// A lost race recomputes the same value.
+DATA_TYPE Class::ArrayElementType()
+{
+	int cached = array_element_type.load(std::memory_order_relaxed);
+	if (cached != 0)
+	{
+		return static_cast<DATA_TYPE>(cached);
+	}
+	const char *name = thisClass ? thisClass->GetName() : NULL;
+	if (!name)
+	{
+		// A name is assigned while the class is being loaded; do not cache an
+		// answer that was derived before that happened.
+		return DT_REF;
+	}
+	DATA_TYPE element_type = DT_REF;
+	TypeDesc type_desc;
+	parse_desc_type(name, type_desc, static_cast<int>(strlen(name)));
+	if (type_desc.array_level == 1 && type_desc.data_type != DT_ARRAY)
+	{
+		element_type = type_desc.data_type;
+	}
+	array_element_type.store(static_cast<int>(element_type),
+	                         std::memory_order_relaxed);
+	return element_type;
 }
 
 Class::~Class()

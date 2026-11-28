@@ -74,6 +74,16 @@ if(DEFINED EXPECT_FILE AND NOT EXISTS "${EXPECT_FILE}")
         "output:\n${all_output}")
 endif()
 
+# Optional anti-pattern: the output must NOT match this regex.
+if(DEFINED EXPECT_NO_TEXT)
+    if(all_output MATCHES "${EXPECT_NO_TEXT}")
+        message(FATAL_ERROR
+            "check.cmake: output unexpectedly matched '${EXPECT_NO_TEXT}'\n"
+            "command: ${PROG} ${ARGS}\n"
+            "output:\n${all_output}")
+    endif()
+endif()
+
 if(DEFINED EXPECT_TEXT2)
     if(NOT all_output MATCHES "${EXPECT_TEXT2}")
         message(FATAL_ERROR

@@ -8,6 +8,14 @@ lpClassLoader VMContext::bootstrap_classloader = NULL;
 lpNativeLibraryManager VMContext::native_libs = NULL;
 thread_local LPOBJECT_REF VMContext::pending_exception = NULL;
 std::vector<void*> VMContext::jni_envs;
+size_t VMContext::requested_initial_heap = 0;
+size_t VMContext::requested_max_heap = 0;
+
+void VMContext::SetHeapLimits(size_t initial_bytes, size_t max_bytes)
+{
+	requested_initial_heap = initial_bytes;
+	requested_max_heap = max_bytes;
+}
 
 LPOBJECT_REF VMContext::PendingException()
 {
@@ -26,6 +34,7 @@ bool VMContext::initialize()
 	{
 		return false;
 	}
+	object_heap->SetHeapLimits(requested_initial_heap, requested_max_heap);
 	object_heap->initialize(1024);
 	// The pending exception must stay alive while handlers run and while the
 	// uncaught handler prints it.  Each OS thread registers its own TLS slot

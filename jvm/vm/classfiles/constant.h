@@ -266,6 +266,10 @@ public:
 	// Monomorphic inline-style dispatch cache for invokevirtual/interface.
 	mutable std::atomic<Class*> cached_receiver_class;
 	mutable std::atomic<Method*> cached_method;
+	// Stack-level DATA_TYPE of the field descriptor, normalized so an array
+	// descriptor reports DT_ARRAY (0 = not parsed yet).  Parsing allocates a
+	// string, so the field-access bytecodes read it from here instead.
+	mutable std::atomic<int> cached_slot_type;
 
 public:
 	FieldRefConstant() : Constant(FIELDREF_CONSTANT, (LPSTR)"Fieldref")
@@ -278,6 +282,7 @@ public:
 		resolved_method.store(NULL);
 		cached_receiver_class.store(NULL);
 		cached_method.store(NULL);
+		cached_slot_type.store(0);
 	}
 
 	FieldRefConstant(ConstantEnum tag, LPSTR flag) : Constant(tag, flag)
@@ -290,6 +295,7 @@ public:
 		resolved_method.store(NULL);
 		cached_receiver_class.store(NULL);
 		cached_method.store(NULL);
+		cached_slot_type.store(0);
 	}
 
 	~FieldRefConstant()

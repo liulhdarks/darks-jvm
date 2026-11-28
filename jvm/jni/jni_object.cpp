@@ -5,6 +5,7 @@
 
 #include "vm/executor/exec_common.h"
 #include "vm/executor/stackframe.h"
+#include "vm/executor/gc/gcbarrier.h"
 #include "vm/classfiles/parseclass.h"
 
 #include <cstdarg>
@@ -1107,7 +1108,10 @@ extern "C" JNIEXPORT void JNICALL JNI_SetObjectField(JNIEnv *env, jobject obj,
 	{
 		return;
 	}
-	fv->field_value.heapPtr = JniRef(value);
+	LPOBJECT_REF old_ref = fv->field_value.heapPtr;
+	LPOBJECT_REF new_ref = JniRef(value);
+	fv->field_value.heapPtr = new_ref;
+	GCBarrierWrite(old_ref, new_ref, GCBarrier::JNI);
 }
 
 #define JNI_GET_STATIC_FIELD(NAME, TYPE, MEMBER) \
@@ -1169,7 +1173,10 @@ extern "C" JNIEXPORT void JNICALL JNI_SetStaticObjectField(JNIEnv *env, jclass c
 	{
 		return;
 	}
-	fv->field_value.heapPtr = JniRef(value);
+	LPOBJECT_REF old_ref = fv->field_value.heapPtr;
+	LPOBJECT_REF new_ref = JniRef(value);
+	fv->field_value.heapPtr = new_ref;
+	GCBarrierWrite(old_ref, new_ref, GCBarrier::JNI);
 }
 
 // ---------------------------------------------------------------------------
@@ -1244,7 +1251,16 @@ bool SetFieldValue(lpObject object, const char *name, Variant &value)
 				{
 					return false;
 				}
-				fv->field_value = value;
+				if (FieldHoldsReference(f))
+				{
+					LPOBJECT_REF old_ref = fv->field_value.heapPtr;
+					fv->field_value = value;
+					GCBarrierWrite(old_ref, value.heapPtr, GCBarrier::JNI);
+				}
+				else
+				{
+					fv->field_value = value;
+				}
 				return true;
 			}
 		}

@@ -2023,7 +2023,8 @@ struct JniLocalFrame;
 JNIEXPORT const struct JNINativeInterface_ *DarksVM_GetJniInterface();
 JNIEXPORT void DarksVM_InitJniEnv(JNIEnv *env);
 JNIEXPORT void DarksVM_DestroyJniEnv(JNIEnv *env);
-JNIEXPORT void DarksVM_MarkJniEnvRoots(void *env, void *heap);
+JNIEXPORT size_t DarksVM_MarkJniEnvRoots(void *env, void *heap,
+                                         size_t *frame_count);
 JNIEXPORT void DarksVM_PushJniLocalFrame(JNIEnv *env);
 JNIEXPORT void DarksVM_PopJniLocalFrame(JNIEnv *env);
 JNIEXPORT jobject DarksVM_NewLocalRef(JNIEnv *env, jobject ref);

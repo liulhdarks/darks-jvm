@@ -2,6 +2,7 @@
 #include "constant.h"
 #include "utils/DebugUtils.h"
 #include "vm/executor/context.h"
+#include "vm/executor/vmmutex.h"
 
 #include <string>
 
@@ -102,7 +103,29 @@ LPOBJECT_REF StringConstant::GetString()
 	{
 		return NULL;
 	}
-	VMContext::object_heap->NewStringObject(utf8->bytes, utf8->length, string_ref);
+	lpObjectHeap heap = VMContext::object_heap;
+	if (!heap)
+	{
+		return NULL;
+	}
+	// Creating the String runs its constructor, so hold the result in a root
+	// slot across it; the slot is released after the constant (and the
+	// collector's cache) holds the reference.
+	LPOBJECT_REF created = NULL;
+	GCRootScope root(heap, &created);
+	if (!heap->NewStringObject(utf8->bytes, utf8->length, created) || !created)
+	{
+		return NULL;
+	}
+	// Two threads can resolve the same literal at once.  Publish the winner
+	// under the heap lock and register it once; the loser's String becomes
+	// ordinary garbage.
+	VMLock lk;
+	if (!string_ref)
+	{
+		string_ref = created;
+		heap->RegisterClassPoolStringRoot(&string_ref);
+	}
 	return string_ref;
 }
 

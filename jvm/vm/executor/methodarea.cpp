@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "methodarea.h"
 #include "vmmutex.h"
+#include "context.h"
 
 map<string, lpMethod> MethodArea::methods_map;
 map<string, lpFieldValue> MethodArea::static_field_map;
@@ -32,11 +33,30 @@ void MethodArea::AddStaticField(LPSTR field_full_name, lpFieldValue fv)
 	// static area does not leak one FieldValue per assignment.
 	string key(field_full_name);
 	map<string, lpFieldValue>::iterator it = static_field_map.find(key);
-	if (it != static_field_map.end() && it->second && it->second != fv)
+	const bool existed = (it != static_field_map.end());
+	// GetStaticField inserts a NULL entry, so an existing key may still be
+	// waiting for its first value.
+	const bool registered =
+		existed && it->second && it->second == fv;
+	const bool replaced =
+		existed && it->second && it->second != fv;
+	if (replaced)
 	{
 		delete it->second;
 	}
 	static_field_map[key] = fv;
+	if (VMContext::object_heap)
+	{
+		if (replaced)
+		{
+			// The freed FieldValue owned a slot the root cache still names.
+			VMContext::object_heap->InvalidateStaticRootSlots();
+		}
+		else if (!registered)
+		{
+			VMContext::object_heap->RegisterStaticRootSlot(fv);
+		}
+	}
 }
 
 lpFieldValue MethodArea::GetStaticField(LPSTR field_full_name)
@@ -58,6 +78,10 @@ void MethodArea::ClearStaticFields()
 		}
 	}
 	static_field_map.clear();
+	if (VMContext::object_heap)
+	{
+		VMContext::object_heap->InvalidateStaticRootSlots();
+	}
 }
 
 lpMethod MethodArea::GetMethod(lpClass clazz, LPSTR method_name)

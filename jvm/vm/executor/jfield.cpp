@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "jfield.h"
+#include "gc/gcbarrier.h"
 
 Field::Field()
 {
@@ -102,7 +103,9 @@ void FieldValue::initialize()
 	case STRING_CONSTANT:
 		{
 			StringConstant *st = (StringConstant*)constant;
+			LPOBJECT_REF old_ref = field_value.heapPtr;
 			field_value.heapPtr = st->GetString();
+			GCBarrierWrite(old_ref, field_value.heapPtr, GCBarrier::STATIC);
 			break;
 		}
 	default:

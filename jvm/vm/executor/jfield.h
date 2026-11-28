@@ -46,3 +46,15 @@ public:
 
 	void initialize();
 };
+
+// True when the field descriptor starts with 'L' or '[', i.e. the slot holds
+// an object reference and writes to it must go through the GC barrier.
+inline bool FieldHoldsReference(lpField field)
+{
+	if (!field || !field->fieldDesc)
+	{
+		return false;
+	}
+	LPSTR desc = field->fieldDesc->GetName();
+	return desc != NULL && (desc[0] == 'L' || desc[0] == '[');
+}

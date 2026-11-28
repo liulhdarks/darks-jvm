@@ -5,7 +5,9 @@
 #include "vm/executor/jmethod.h"
 #include "vm/classfiles/constant.h"
 #include "vm/executor/attributes.h"
+#include "vm/executor/descriptor.h"
 #include "vm/classfiles/classloader.h"
+#include <atomic>
 #include <map>
 using namespace std;
 
@@ -38,6 +40,10 @@ public:
 	std::vector<lpClass> interface_classes;
 	// For CT_ARRAY classes: the element class when it is already known.
 	lpClass component_class;
+	// Element representation of a CT_ARRAY class, derived from its class name
+	// once (0 = not derived yet).  Array allocation calls this for every
+	// array, and parsing the descriptor allocates a string each time.
+	mutable std::atomic<int> array_element_type;
 
 	// Class file version (major 45..55 supported; 52 == Java 8, 55 == Java 11).
 	U2 major_version;
@@ -87,6 +93,11 @@ public:
 	{
 		fields_map[string(field_name)] = field;
 	}
+
+	// DT_* of the element this array class stores.  One-dimensional
+	// primitive arrays report their primitive type, everything else (object
+	// arrays and arrays of arrays) reports DT_REF.
+	DATA_TYPE ArrayElementType();
 
 	bool isInterface()
 	{

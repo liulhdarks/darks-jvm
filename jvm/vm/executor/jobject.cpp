@@ -1,6 +1,9 @@
 #include "stdafx.h"
 #include "jobject.h"
 #include "jni/jni.h"
+#include "gc/gcbarrier.h"
+#include "context.h"
+#include "objectheap.h"
 
 void JObject::DeleteArray()
 {
@@ -109,20 +112,15 @@ void JObject::AdoptFieldValue(const string &key, lpFieldValue value)
 	{
 		return;
 	}
+	const bool new_name = varants.find(key) == varants.end();
 	owned_values.push_back(value);
 	varants[key] = value;
-}
-
-bool JObject::newArrayInstance(int size)
-{
-	TypeDesc type_desc;
-	LPSTR desc = obj_class && obj_class->thisClass ? obj_class->thisClass->GetName() : NULL;
-	if (!desc)
+	if (new_name && VMContext::object_heap)
 	{
-		return false;
+		// ObjectBytes counts one entry per name, so an object that gains a
+		// name after registration grows; keep the live size in step.
+		VMContext::object_heap->AccountFieldGrowth(ObjectHeap::FieldEntryBytes());
 	}
-	parse_desc_type(desc, type_desc, static_cast<int>(strlen(desc)));
-	return newArrayInstance(type_desc.data_type, size);
 }
 
 bool JObject::newArrayInstance(DATA_TYPE data_type, int size)
@@ -226,7 +224,12 @@ void JObject::SetArrayIndex(int index, Slot &slot)
 		break;
 	case DT_ARRAY:
 	case DT_REF:
-		((jobject*)array_var)[index] = (jobject)slot.heapPtr;
+		{
+			jobject *elements = static_cast<jobject *>(array_var);
+			LPOBJECT_REF old_ref = reinterpret_cast<LPOBJECT_REF>(elements[index]);
+			elements[index] = reinterpret_cast<jobject>(slot.heapPtr);
+			GCBarrierWrite(old_ref, slot.heapPtr, GCBarrier::ARRAY);
+		}
 		break;
 	default:
 		break;

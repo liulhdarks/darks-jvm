@@ -356,6 +356,10 @@ ClassLoader::~ClassLoader()
 		}
 	}
 	classMap.clear();
+	if (VMContext::object_heap)
+	{
+		VMContext::object_heap->InvalidateClassPoolStringRoots();
+	}
 }
 
 bool ClassLoader::GetClass(LPCSTR classname, lpClass &jclass)
@@ -650,6 +654,11 @@ void ClassLoader::DiscardClass(lpClass clazz)
 		}
 	}
 	delete clazz;
+	if (VMContext::object_heap)
+	{
+		// The pool's cached String roots must not outlive the class.
+		VMContext::object_heap->InvalidateClassPoolStringRoots();
+	}
 }
 
 bool ClassLoader::FindBootClass(LPCSTR classname, lpClass &jclass)
@@ -682,7 +691,7 @@ bool ClassLoader::DefineClass(LPBYTE bytes, int length, lpClass &jclass)
 	bool result = parse_class_bytes(bytes, length, jclass);
 	if (result && jclass && jclass->thisClass && jclass->thisClass->GetName())
 	{
-		classMap[string(jclass->thisClass->GetName())] = jclass;
+		AddToClassMap(jclass);
 	}
 	return result;
 }
@@ -704,12 +713,30 @@ bool ClassLoader::DefineArrayClass(LPCSTR classname, lpClass &jclass)
 	jclass->const_pool->init(1);
 	jclass->const_pool->AddConstant(jclass->thisClass);
 	jclass->classloader = this;
-	classMap[string(jclass->thisClass->GetName())] = jclass;
+	AddToClassMap(jclass);
 	return true;
 }
 
 void ClassLoader::StoreClass(lpClass &jclass)
 {
 	VMLock lk;
-	classMap[string(jclass->thisClass->GetName())] = jclass;
+	AddToClassMap(jclass);
+}
+
+void ClassLoader::AddToClassMap(lpClass clazz)
+{
+	std::pair<map<string, lpClass>::iterator, bool> inserted =
+		classMap.insert(std::make_pair(string(clazz->thisClass->GetName()), clazz));
+	if (!inserted.second)
+	{
+		// A redefinition replaces the entry; the replaced Class is not owned
+		// here, so the inventory does not change.
+		inserted.first->second = clazz;
+		return;
+	}
+	if (VMContext::object_heap)
+	{
+		VMContext::object_heap->NoteClassPoolLoaded(
+			clazz->const_pool ? static_cast<size_t>(clazz->const_pool->size()) : 0);
+	}
 }

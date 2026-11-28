@@ -11,6 +11,7 @@
 #include "vm/executor/javaexception.h"
 #include "vm/executor/proxy.h"
 #include "vm/executor/threadstack.h"
+#include "vm/executor/gc/gcbarrier.h"
 
 #include <cstring>
 #include <string>
@@ -1591,8 +1592,11 @@ bool StoreArrayElement(JNIEnv *env, lpObject array, int index, jobject value,
 			ThrowArrayIllegalArgument(env, "value cannot be converted");
 			return false;
 		}
-		static_cast<jobject *>(array->array_var)[index] =
-			reinterpret_cast<jobject>(JniRef(value));
+		jobject *elements = static_cast<jobject *>(array->array_var);
+		LPOBJECT_REF new_ref = JniRef(value);
+		LPOBJECT_REF old_ref = reinterpret_cast<LPOBJECT_REF>(elements[index]);
+		elements[index] = reinterpret_cast<jobject>(new_ref);
+		GCBarrierWrite(old_ref, new_ref, GCBarrier::REFLECT);
 		return true;
 	}
 	Variant raw;
@@ -2590,7 +2594,17 @@ JNIEXPORT void JNICALL Java_java_lang_reflect_Field_set0(JNIEnv *env,
 	}
 	if (fv)
 	{
-		fv->field_value = value;
+		if (type.data_type == DT_REF || type.data_type == DT_ARRAY ||
+		    type.check_array)
+		{
+			LPOBJECT_REF old_ref = fv->field_value.heapPtr;
+			fv->field_value = value;
+			GCBarrierWrite(old_ref, value.heapPtr, GCBarrier::REFLECT);
+		}
+		else
+		{
+			fv->field_value = value;
+		}
 	}
 }
 
@@ -2826,8 +2840,11 @@ JNIEXPORT jobject JNICALL Java_java_lang_reflect_Array_newInstance0(JNIEnv *env,
 	LPOBJECT_REF ref = NULL;
 	if (!VMContext::object_heap->NewObjectArrayObject(length, array_class, ref))
 	{
-		VMContext::SetPendingException(CreateJavaException(
-			"java/lang/OutOfMemoryError", "cannot allocate array"));
+		if (!VMContext::PendingException())
+		{
+			VMContext::SetPendingException(CreateJavaException(
+				"java/lang/OutOfMemoryError", "cannot allocate array"));
+		}
 		return NULL;
 	}
 	jobject result = JniObject(ref);

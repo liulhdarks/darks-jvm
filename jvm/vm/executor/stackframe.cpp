@@ -14,9 +14,12 @@
 #include "scheduler.h"
 #include "vmmutex.h"
 #include "proxy.h"
+#include "gc/gcbarrier.h"
+#include "vmpool.h"
 
 #include <ffi.h>
 
+#include <new>
 #include <string>
 #include <atomic>
 #include <vector>
@@ -42,6 +45,36 @@ static inline int SlotWidth(const TypeDesc &type)
 static inline DATA_TYPE SlotType(const TypeDesc &type)
 {
 	return type.check_array ? DT_ARRAY : type.data_type;
+}
+
+// Stack-level DATA_TYPE of the field a constant-pool entry names, or 0 when
+// the entry carries no descriptor.  The descriptor belongs to the class file
+// and classes are never unloaded, so the entry is a stable key; two threads
+// that parse it at the same time store the same value.  A negative cache
+// entry records the invalid case.
+static inline int FieldSlotType(FieldRefConstant *frc)
+{
+	int cached = frc->cached_slot_type.load(std::memory_order_relaxed);
+	if (cached > 0)
+	{
+		return cached;
+	}
+	if (cached < 0)
+	{
+		return 0;
+	}
+	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
+		? frc->nameType->descUtf8->GetName() : NULL;
+	if (!desc || !*desc)
+	{
+		frc->cached_slot_type.store(-1, std::memory_order_relaxed);
+		return 0;
+	}
+	TypeDesc type_desc;
+	parse_desc_type(desc, type_desc, static_cast<int>(strlen(desc)));
+	int slot_type = static_cast<int>(SlotType(type_desc));
+	frc->cached_slot_type.store(slot_type, std::memory_order_relaxed);
+	return slot_type;
 }
 
 struct LambdaCapture
@@ -112,10 +145,15 @@ lpClass FindSyntheticLambdaClass(const std::string &iface_name,
 	return synth;
 }
 
-void StoreSlotField(lpObject obj, const std::string &name, const Slot &slot)
+void StoreSlotField(lpObject obj, const std::string &name, const Slot &slot,
+                    bool is_reference)
 {
 	lpFieldValue fv = new FieldValue();
 	fv->field_value = slot;
+	if (is_reference)
+	{
+		GCBarrierWrite(NULL, slot.heapPtr, GCBarrier::FIELD);
+	}
 	obj->AdoptFieldValue(name, fv);
 }
 
@@ -149,7 +187,9 @@ void SetStringField(lpObject obj, const char *key, const std::string &value)
 	{
 		return;
 	}
+	LPOBJECT_REF old_ref = it->second->field_value.heapPtr;
 	it->second->field_value.heapPtr = text_ref;
+	GCBarrierWrite(old_ref, text_ref, GCBarrier::FIELD);
 }
 
 // Bounded inlining: only tiny, side-effect-free methods are recognised.
@@ -441,12 +481,14 @@ StackFrame::~StackFrame()
 {
 	if (op_stack)
 	{
-		delete op_stack;
+		op_stack->~OperStack();
+		VmPoolFree(op_stack);
 		op_stack = NULL;
 	}
 	if (local_var_table)
 	{
-		delete local_var_table;
+		local_var_table->~LocalVarTable();
+		VmPoolFree(local_var_table);
 		local_var_table = NULL;
 	}
 }
@@ -468,8 +510,18 @@ void StackFrame::init(lpVariant vars, int count)
 	code_length = method->code_attr->code_length;
 	int max_local = method->code_attr->max_local;
 	int max_stack = method->code_attr->max_stack;
-	op_stack = new OperStack(max_stack);
-	local_var_table = new LocalVarTable(max_local);
+	// Frames take these two objects and their slot arrays from the
+	// size-class pool, which is where the per-call malloc traffic came from.
+	void *op_mem = VmPoolAlloc(sizeof(OperStack));
+	void *lv_mem = VmPoolAlloc(sizeof(LocalVarTable));
+	if (!op_mem || !lv_mem)
+	{
+		VmPoolFree(op_mem);
+		VmPoolFree(lv_mem);
+		throw new VMExecutorException("Frame storage is unavailable.");
+	}
+	op_stack = new (op_mem) OperStack(max_stack);
+	local_var_table = new (lv_mem) LocalVarTable(max_local);
 	for (int i = 0; i < count; i++)
 	{
 		local_var_table->set(i, vars[i]);
@@ -2779,7 +2831,9 @@ void StackFrame::AttachStackTrace(LPOBJECT_REF exception_ref)
 		refreshed->varants.find("stackTrace:[Ljava/lang/StackTraceElement;");
 	if (target != refreshed->varants.end() && target->second)
 	{
+		LPOBJECT_REF old_ref = target->second->field_value.heapPtr;
 		target->second->field_value.heapPtr = array_ref;
+		GCBarrierWrite(old_ref, array_ref, GCBarrier::FIELD);
 	}
 }
 
@@ -3009,8 +3063,11 @@ bool StackFrame::ExecuteNewObject(U2 index)
 	LPOBJECT_REF obj_ref = NULL;
 	if (!VMContext::object_heap->NewObject(target, obj_ref))
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/OutOfMemoryError", "cannot allocate object");
+		if (!VMContext::pending_exception)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/OutOfMemoryError", "cannot allocate object");
+		}
 		return false;
 	}
 	op_stack->pushObject(obj_ref);
@@ -3356,7 +3413,8 @@ bool StackFrame::ExecuteInvokeDynamic(U2 index)
 			}
 			char name[32];
 			snprintf(name, sizeof(name), "$cap%d", cap_index);
-			StoreSlotField(lambda_obj, name, cap.low);
+			StoreSlotField(lambda_obj, name, cap.low,
+				cap.type == DT_REF || cap.type == DT_ARRAY);
 			if (cap.wide)
 			{
 				if (!op_stack->get(slot_index + 1, cap.high))
@@ -3364,7 +3422,7 @@ bool StackFrame::ExecuteInvokeDynamic(U2 index)
 					return false;
 				}
 				snprintf(name, sizeof(name), "$caph%d", cap_index);
-				StoreSlotField(lambda_obj, name, cap.high);
+				StoreSlotField(lambda_obj, name, cap.high, false);
 				slot_index += 2;
 			}
 			else
@@ -3377,7 +3435,7 @@ bool StackFrame::ExecuteInvokeDynamic(U2 index)
 		int lambda_id = g_next_lambda_id++;
 		Slot id_slot;
 		id_slot.iValue = lambda_id;
-		StoreSlotField(lambda_obj, "$lambda:id", id_slot);
+		StoreSlotField(lambda_obj, "$lambda:id", id_slot, false);
 		g_lambdas[lambda_id] = info;
 		for (int i = 0; i < cap_slots; i++)
 		{
@@ -3599,6 +3657,21 @@ bool StackFrame::CloneArrayReceiver()
 	}
 	if (source->array_var && copy->array_var && source->array_length > 0)
 	{
+		// A freshly allocated reference array starts out NULL; the copied
+		// slots still have to reach the barrier so a concurrent marker sees
+		// the edges that the snapshot never contained.
+		if ((source->array_data_type == DT_REF ||
+		     source->array_data_type == DT_ARRAY) &&
+		    g_gc_barrier_active)
+		{
+			jobject *src_refs = static_cast<jobject *>(source->array_var);
+			for (int i = 0; i < source->array_length; i++)
+			{
+				GCBarrierWrite(NULL,
+					reinterpret_cast<LPOBJECT_REF>(src_refs[i]),
+					GCBarrier::ARRAY);
+			}
+		}
 		memcpy(copy->array_var, source->array_var,
 			static_cast<size_t>(source->array_length) * element_size);
 	}
@@ -4051,7 +4124,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 	}
 
 	lpField field = NULL;
-	TypeDesc field_type;
+	int field_type = 0;
 	if (kind == IK_GETTER || kind == IK_SETTER)
 	{
 		int cp_index = method->inline_cp.load(std::memory_order_relaxed);
@@ -4069,25 +4142,18 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 		{
 			return false;
 		}
-		LPSTR fdesc = (frc->nameType && frc->nameType->descUtf8)
-			? frc->nameType->descUtf8->GetName() : NULL;
-		if (!fdesc ||
-		    !parse_desc_type(fdesc, field_type, static_cast<int>(strlen(fdesc))))
+		field_type = FieldSlotType(frc);
+		if (field_type == 0)
 		{
 			return false;
 		}
-		if (field_type.check_array)
-		{
-			field_type.data_type = DT_ARRAY;
-		}
-		bool ref_kind = (field_type.data_type == DT_REF ||
-		                 field_type.data_type == DT_ARRAY);
+		bool ref_kind = (field_type == DT_REF || field_type == DT_ARRAY);
 		if (kind == IK_GETTER)
 		{
 			bool ret_ref = (SlotType(result_desc) == DT_REF ||
 			                SlotType(result_desc) == DT_ARRAY);
 			if ((ref_kind != ret_ref) ||
-			    (!ref_kind && SlotType(field_type) != SlotType(result_desc)))
+			    (!ref_kind && field_type != SlotType(result_desc)))
 			{
 				return false;
 			}
@@ -4101,7 +4167,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 			bool arg_ref = (SlotType(type_desc[0]) == DT_REF ||
 			                SlotType(type_desc[0]) == DT_ARRAY);
 			if ((ref_kind != arg_ref) ||
-			    (!ref_kind && SlotType(field_type) != SlotType(type_desc[0])))
+			    (!ref_kind && field_type != SlotType(type_desc[0])))
 			{
 				return false;
 			}
@@ -4131,7 +4197,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 	if (kind == IK_SETTER)
 	{
 		Slot value;
-		switch (field_type.data_type)
+		switch (field_type)
 		{
 		case DT_LONG:
 			value.lValue = popLong();
@@ -4158,7 +4224,16 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 				"java/lang/NoSuchFieldError", "field storage is missing");
 			return false;
 		}
-		fv->field_value = value;
+		if (field_type == DT_REF || field_type == DT_ARRAY)
+		{
+			LPOBJECT_REF old_ref = fv->field_value.heapPtr;
+			fv->field_value = value;
+			GCBarrierWrite(old_ref, value.heapPtr, GCBarrier::FIELD);
+		}
+		else
+		{
+			fv->field_value = value;
+		}
 		return true;
 	}
 
@@ -4221,7 +4296,7 @@ bool StackFrame::TryInline(lpClass declaring, lpMethod method,
 				"java/lang/NoSuchFieldError", "field storage is missing");
 			return false;
 		}
-		switch (field_type.data_type)
+		switch (field_type)
 		{
 		case DT_LONG:
 			op_stack->push(fv->field_value.lValue);
@@ -4610,16 +4685,16 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 	}
 
 	bool raised = VMContext::pending_exception != NULL;
-	jobject result_ref = NULL;
-	if (!raised && (result_type == DT_REF || result_type == DT_ARRAY))
-	{
-		result_ref = (jobject)ret.p;
-	}
-	// Pop the native frame; a returned reference is promoted into the caller
-	// frame (normal JNI local-reference lifetime).
-	JniPopLocalFrame(jni_env, result_ref);
+	// A returned reference is rooted by the operand stack below, not by a JNI
+	// local reference: the caller is Java, so the reference only has to stay
+	// valid until the frame is popped.  Pushing it before the pop keeps it
+	// rooted across the two steps, and popping with NULL keeps a result from
+	// every Java->native call out of the caller's frame.  An outer native
+	// frame (for example a parked Method.invoke) would otherwise retain one
+	// reference per call for its whole lifetime.
 	if (raised)
 	{
+		JniPopLocalFrame(jni_env, NULL);
 		return false;
 	}
 
@@ -4681,6 +4756,7 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 	default:
 		break;
 	}
+	JniPopLocalFrame(jni_env, NULL);
 	return true;
 }
 
@@ -5368,10 +5444,15 @@ bool StackFrame::StackToLocal(lpStackFrame frame, vector<TypeDesc> &type_desc, b
 {
 	Slot s1, s2;
 	int count = type_desc.size();
-	lpOperStack tmp_stack = new OperStack(count * 2);
+	void *tmp_mem = VmPoolAlloc(sizeof(OperStack));
+	if (!tmp_mem)
+	{
+		throw new VMExecutorException("Frame storage is unavailable.");
+	}
+	lpOperStack tmp_stack = new (tmp_mem) OperStack(count * 2);
 	for (int i = count - 1; i >= 0; i--)
 	{
-		TypeDesc desc = type_desc[i];
+		const TypeDesc &desc = type_desc[i];
 		DATA_TYPE data_type = desc.data_type;
 		if (desc.check_array)
 		{
@@ -5415,7 +5496,7 @@ bool StackFrame::StackToLocal(lpStackFrame frame, vector<TypeDesc> &type_desc, b
 
 	for (int i = 0; i < count; i++)
 	{
-		TypeDesc desc = type_desc[i];
+		const TypeDesc &desc = type_desc[i];
 		DATA_TYPE data_type = desc.data_type;
 		if (desc.check_array)
 		{
@@ -5450,7 +5531,8 @@ bool StackFrame::StackToLocal(lpStackFrame frame, vector<TypeDesc> &type_desc, b
 
 	if (tmp_stack)
 	{
-		delete tmp_stack;
+		tmp_stack->~OperStack();
+		VmPoolFree(tmp_stack);
 		tmp_stack = NULL;
 	}
 	return true;
@@ -5490,8 +5572,11 @@ bool StackFrame::ExecuteNewArray(U1 index)
 	LPOBJECT_REF obj_ref = NULL;
 	if (!VMContext::object_heap->NewArrayObject(slot.iValue, array_class, obj_ref))
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/OutOfMemoryError", "cannot allocate array");
+		if (!VMContext::pending_exception)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/OutOfMemoryError", "cannot allocate array");
+		}
 		return false;
 	}
 	op_stack->pushObject(obj_ref);
@@ -5539,8 +5624,11 @@ bool StackFrame::ExecuteNewObjectArray(U2 index)
 	LPOBJECT_REF obj_ref = NULL;
 	if (!VMContext::object_heap->NewObjectArrayObject(slot.iValue, array_class, obj_ref))
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/OutOfMemoryError", "cannot allocate array");
+		if (!VMContext::pending_exception)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/OutOfMemoryError", "cannot allocate array");
+		}
 		return false;
 	}
 	op_stack->pushObject(obj_ref);
@@ -5590,8 +5678,11 @@ bool StackFrame::ExecuteNewMultiArray(U2 index, int count)
 	delete[] nums;
 	if (!ok)
 	{
-		VMContext::pending_exception = CreateJavaException(
-			"java/lang/OutOfMemoryError", "cannot allocate multi-dimensional array");
+		if (!VMContext::pending_exception)
+		{
+			VMContext::pending_exception = CreateJavaException(
+				"java/lang/OutOfMemoryError", "cannot allocate multi-dimensional array");
+		}
 		return false;
 	}
 	op_stack->pushObject(obj_ref);
@@ -5928,20 +6019,14 @@ bool StackFrame::PutStatic(U2 index)
 	{
 		return false;
 	}
-	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
-		? frc->nameType->descUtf8->GetName() : NULL;
-	TypeDesc type_desc;
-	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	// An array descriptor such as [J keeps its element type in data_type; the
+	// field itself is always a single reference slot.
+	const int field_type = FieldSlotType(frc);
+	if (field_type == 0)
 	{
 		return false;
 	}
-	// An array descriptor such as [J keeps its element type in data_type; the
-	// field itself is always a single reference slot.
-	if (type_desc.check_array)
-	{
-		type_desc.data_type = DT_ARRAY;
-	}
-	switch (type_desc.data_type)
+	switch (field_type)
 	{
 	case DT_LONG:
 		fv->field_value.lValue = popLong();
@@ -5950,7 +6035,21 @@ bool StackFrame::PutStatic(U2 index)
 		fv->field_value.dValue = popDouble();
 		break;
 	default:
-		op_stack->pop(fv->field_value);
+		{
+			Slot value;
+			op_stack->pop(value);
+			if (field_type == DT_REF ||
+			    field_type == DT_ARRAY)
+			{
+				LPOBJECT_REF old_ref = fv->field_value.heapPtr;
+				fv->field_value = value;
+				GCBarrierWrite(old_ref, value.heapPtr, GCBarrier::STATIC);
+			}
+			else
+			{
+				fv->field_value = value;
+			}
+		}
 		break;
 	}
 	return true;
@@ -5972,18 +6071,12 @@ bool StackFrame::GetStatic(U2 index)
 	{
 		return false;
 	}
-	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
-		? frc->nameType->descUtf8->GetName() : NULL;
-	TypeDesc type_desc;
-	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	int field_type = FieldSlotType(frc);
+	if (field_type == 0)
 	{
 		return false;
 	}
-	if (type_desc.check_array)
-	{
-		type_desc.data_type = DT_ARRAY;
-	}
-	switch (type_desc.data_type)
+	switch (field_type)
 	{
 	case DT_LONG:
 		op_stack->push(fv->field_value.lValue);
@@ -6039,18 +6132,12 @@ bool StackFrame::GetField(U2 index)
 			"java/lang/NoSuchFieldError", "field storage is missing");
 		return false;
 	}
-	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
-		? frc->nameType->descUtf8->GetName() : NULL;
-	TypeDesc type_desc;
-	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	int field_type = FieldSlotType(frc);
+	if (field_type == 0)
 	{
 		return false;
 	}
-	if (type_desc.check_array)
-	{
-		type_desc.data_type = DT_ARRAY;
-	}
-	switch (type_desc.data_type)
+	switch (field_type)
 	{
 	case DT_BOOL:
 	case DT_BYTE:
@@ -6089,20 +6176,14 @@ bool StackFrame::PutField(U2 index)
 	{
 		return false;
 	}
-	LPSTR desc = (frc->nameType && frc->nameType->descUtf8)
-		? frc->nameType->descUtf8->GetName() : NULL;
-	TypeDesc type_desc;
-	if (!parse_desc_type(desc, type_desc, desc ? strlen(desc) : 0))
+	const int field_type = FieldSlotType(frc);
+	if (field_type == 0)
 	{
 		return false;
 	}
-	if (type_desc.check_array)
-	{
-		type_desc.data_type = DT_ARRAY;
-	}
 
 	Slot slot_val;
-	switch (type_desc.data_type)
+	switch (field_type)
 	{
 	case DT_BOOL:
 	case DT_BYTE:
@@ -6147,7 +6228,16 @@ bool StackFrame::PutField(U2 index)
 			"java/lang/NoSuchFieldError", "field storage is missing");
 		return false;
 	}
-	fv->field_value = slot_val;
+	if (field_type == DT_REF || field_type == DT_ARRAY)
+	{
+		LPOBJECT_REF old_ref = fv->field_value.heapPtr;
+		fv->field_value = slot_val;
+		GCBarrierWrite(old_ref, slot_val.heapPtr, GCBarrier::FIELD);
+	}
+	else
+	{
+		fv->field_value = slot_val;
+	}
 	return true;
 }
 

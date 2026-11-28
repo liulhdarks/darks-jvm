@@ -106,6 +106,8 @@ if(JAVAC)
         "${CMAKE_CURRENT_SOURCE_DIR}/java/Hello.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/Clock.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/GcStress.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/HeapLimit.java"
+        "${CMAKE_CURRENT_SOURCE_DIR}/java/SatbStress.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/dev/darks/jni/NativeLib.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/ThreadBasics.java"
         "${CMAKE_CURRENT_SOURCE_DIR}/java/threads/CoroutineScale.java"
@@ -584,6 +586,22 @@ if(JAVAC)
             set_target_properties(thirdparty_native PROPERTIES PREFIX "lib")
         endif()
 
+        add_library(satb_native SHARED native/satb.cpp)
+        target_include_directories(satb_native PRIVATE
+            "${JDK_HOME}/include" "${JDK_JNI_PLATFORM_INCLUDE}")
+        if(NOT WIN32)
+            set_target_properties(satb_native PROPERTIES PREFIX "lib")
+        endif()
+        add_dependencies(satb_native java_classes)
+
+        add_test(NAME gc_satb_stress
+            COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                    "-DARGS=-E;env;DARKS_GC_SATB_TEST=1;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};SatbStress;$<TARGET_FILE:satb_native>"
+                    -DEXPECT_RC=0 "-DEXPECT_TEXT=satb stress: ok"
+                    "-DEXPECT_TEXT2=field=[1-9][0-9]*.*static=[1-9][0-9]*.*array=[1-9][0-9]*"
+                    "-DEXPECT_TEXT3=jni=[1-9][0-9]*.*reflect=[1-9][0-9]*"
+                    -P "${CHECK}")
+
         add_test(NAME thirdparty_jni
             COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
                     "-DARGS=-cp;${CLASSES_DIR};dev.darks.jni.NativeLib;$<TARGET_FILE:thirdparty_native>"
@@ -659,7 +677,70 @@ if(JAVAC)
     add_test(NAME gc_heap
         COMMAND "${CMAKE_COMMAND}" -DPROG=$<TARGET_FILE:gc_tests>
                 "-DARGS=${CLASSES_DIR}" -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed"
+                "-DEXPECT_TEXT2=cms concurrent mark steps=" -P "${CHECK}")
+
+    # The stop-the-world collector stays reachable as an explicit fallback.
+    add_test(NAME gc_heap_marksweep
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_IMPL=marksweep;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
                 "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
+
+    # Same heap checks with the ref_index fallback: every collection rebuilds
+    # the index from the slot vector, so these assertions prove that the
+    # incremental maintenance kept the same set of live objects.
+    add_test(NAME gc_heap_refindex_full
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_REFINDEX=full;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
+
+    # The same heap checks with dead objects freed inside the pause: the
+    # fallback must produce the identical survivor set and index.
+    add_test(NAME gc_heap_sweep_pause
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_SWEEP=pause;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
+
+    # The same heap checks with one stop-the-world marking pause per
+    # collection (DARKS_JVM_MARK=stw): the fallback must produce the identical
+    # survivor set and index.
+    add_test(NAME gc_heap_mark_stw
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_MARK=stw;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
+
+    # Concurrent collector: the same heap checks, with the trace and the
+    # sweep running on the collector's background threads.  The CMS-specific
+    # assertions (marker thread identity, allocations during the mark, CMF
+    # fallback) live in gc_tests section (h)/(i).
+    add_test(NAME gc_heap_cms
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_IMPL=cms;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=cms concurrent mark steps=" -P "${CHECK}")
+
+    add_test(NAME gc_heap_cms_stw
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_IMPL=cms;DARKS_JVM_MARK=stw;$<TARGET_FILE:gc_tests>;${CLASSES_DIR}"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=gc checks: [0-9]+/[0-9]+ passed" -P "${CHECK}")
+
+    add_test(NAME gc_stress_cms
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_IMPL=cms;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
+                "-DEXPECT_TEXT2=gc: static array survived"
+                "-DEXPECT_TEXT3=gc: local chain survived" -P "${CHECK}")
+
+    add_test(NAME gc_stress_cms_stats
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_IMPL=cms;DARKS_GCSTATS=1;DARKS_JVM_GC_THRESHOLD=4096;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=mode=cms"
+                "-DEXPECT_TEXT2=phase=cms-init" -P "${CHECK}")
 
     add_test(NAME gc_stress_survivors
         COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
@@ -672,6 +753,77 @@ if(JAVAC)
         COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
                 "-DARGS=-E;env;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
                 -DEXPECT_RC=0 "-DEXPECT_TEXT=gc-collect" -P "${CHECK}")
+
+    # End-to-end retention with the full-rebuild fallback: the random graph
+    # workload must survive collections exactly as with the incremental index.
+    add_test(NAME gc_stress_refindex_full
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_REFINDEX=full;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
+                "-DEXPECT_TEXT2=gc: static array survived"
+                "-DEXPECT_TEXT3=gc: local chain survived" -P "${CHECK}")
+
+    add_test(NAME gc_stress_sweep_pause
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_SWEEP=pause;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
+                "-DEXPECT_TEXT2=gc: static array survived"
+                "-DEXPECT_TEXT3=gc: local chain survived" -P "${CHECK}")
+
+    # Sliced marking fallback: one stop-the-world pause per automatic
+    # collection, same survivors.
+    add_test(NAME gc_stress_mark_stw
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_MARK=stw;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
+                "-DEXPECT_TEXT2=gc: static array survived"
+                "-DEXPECT_TEXT3=gc: local chain survived" -P "${CHECK}")
+
+    # Default sliced marking on the Java path: every automatic collection has
+    # to report its pauses and still keep every root alive.
+    add_test(NAME gc_stress_sliced_mark
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_GCSTATS=1;DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcStress"
+                -DEXPECT_RC=0 "-DEXPECT_TEXT=gc: local array survived"
+                "-DEXPECT_TEXT2=\\[gcpause\\] seq=" -P "${CHECK}")
+
+    # -Xmx is a hard budget: the allocation that would cross it fails with a
+    # Java OutOfMemoryError carrying the JDK message, and the heap keeps
+    # working once the surviving arrays are released.
+    add_test(NAME heap_xmx_oom
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_JVM_GC_LOG=1;${JVM};-Xms8m;-Xmx48m;-cp;${CLASSES_DIR};HeapLimit;1;64"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=heap limit: oom after=[0-9]+ message=Java heap space"
+                "-DEXPECT_TEXT2=heap limit: ok" -P "${CHECK}")
+
+    # Malformed sizes and an inverted range are rejected before the VM starts.
+    add_test(NAME heap_invalid_xmx
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-Xmxabc;-cp;${CLASSES_DIR};Hello" -DEXPECT_RC=2
+                "-DEXPECT_TEXT=invalid -Xmx value 'abc'" -P "${CHECK}")
+
+    add_test(NAME heap_negative_xmx
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-Xmx-1;-cp;${CLASSES_DIR};Hello" -DEXPECT_RC=2
+                "-DEXPECT_TEXT=invalid -Xmx value '-1'" -P "${CHECK}")
+
+    add_test(NAME heap_xms_above_xmx
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
+                "-DARGS=-Xms64m;-Xmx32m;-cp;${CLASSES_DIR};Hello" -DEXPECT_RC=2
+                "-DEXPECT_TEXT=-Xms .* must not be greater than -Xmx" -P "${CHECK}")
+
+    # -Xms reserves slots and raises the initial collection threshold, so a
+    # workload well below -Xms runs without a threshold-triggered collection;
+    # the only gcstat lines come from HeapLimit's explicit System.gc().
+    add_test(NAME heap_xms_prealloc
+        COMMAND "${CMAKE_COMMAND}" -DPROG=${CMAKE_COMMAND}
+                "-DARGS=-E;env;DARKS_GCSTATS=1;DARKS_JVM_GC_LOG=1;${JVM};-Xms64m;-Xmx128m;-cp;${CLASSES_DIR};HeapLimit;1;8"
+                -DEXPECT_RC=0
+                "-DEXPECT_TEXT=heap limit: no oom allocated=8"
+                "-DEXPECT_TEXT2=\\[gcinit\\] heap_min=67108864 heap_max=134217728"
+                "-DEXPECT_TEXT3=heap limit: ok"
+                "-DEXPECT_NO_TEXT=reason=threshold" -P "${CHECK}")
 
     add_test(NAME dump_hello
         COMMAND "${CMAKE_COMMAND}" -DPROG=${JVM}
@@ -1349,12 +1501,13 @@ if(JAVAC)
     set_tests_properties(producer_consumer_repeat PROPERTIES TIMEOUT 300)
 
     # Continuous allocation with a low GC threshold: the collector must stop
-    # every interpreter worker at a safepoint without deadlocking.
+    # every interpreter worker at a safepoint without deadlocking.  The
+    # threshold has to clear the 1 KiB floor of DARKS_JVM_GC_THRESHOLD.
     foreach(mp 1 4)
         add_test(NAME thread_GcThreads_mp${mp}
             COMMAND "${CMAKE_COMMAND}"
                 "-DPROG=${CMAKE_COMMAND}"
-                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_JVM_GC_THRESHOLD=512;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcThreads"
+                "-DARGS=-E;env;DARKS_JVM_MP=${mp};DARKS_JVM_GC_THRESHOLD=4096;DARKS_JVM_GC_LOG=1;${JVM};-cp;${CLASSES_DIR};GcThreads"
                 -DEXPECT_RC=0 -DTIMEOUT=180
                 "-DEXPECT_TEXT=gc-threads ok" "-DEXPECT_TEXT2=gc-collect" -P "${CHECK}")
     endforeach()

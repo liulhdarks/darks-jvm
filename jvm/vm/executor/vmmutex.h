@@ -6,6 +6,11 @@
 // storage so that the interpreter can run on several OS threads.
 std::recursive_mutex &VMMutex();
 
+// True when the calling thread already holds VMMutex() (recursive count > 0).
+// The concurrent collector must not wait for its marker thread in that case:
+// the marker would block on the lock the collecting thread holds.
+bool VMLockHeldByCurrentThread();
+
 // RAII guard for VMMutex().
 //
 // While a thread is blocked acquiring the lock it cannot touch the heap, so it

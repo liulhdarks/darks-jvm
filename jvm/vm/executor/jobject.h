@@ -69,8 +69,6 @@ public:
 
 	bool newInstance(lpClass obj_class);
 
-	bool newArrayInstance(int size);
-
 	bool newArrayInstance(DATA_TYPE data_type, int size);
 
 	// Takes ownership of a buffer allocated with new[].

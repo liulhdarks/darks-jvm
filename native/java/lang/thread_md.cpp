@@ -15,8 +15,10 @@
 #include "vm/executor/context.h"
 #include "vm/executor/objectheap.h"
 #include "vm/executor/jobject.h"
+#include "vm/executor/jfield.h"
 #include "vm/executor/javaexception.h"
 #include "vm/executor/vmmutex.h"
+#include "vm/executor/gc/gcbarrier.h"
 #include "vm/classfiles/classloader.h"
 
 #include <cstdio>
@@ -53,7 +55,16 @@ void SetRawField(LPOBJECT_REF ref, const char *name, const Variant &value)
 	}
 	if (it != obj->varants.end() && it->second)
 	{
-		it->second->field_value = value;
+		if (FieldHoldsReference(it->second->field))
+		{
+			LPOBJECT_REF old_ref = it->second->field_value.heapPtr;
+			it->second->field_value = value;
+			GCBarrierWrite(old_ref, value.heapPtr, GCBarrier::FIELD);
+		}
+		else
+		{
+			it->second->field_value = value;
+		}
 	}
 }
 
@@ -89,8 +100,12 @@ LPOBJECT_REF CreateThreadObject()
 	{
 		return NULL;
 	}
+	// The fields below allocate (name string, class resolution): keep the
+	// half-built Thread object and its name reachable across collections.
+	GCRootScope root_ref(VMContext::object_heap, &ref);
 
 	LPOBJECT_REF name_ref = NULL;
+	GCRootScope root_name(VMContext::object_heap, &name_ref);
 	VMContext::object_heap->NewStringObject(const_cast<LPSTR>("main"), 4, name_ref);
 	if (name_ref)
 	{

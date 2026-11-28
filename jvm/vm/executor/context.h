@@ -26,6 +26,10 @@ public:
 	// Every live JNIEnv (one per ThreadStack). ObjectHeap asks each of them
 	// to mark its local-reference frames during a collection.
 	static std::vector<void*> jni_envs;
+	// -Xms/-Xmx in bytes as parsed by the launcher; 0 keeps JDK ergonomics.
+	static size_t requested_initial_heap;
+	static size_t requested_max_heap;
+	static void SetHeapLimits(size_t initial_bytes, size_t max_bytes);
 public:
 	static bool initialize();
 
