@@ -4685,16 +4685,16 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 	}
 
 	bool raised = VMContext::pending_exception != NULL;
-	jobject result_ref = NULL;
-	if (!raised && (result_type == DT_REF || result_type == DT_ARRAY))
-	{
-		result_ref = (jobject)ret.p;
-	}
-	// Pop the native frame; a returned reference is promoted into the caller
-	// frame (normal JNI local-reference lifetime).
-	JniPopLocalFrame(jni_env, result_ref);
+	// A returned reference is rooted by the operand stack below, not by a JNI
+	// local reference: the caller is Java, so the reference only has to stay
+	// valid until the frame is popped.  Pushing it before the pop keeps it
+	// rooted across the two steps, and popping with NULL keeps a result from
+	// every Java->native call out of the caller's frame.  An outer native
+	// frame (for example a parked Method.invoke) would otherwise retain one
+	// reference per call for its whole lifetime.
 	if (raised)
 	{
+		JniPopLocalFrame(jni_env, NULL);
 		return false;
 	}
 
@@ -4756,6 +4756,7 @@ bool StackFrame::ExecuteNativeMethod(lpClass clazz, lpMethod method, vector<Type
 	default:
 		break;
 	}
+	JniPopLocalFrame(jni_env, NULL);
 	return true;
 }
 
