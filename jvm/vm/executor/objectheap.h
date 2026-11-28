@@ -108,6 +108,20 @@ public:
 		root_temp_ms = 0;
 		root_global_ms = 0;
 		root_jni_ms = 0;
+		init_root_thread_ms = 0;
+		init_root_static_ms = 0;
+		init_root_cp_ms = 0;
+		init_root_temp_ms = 0;
+		init_root_global_ms = 0;
+		init_root_jni_ms = 0;
+		root_jni_frames = 0;
+		root_jni_refs = 0;
+		root_jni_max_env_refs = 0;
+		init_root_jni_frames = 0;
+		init_root_jni_refs = 0;
+		root_scan_initial = false;
+		cms_init_setup_ms = 0.0;
+		cms_init_roots_ms = 0.0;
 		root_stacks = 0;
 		root_static_fields = 0;
 		root_classes = 0;
@@ -448,7 +462,7 @@ private:
 	// limit so the error object itself can always be created.
 	void ThrowHeapOOM();
 
-	void MarkRoots();
+	void MarkRoots(bool initial = false);
 
 	// Clears unreachable referents and enqueues the affected
 	// java.lang.ref.Reference objects on their ReferenceQueue.
@@ -538,6 +552,22 @@ private:
 	double root_temp_ms;
 	double root_global_ms;
 	double root_jni_ms;
+	// Same breakdown for the root snapshot that opens a cycle, so the init
+	// pause can be attributed independently of the final re-read.
+	double init_root_thread_ms;
+	double init_root_static_ms;
+	double init_root_cp_ms;
+	double init_root_temp_ms;
+	double init_root_global_ms;
+	double init_root_jni_ms;
+	bool root_scan_initial;
+	size_t root_jni_frames;
+	size_t root_jni_refs;
+	size_t root_jni_max_env_refs;
+	size_t init_root_jni_frames;
+	size_t init_root_jni_refs;
+	double cms_init_setup_ms;
+	double cms_init_roots_ms;
 	size_t root_stacks;
 	size_t root_static_fields;
 	size_t root_classes;

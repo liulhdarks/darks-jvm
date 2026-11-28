@@ -149,14 +149,21 @@ void DarksVM_AddLocalRef(JNIEnv *env, jobject ref)
 	JniAddLocalRef(env, ref);
 }
 
-void DarksVM_MarkJniEnvRoots(void *env_ptr, void *heap_ptr)
+size_t DarksVM_MarkJniEnvRoots(void *env_ptr, void *heap_ptr,
+                               size_t *frame_count)
 {
 	JNIEnv *env = reinterpret_cast<JNIEnv *>(env_ptr);
 	ObjectHeap *heap = reinterpret_cast<ObjectHeap *>(heap_ptr);
+	if (frame_count)
+	{
+		*frame_count = 0;
+	}
 	if (!env || !heap || !env->local_frames)
 	{
-		return;
+		return 0;
 	}
+	size_t frames = 0;
+	size_t refs = 0;
 	for (size_t i = 0; i < env->local_frames->size(); i++)
 	{
 		JniLocalFrame *frame = (*env->local_frames)[i];
@@ -164,11 +171,18 @@ void DarksVM_MarkJniEnvRoots(void *env_ptr, void *heap_ptr)
 		{
 			continue;
 		}
+		frames++;
 		for (size_t j = 0; j < frame->refs.size(); j++)
 		{
 			heap->MarkObjectRef(JniRef(frame->refs[j]));
+			refs++;
 		}
 	}
+	if (frame_count)
+	{
+		*frame_count = frames;
+	}
+	return refs;
 }
 
 // ---------------------------------------------------------------------------

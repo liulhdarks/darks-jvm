@@ -801,7 +801,12 @@ void ObjectHeap::MarkThreadStackRoots()
 	{
 		thread_stacks[i]->MarkRoots(this);
 	}
-	root_thread_ms = MillisecondsSince(start);
+	const double ms = MillisecondsSince(start);
+	root_thread_ms = ms;
+	if (root_scan_initial)
+	{
+		init_root_thread_ms = ms;
+	}
 }
 
 void ObjectHeap::MarkStaticRoots()
@@ -818,7 +823,12 @@ void ObjectHeap::MarkStaticRoots()
 			MarkObjectRef(fv->field_value.heapPtr);
 		}
 	}
-	root_static_ms = MillisecondsSince(start);
+	const double ms = MillisecondsSince(start);
+	root_static_ms = ms;
+	if (root_scan_initial)
+	{
+		init_root_static_ms = ms;
+	}
 }
 
 void ObjectHeap::MarkConstantPoolRoots()
@@ -862,7 +872,12 @@ void ObjectHeap::MarkConstantPoolRoots()
 			}
 		}
 	}
-	root_cp_ms = MillisecondsSince(start);
+	const double ms = MillisecondsSince(start);
+	root_cp_ms = ms;
+	if (root_scan_initial)
+	{
+		init_root_cp_ms = ms;
+	}
 }
 
 void ObjectHeap::MarkTemporaryRoots()
@@ -877,7 +892,12 @@ void ObjectHeap::MarkTemporaryRoots()
 			MarkObjectRef(*slot);
 		}
 	}
-	root_temp_ms = MillisecondsSince(start);
+	const double ms = MillisecondsSince(start);
+	root_temp_ms = ms;
+	if (root_scan_initial)
+	{
+		init_root_temp_ms = ms;
+	}
 }
 
 void ObjectHeap::AddGlobalRef(LPOBJECT_REF ref)
@@ -960,7 +980,12 @@ void ObjectHeap::MarkGlobalRefs()
 	{
 		MarkObjectRef(global_refs[i]);
 	}
-	root_global_ms = MillisecondsSince(start);
+	const double ms = MillisecondsSince(start);
+	root_global_ms = ms;
+	if (root_scan_initial)
+	{
+		init_root_global_ms = ms;
+	}
 }
 
 void ObjectHeap::MarkJniLocalRoots()
@@ -970,21 +995,41 @@ void ObjectHeap::MarkJniLocalRoots()
 	const GcClock::time_point start = GcClock::now();
 	VMLock lk;
 	root_jni_envs = VMContext::jni_envs.size();
+	root_jni_frames = 0;
+	root_jni_refs = 0;
+	root_jni_max_env_refs = 0;
 	for (size_t i = 0; i < VMContext::jni_envs.size(); i++)
 	{
-		DarksVM_MarkJniEnvRoots(VMContext::jni_envs[i], this);
+		size_t frames = 0;
+		const size_t refs =
+			DarksVM_MarkJniEnvRoots(VMContext::jni_envs[i], this, &frames);
+		root_jni_frames += frames;
+		root_jni_refs += refs;
+		if (refs > root_jni_max_env_refs)
+		{
+			root_jni_max_env_refs = refs;
+		}
 	}
-	root_jni_ms = MillisecondsSince(start);
+	const double ms = MillisecondsSince(start);
+	root_jni_ms = ms;
+	if (root_scan_initial)
+	{
+		init_root_jni_ms = ms;
+		init_root_jni_frames = root_jni_frames;
+		init_root_jni_refs = root_jni_refs;
+	}
 }
 
-void ObjectHeap::MarkRoots()
+void ObjectHeap::MarkRoots(bool initial)
 {
+	root_scan_initial = initial;
 	MarkThreadStackRoots();
 	MarkStaticRoots();
 	MarkConstantPoolRoots();
 	MarkTemporaryRoots();
 	MarkGlobalRefs();
 	MarkJniLocalRoots();
+	root_scan_initial = false;
 }
 
 void ObjectHeap::ProcessWeakReferences()
@@ -1408,7 +1453,7 @@ void ObjectHeap::RunMarkPause(const char *reason)
 		// here stays marked: overwrites are journaled by the barrier below and
 		// allocations are marked as they are registered.
 		const GcClock::time_point roots_start = GcClock::now();
-		MarkRoots();
+		MarkRoots(true);
 		roots_ms = MillisecondsSince(roots_start);
 
 		// Journal overwritten references until the final pause.  Only the old
@@ -1918,7 +1963,10 @@ void ObjectHeap::CmsInitMark(const char *reason)
 	std::vector<LPOBJECT_REF> stale;
 	GCBarrier::Drain(stale);
 	cycle_dropped_before = GCBarrier::Dropped();
-	MarkRoots();
+	cms_init_setup_ms = MillisecondsSince(pause_start);
+	const GcClock::time_point init_roots_start = GcClock::now();
+	MarkRoots(true);
+	cms_init_roots_ms = MillisecondsSince(init_roots_start);
 	if (!GCBarrier::Enabled())
 	{
 		// Snapshot-at-the-beginning only needs the overwritten value: the
@@ -1937,9 +1985,9 @@ void ObjectHeap::CmsInitMark(const char *reason)
 	if (GcStatsEnabled())
 	{
 		fprintf(stderr, "[gcpause] seq=%zu reason=%s phase=cms-init stw_ms=%.2f "
-		        "stack=%zu\n",
+		        "setup_ms=%.2f roots_ms=%.2f stack=%zu\n",
 		        cycle_pauses + 1, reason ? reason : "unknown", cms_init_ms,
-		        mark_stack.size());
+		        cms_init_setup_ms, cms_init_roots_ms, mark_stack.size());
 	}
 }
 
@@ -2099,8 +2147,13 @@ bool ObjectHeap::CmsFinalMark(const char *reason)
 		        "final_stw_ms=%.2f stw_ms=%.2f mark_wall_ms=%.2f "
 		        "mark_steps=%zu allocs_during_mark=%zu weak_ms=%.2f "
 		        "final_journal_ms=%.2f final_roots_ms=%.2f final_scan_ms=%.2f "
+		        "init_setup_ms=%.2f init_roots_ms=%.2f "
+		        "init_rthread=%.2f init_rstatic=%.2f init_rcp=%.2f "
+		        "init_rtemp=%.2f init_rglobal=%.2f init_rjni=%.2f "
 		        "rthread=%.2f rstatic=%.2f rcp=%.2f "
 		        "rtemp=%.2f rglobal=%.2f rjni=%.2f "
+		        "jni_envs=%zu jni_frames=%zu jni_refs=%zu jni_max_env_refs=%zu "
+		        "init_jni_frames=%zu init_jni_refs=%zu "
 		        "satb_records=%zu satb_dropped=%llu sweep=deferred "
 		        "ref_entries=%zu ref_repairs=%zu ref_shrinks=%zu "
 		        "refindex=%s\n",
@@ -2108,8 +2161,14 @@ bool ObjectHeap::CmsFinalMark(const char *reason)
 		        cms_init_ms + cms_final_ms, mark_wall_ms,
 		        cms_mark_steps.load(), cms_mark_allocs.load(), weak_ms,
 		        journal_ms, roots_ms, scan_ms,
+		        cms_init_setup_ms, cms_init_roots_ms,
+		        init_root_thread_ms, init_root_static_ms, init_root_cp_ms,
+		        init_root_temp_ms, init_root_global_ms, init_root_jni_ms,
 		        root_thread_ms, root_static_ms, root_cp_ms, root_temp_ms,
 		        root_global_ms, root_jni_ms,
+		        root_jni_envs, root_jni_frames, root_jni_refs,
+		        root_jni_max_env_refs, init_root_jni_frames,
+		        init_root_jni_refs,
 		        cycle_recorded,
 		        static_cast<unsigned long long>(GCBarrier::Dropped()),
 		        ref_index.size(), ref_index_repairs,
